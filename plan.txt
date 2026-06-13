@@ -1,0 +1,631 @@
+================================================================================
+AGENDAAI — FABLE BUILD SPEC (FINAL, READY TO SHIP)
+Author: Jase | Date: 2026-06-12
+Target: Fable 5
+Deliverable: A PWA habit/task tracker. No server, no AI, no API keys.
+             Hosted as static files on Render. Installs to iPhone home
+             screen via Safari "Add to Home Screen."
+================================================================================
+
+LOCKED DECISIONS
+================================================================================
+- Pure manual, no AI of any kind
+- Single index.html + manifest.json + sw.js + icons
+- localStorage on device, export/import buttons for backup
+- Phone is primary device, no auto-sync between devices
+- Hybrid quick-add grammar: MVP + wake-anchored times only
+- Start fresh, no migration from old agenda.db
+- Build in 4 phases, verify each before moving to next
+
+================================================================================
+PHASE OVERVIEW
+================================================================================
+PHASE 1: Shell + data layer + form-add + timeline render
+PHASE 2: Quick-add parser (hybrid grammar) with test table
+PHASE 3: Check-in cards + completions + non-AI summary system
+PHASE 4: PWA wrapper (manifest, service worker, install on iOS)
+
+After each phase, open in Chrome and verify against acceptance criteria
+before moving on.
+
+================================================================================
+FILE STRUCTURE
+================================================================================
+agenda/
+  index.html        the whole app (HTML + embedded CSS + embedded JS)
+  manifest.json     PWA manifest
+  sw.js             service worker (offline cache + version strategy)
+  icons/
+    icon-192.png    home screen icon (192x192)
+    icon-512.png    splash icon (512x512)
+
+That's it. 5 files. Render serves the folder as a static site.
+
+================================================================================
+DATA SHAPE (locked schema, version 1)
+================================================================================
+One JSON blob in localStorage under key "agendaai_v1".
+
+{
+  "meta": {
+    "version": 1,
+    "created_at": "ISO timestamp",
+    "last_export_at": "ISO timestamp or null"
+  },
+  "habits": [
+    {
+      "id": "uuid",
+      "title": "string",
+      "time": "HH:MM (24h)" | null,
+      "days": ["M","T","W","R","F","S","U"],
+      "duration": 0.50,
+      "notes": "string",
+      "anchor": { "type": "fixed" | "wake", "offset_minutes": 0 },
+      "created_at": "ISO",
+      "archived": false
+    }
+  ],
+  "tasks": [
+    {
+      "id": "uuid",
+      "title": "string",
+      "date": "YYYY-MM-DD",
+      "time": "HH:MM",
+      "duration": 0.50,
+      "notes": "string",
+      "created_at": "ISO",
+      "done": false
+    }
+  ],
+  "events": [
+    {
+      "id": "uuid",
+      "title": "string",
+      "date": "YYYY-MM-DD",
+      "start": "HH:MM",
+      "end": "HH:MM",
+      "notes": "string",
+      "created_at": "ISO"
+    }
+  ],
+  "completions": [
+    {
+      "id": "uuid",
+      "ref_id": "habit or task uuid",
+      "ref_type": "habit" | "task",
+      "date": "YYYY-MM-DD",
+      "time_done": "HH:MM (what user reports)",
+      "completed_at": "ISO (server/browser clock at tap)",
+      "time_bucket": "night|early-morning|morning|midday|afternoon|evening",
+      "day_of_week": 0-6,
+      "minutes_from_planned": -120 to +600
+    }
+  ],
+  "missed": [
+    {
+      "id": "uuid",
+      "ref_id": "habit uuid",
+      "ref_type": "habit",
+      "date": "YYYY-MM-DD",
+      "reason": "auto" | "manual"
+    }
+  ],
+  "daily_state": [
+    {
+      "date": "YYYY-MM-DD",
+      "wake_time": "HH:MM" | null,
+      "bedtime": "HH:MM (of THIS date's night)" | null,
+      "mood_am": 1-5 | null,
+      "mood_pm": 1-5 | null,
+      "energy": 1-5 | null,
+      "stress": 1-5 | null,
+      "illness": false,
+      "travel": false,
+      "hours_slept": 0.0 | null
+    }
+  ],
+  "templates": [
+    {
+      "id": "uuid",
+      "label": "string (shown on button)",
+      "parsed_object": { ...same shape as habits[] or tasks[]... }
+    }
+  ]
+}
+
+TIME BUCKET BOUNDARIES (for time_bucket computation)
+  00:00-05:59  night
+  06:00-08:59  early-morning
+  09:00-11:59  morning
+  12:00-13:59  midday
+  14:00-17:59  afternoon
+  18:00-23:59  evening
+
+DAY-OF-WEEK MAPPING
+  0=Sun  1=Mon  2=Tue  3=Wed  4=Thu  5=Fri  6=Sat
+  (JS Date.getDay() convention)
+
+DAYS-ARRAY LETTER CODES (used in habits.days)
+  M=Mon  T=Tue  W=Wed  R=Thu  F=Fri  S=Sat  U=Sun
+
+================================================================================
+QUICK-ADD GRAMMAR (HYBRID — MVP + WAKE-ANCHORED)
+================================================================================
+Token order is fixed: TITLE TIME DAYS-OR-DATE DURATION
+
+  TITLE     one or more words; everything before the first token that
+            looks like a time
+  TIME      "5pm", "5:30pm", "17:00", "09:00", "@wake+30", "@wake-15"
+  DAYS      "daily", "MWF", "TR", "MTWRFSU", or a date like "6/14"
+  DURATION  "1h", "30m", "1.5h", "0.75h" — UNIT REQUIRED
+
+REJECTED (intentionally — added later if needed):
+  - Ranges like "9am-10:30"
+  - Comma day lists like "M,W,Th,Su"
+  - Inline "notes:..." (use the form for notes for now)
+  - Unit-less durations like "50" (prevents the old "50=50 hours" bug)
+  - Reordered tokens like "5pm Gym MWF 1h" (title MUST come first)
+
+ANCHOR HANDLING (the one fancy feature):
+  - "@wake+N" sets anchor: { type: "wake", offset_minutes: N }
+  - "@wake-N" sets anchor: { type: "wake", offset_minutes: -N }
+  - At render time: resolved_time = today's wake_time + offset_minutes
+  - If today's wake_time is missing: fall back to 7:00 AM AND show a
+    small warning badge on the row "no wake set, using 7:00"
+  - Wake-anchored items must have "daily" or weekday-list days, NOT
+    a specific date
+
+================================================================================
+PARSER TEST TABLE — must pass all 20 cases
+================================================================================
+Each row: input string -> expected output object OR expected error
+
+VALID (12)
+  IN:  Gym 5pm MWF 1h
+  OUT: { type:"habit", title:"Gym", time:"17:00", days:["M","W","F"],
+         duration:1.0, anchor:{type:"fixed",offset_minutes:0} }
+
+  IN:  Read 9pm daily 30m
+  OUT: { type:"habit", title:"Read", time:"21:00",
+         days:["M","T","W","R","F","S","U"], duration:0.5,
+         anchor:{type:"fixed",offset_minutes:0} }
+
+  IN:  Doctor 6/14 2pm 30m
+  OUT: { type:"task", title:"Doctor", date:"2026-06-14", time:"14:00",
+         duration:0.5 }
+
+  IN:  Workout @wake+30 daily 45m
+  OUT: { type:"habit", title:"Workout", time:null,
+         days:["M","T","W","R","F","S","U"], duration:0.75,
+         anchor:{type:"wake",offset_minutes:30} }
+
+  IN:  Skincare @wake-15 daily 5m
+  OUT: { type:"habit", title:"Skincare", time:null, days:[...],
+         duration:0.083, anchor:{type:"wake",offset_minutes:-15} }
+
+  IN:  Lunch 12:30pm daily 30m
+  OUT: time:"12:30", duration:0.5
+
+  IN:  Class 9am MWF 1.5h
+  OUT: time:"09:00", days:["M","W","F"], duration:1.5
+
+  IN:  Walk dog 6pm TR 30m
+  OUT: title:"Walk dog", time:"18:00", days:["T","R"], duration:0.5
+
+  IN:  Pay rent 7/1 9am 10m
+  OUT: type:"task", date:"2026-07-01", time:"09:00", duration:0.167
+
+  IN:  Meditate 6:30am daily 10m
+  OUT: time:"06:30", duration:0.167
+
+  IN:  Vitamins 8am daily 5m
+  OUT: time:"08:00", duration:0.083
+
+  IN:  Multi word title here 6pm daily 1h
+  OUT: title:"Multi word title here", time:"18:00", duration:1.0
+
+INVALID (8) — each must produce a clear error with the bad token highlighted
+  IN:  Gym 5p MWF 1h
+  ERR: 'Couldn't parse time "5p". Try "5pm" or "17:00".'
+
+  IN:  Gym 5pm Mw 1h
+  ERR: 'Couldn't parse days "Mw". Use single uppercase letters from
+       MTWRFSU, or "daily".'
+
+  IN:  Gym 25pm daily 1h
+  ERR: 'Couldn't parse time "25pm". Hour must be 1-12 for am/pm format.'
+
+  IN:  Gym 5pm daily 50
+  ERR: 'Couldn't parse duration "50". Add a unit: "50m" or "0.83h".'
+
+  IN:  Gym 5pm 1h
+  ERR: 'Missing days. Add "daily" or a weekday code like "MWF".'
+
+  IN:  Gym 5pm MWF -1h
+  ERR: 'Duration must be positive. Got "-1h".'
+
+  IN:  Reading
+  ERR: 'Need at least a time. Try "Reading 9pm daily 30m" or use the
+       form to add notes-only items.'
+
+  IN:  5pm Gym MWF 1h
+  ERR: 'Title must come first. Got time "5pm" before any title text.'
+
+PARSING APPROACH
+  1. Trim, split on whitespace -> tokens
+  2. Walk tokens left to right; collect TITLE words until first
+     token that looks like TIME
+  3. Classify next token as TIME (or error)
+  4. Classify next token as DAYS or DATE (or error)
+  5. Classify next token as DURATION (or error if missing)
+  6. Reject if extra tokens remain (we may relax this later)
+  7. Build object, set anchor based on TIME format
+
+================================================================================
+SUMMARY SYSTEM (replaces brain narratives — no AI, pure data)
+================================================================================
+All computed from `completions`, `missed`, `daily_state`, `habits`.
+
+------------ DAILY SUMMARY (shown after 8 PM or first open next day) ------------
+
+function dailySummary(date):
+  habits_today = habits filtered by days array including date.day_of_week
+  expected_count = habits_today.length + tasks_today.length
+  done_count = count completions where date matches
+  missed_count = expected_count - done_count - (in-progress where time not yet reached)
+
+  return {
+    completion_pct: done_count / expected_count,
+    missed_titles: [list of habits/tasks not completed and time has passed],
+    streaks_updated: [for each habit done today, current_streak from
+                      consecutive previous days + 1],
+    streaks_broken: [for each habit missed today where previous_streak > 0],
+    sleep_hours: daily_state[date].hours_slept,
+    sleep_target_delta: hours_slept - 7.5,
+    mood_am: daily_state[date].mood_am,
+    mood_pm: daily_state[date].mood_pm,
+    mood_delta: mood_pm - mood_am,
+    first_task_time: min(completed_at) on date,
+    last_task_time:  max(completed_at) on date,
+    largest_gap_minutes: max(gap_from_previous over today's completions)
+  }
+
+------------ WEEKLY SUMMARY (Sunday eve or first open Monday) ------------------
+
+function weeklySummary(week_start_date):
+  for each habit in habits:
+    week_completion[h.id] = done_this_week / expected_this_week
+  by_day[0..6] = completion_pct per day-of-week this week
+  prev_by_day = same computation for previous week
+
+  return {
+    overall_pct: avg(week_completion),
+    overall_delta: this_week - last_week,
+    crushing_it: habits where week_completion[h.id] >= 0.90,
+    at_risk:     habits where week_completion[h.id] <  0.60,
+    best_day:    argmax(by_day),
+    worst_day:   argmin(by_day),
+    sleep_avg:   avg(daily_state.hours_slept this week),
+    sleep_delta: this_week_sleep_avg - last_week_sleep_avg,
+    mood_avg:    avg((mood_am + mood_pm)/2 this week),
+    mood_delta:  this_week_mood_avg - last_week_mood_avg,
+    most_skipped_bucket: time_bucket with highest missed count,
+    total_focused_hours: sum(duration of completions this week)
+  }
+
+------------ STREAK COMPUTATION (must be right — get this wrong and trust dies) -
+
+function currentStreak(habit_id, ending_date):
+  streak = 0
+  d = ending_date
+  while true:
+    if d.day_of_week not in habit.days: d = d - 1 day; continue
+    if exists completion where ref_id=habit_id and date=d:
+      streak += 1; d = d - 1 day; continue
+    else:
+      return streak
+
+Edge cases the test must cover:
+  - Today's habit not yet done by current time -> doesn't break streak
+    until end of day
+  - Habit's days list skips today -> doesn't count as a miss day
+  - First day a habit exists -> streak starts at 1 if done that day, 0 otherwise
+
+------------ INSIGHT CARDS (silent unless threshold met) ----------------------
+
+These are if-statements over the summary data. List of starting rules:
+
+  1. if bedtime_drift_minutes vs last_week >= 30:
+       "Bedtime drifted N min later vs last week"
+
+  2. if any habit has miss_streak >= 3:
+       "[habit] skipped N days in a row"
+
+  3. if avg(mood_am where prev_night_sleep < 6) - avg(mood_am where >= 6) <= -1:
+       "Sleep under 6h preceded N% of low-mood mornings"
+
+  4. for each time_bucket b:
+       if completion_rate(b) >= 0.85 OR <= 0.40:
+         "[bucket] habits: X% completion" (positive or negative framing)
+
+  5. if any habit at_risk AND was crushing_it last week:
+       "[habit] dropped from crushing-it to at-risk this week"
+
+  6. if total_focused_hours_this_week - last_week >= +5:
+       "Focused hours up by N this week"
+
+  7. if streak_broken on a habit with previous_streak >= 7:
+       "Long streak broken: [habit] (was N days)"
+
+Thresholds tunable. Cards never lie — if no card's condition fires, the
+panel is empty. That's fine.
+
+================================================================================
+CHECK-IN CARDS
+================================================================================
+MORNING CARD (visible 06:00-12:00 local, if daily_state[today] has no
+              wake_time yet)
+  Fields:
+    Wake time:        auto-fill = now, editable
+    Bedtime last night: time picker, writes to daily_state[YESTERDAY].bedtime
+    Mood:             1-5 scale (writes mood_am)
+    Energy:           1-5 scale
+    Flags:            checkboxes for illness / travel / menstrual
+
+  On submit:
+    daily_state[today].wake_time = wake_time
+    daily_state[yesterday].bedtime = bedtime (creates yesterday row if missing)
+    Compute daily_state[today].hours_slept = today.wake_time - yesterday.bedtime
+    Hide card for the day.
+
+EVENING CARD (visible 20:00+ local, if mood_pm not yet set)
+  Fields:
+    Mood:    1-5 (writes mood_pm)
+    Energy:  1-5 (overwrites if morning energy was set; keep both? — only mood_pm)
+    Stress:  1-5
+
+  On submit:
+    daily_state[today].mood_pm = mood
+    daily_state[today].stress = stress
+    Hide card for the day.
+
+NO bedtime field on evening card. You'll log bedtime tomorrow morning when
+you remember it.
+
+================================================================================
+TIMELINE RENDER (today's view)
+================================================================================
+On app open:
+  1. Determine today's date and day-of-week
+  2. Build list of items to show:
+     - All habits where days[] includes today's day-of-week, NOT archived
+     - All tasks where date == today
+     - All events where date == today
+  3. For each habit:
+     - If anchor.type == "fixed": display at habit.time
+     - If anchor.type == "wake":
+         wake = daily_state[today].wake_time OR fallback "07:00"
+         resolved = wake + anchor.offset_minutes
+         display at resolved; if fallback used, show "no wake set" badge
+  4. Sort by resolved time ascending
+  5. For each item, check completions for today: if exists -> mark done
+
+Row display:
+  [time] [title]  [duration]  [status: pending / done / skipped]
+  tap -> action sheet: Done, Skip, Edit, Notes
+
+Done action:
+  Write a completion row:
+    completed_at = now (browser clock)
+    time_done = same as completed_at (or user can edit before save)
+    time_bucket = bucket(completed_at)
+    day_of_week = today.getDay()
+    minutes_from_planned = (completed_at - resolved_time) in minutes
+
+================================================================================
+PWA BOILERPLATE (Phase 4)
+================================================================================
+
+manifest.json
+-------------
+{
+  "name": "AgendaAI",
+  "short_name": "Agenda",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0f1115",
+  "theme_color": "#0f1115",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
+
+sw.js — service worker with version strategy
+--------------------------------------------
+const VERSION = 'v1';       // BUMP THIS WHEN YOU SHIP CHANGES
+const CACHE = `agendaai-${VERSION}`;
+const ASSETS = [
+  './',
+  './index.html',
+  './manifest.json',
+  './icons/icon-192.png',
+  './icons/icon-512.png'
+];
+
+self.addEventListener('install', e => {
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', e => {
+  e.waitUntil(
+    caches.keys().then(keys =>
+      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
+    ).then(() => self.clients.claim())
+  );
+});
+
+self.addEventListener('fetch', e => {
+  e.respondWith(
+    caches.match(e.request).then(r => r || fetch(e.request))
+  );
+});
+
+index.html registration block (top of <script>)
+-----------------------------------------------
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () =>
+    navigator.serviceWorker.register('./sw.js')
+  );
+}
+
+VERSION BUMP STRATEGY
+  When you ship a change: edit VERSION constant in sw.js (e.g. v1 -> v2).
+  On next load, the new worker activates and deletes the old cache.
+  Without this, iPhone serves stale cached files forever and you'll
+  swear nothing is updating.
+
+iOS META TAGS in index.html <head>
+  <meta name="viewport" content="width=device-width,initial-scale=1,
+        viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Agenda">
+  <link rel="apple-touch-icon" href="./icons/icon-192.png">
+  <link rel="manifest" href="./manifest.json">
+
+================================================================================
+FIRST-RUN SAMPLE DATA (so empty app isn't intimidating)
+================================================================================
+If localStorage["agendaai_v1"] is empty on first load, seed with:
+
+{
+  meta: { version: 1, created_at: <now>, last_export_at: null },
+  habits: [
+    { id: uuid, title: "Morning workout", time: "06:30",
+      days: ["M","T","W","R","F","S","U"], duration: 0.75,
+      notes: "Sample habit — edit or delete me",
+      anchor: { type: "fixed", offset_minutes: 0 },
+      created_at: <now>, archived: false },
+    { id: uuid, title: "Read", time: "21:00",
+      days: ["M","T","W","R","F","S","U"], duration: 0.5,
+      notes: "Sample habit",
+      anchor: { type: "fixed", offset_minutes: 0 },
+      created_at: <now>, archived: false }
+  ],
+  tasks: [], events: [], completions: [], missed: [],
+  daily_state: [], templates: []
+}
+
+Show a banner: "Sample data loaded. Tap any habit to edit or delete."
+Banner dismissed forever once user adds or deletes their first item.
+
+================================================================================
+UI / UX REQUIREMENTS
+================================================================================
+- Mobile-first. Tap targets >= 44x44 px.
+- Dark mode by default (background #0f1115). Optional light toggle.
+- Top bar: today's date, "+ quick add" button (opens modal), settings (gear icon)
+- Below top bar: morning/evening card if active
+- Below cards: today's timeline (scrollable list)
+- Below timeline: today's summary card
+- Bottom nav: Today | History | Templates | Settings
+- History tab: scrollable list of past days, tap a day to expand
+- Templates tab: list of saved templates, tap to instantly add
+- Settings tab:
+    Export data (download data.json)
+    Import data (upload data.json)
+    Toggle dark/light
+    Show summary thresholds (editable)
+    About / version
+
+NO emoji in UI elements unless user types one in a habit title.
+Use system fonts. No web fonts (fewer kb to cache).
+
+================================================================================
+ACCEPTANCE CRITERIA PER PHASE
+================================================================================
+
+PHASE 1 acceptance:
+  [ ] Open index.html in Chrome -> see today's date and empty timeline
+  [ ] Click "+ form add", fill out habit (title, time, days, duration), save
+  [ ] Habit appears in today's timeline at the right time IF today's
+      day-of-week matches
+  [ ] Refresh page -> habit still there (localStorage works)
+  [ ] Export button downloads data.json with the habit in it
+  [ ] Import button accepts the same file and restores state
+
+PHASE 2 acceptance:
+  [ ] All 20 parser test cases pass (12 valid produce expected objects,
+      8 invalid produce the expected error message with bad token cited)
+  [ ] Quick-add modal accepts input, shows preview of parsed result,
+      "Confirm" button writes to data
+  [ ] Wake-anchored habit shows on timeline at resolved time when
+      daily_state[today].wake_time is set; shows at 07:00 with warning
+      badge when not set
+
+PHASE 3 acceptance:
+  [ ] Morning card auto-appears between 06:00-12:00 when daily_state
+      has no wake_time for today
+  [ ] Submitting morning card writes wake to today, bedtime to yesterday,
+      computes hours_slept correctly
+  [ ] Evening card auto-appears 20:00+ when mood_pm not set
+  [ ] Tapping a habit row -> action sheet -> Done writes a completion
+      with correct time_bucket, day_of_week, minutes_from_planned
+  [ ] Daily summary panel shows completion %, missed list, streaks
+      updated/broken, sleep, mood
+  [ ] Weekly summary shows on Sunday eve or Monday morning, has all
+      fields populated correctly
+  [ ] Streak math passes the 3 edge cases (not-yet-done-today,
+      skipped-day, first-day)
+  [ ] At least 2 insight cards fire correctly when conditions met,
+      stay silent otherwise
+
+PHASE 4 acceptance:
+  [ ] Deploy to Render as static site, URL works
+  [ ] Open URL in iPhone Safari, tap Share -> Add to Home Screen,
+      icon appears
+  [ ] Tap icon -> opens fullscreen, no Safari chrome
+  [ ] Airplane mode on -> app still loads and works
+  [ ] Bump VERSION in sw.js, redeploy, refresh on phone -> new code loads
+
+================================================================================
+RENDER DEPLOY (for Jase, after Fable produces files)
+================================================================================
+1. Push the `agenda/` folder to a GitHub repo
+2. render.com -> New -> Static Site -> connect repo
+3. Build command: leave blank
+4. Publish directory: . (or `agenda` if you nest it)
+5. Deploy. You get a URL like agendaai-xyz.onrender.com
+6. Open URL in iPhone Safari -> Share button -> Add to Home Screen
+7. Tap icon. Done.
+
+================================================================================
+THINGS NOT IN V1 (revisit when you actually need them)
+================================================================================
+- Every-Nth-day frequency (cycle_anchor + interval)
+- Alternating-pair habits
+- Phase-transition note updates
+- Cyclic on/off (8 wk on / 2 wk off)
+- Buffer slot type
+- Conditional skip rules
+- Stepwise multi-part habits with internal waits
+- Per-day duration overrides
+- Range syntax (9am-10:30)
+- Comma day lists (M,W,Th,Su)
+- Inline notes: in quick-add
+- Voice input
+- Document upload / OCR
+- Multi-device sync
+- Light mode (if dark is default, light is optional)
+
+Add when the pain of not having it exceeds the cost of building it.
+Not before.
+
+================================================================================
+END OF SPEC
+================================================================================
+Hand the entire file above to Fable 5. Ask it to build in 4 phases as
+defined. Verify acceptance criteria after each phase before moving on.

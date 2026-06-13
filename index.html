@@ -1,0 +1,1957 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Agenda">
+<meta name="theme-color" content="#f2f2f7">
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="./icons/icon-192.png">
+<title>AgendaAI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div>
+      <h1>Agenda</h1>
+      <div class="date" id="topbar-date"></div>
+    </div>
+    <div class="topbar-actions">
+      <button class="btn btn-primary" id="add-btn">+ Add</button>
+    </div>
+  </div>
+</header>
+
+<main>
+  <section class="tab-view active" id="tab-today">
+    <div id="banner-wrap"></div>
+    <div id="weekly-summary-wrap"></div>
+    <div id="timeline"></div>
+    <div id="daily-summary-wrap"></div>
+    <div id="insights-wrap"></div>
+  </section>
+
+  <section class="tab-view" id="tab-calendar">
+    <div class="calendar-header">
+      <button class="calendar-nav-btn" id="cal-prev" aria-label="Previous month">&lsaquo;</button>
+      <h2 id="cal-month-label">—</h2>
+      <button class="calendar-nav-btn" id="cal-next" aria-label="Next month">&rsaquo;</button>
+    </div>
+    <div class="calendar-weekdays">
+      <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
+    </div>
+    <div class="calendar-grid" id="cal-grid"></div>
+    <div class="calendar-detail" id="cal-detail"></div>
+  </section>
+
+  <section class="tab-view" id="tab-history">
+    <div id="history-wrap"></div>
+  </section>
+
+  <section class="tab-view" id="tab-settings">
+    <div class="settings-section">
+      <h3>Data</h3>
+      <div class="settings-row">
+        <div>
+          <div>Export</div>
+          <div class="meta">Download a backup as data.json</div>
+        </div>
+        <button class="btn" id="export-btn">Export</button>
+      </div>
+      <div class="settings-row">
+        <div>
+          <div>Import</div>
+          <div class="meta">Restore from a data.json file</div>
+        </div>
+        <button class="btn" id="import-btn">Import</button>
+        <input type="file" id="import-file" accept="application/json,.json" hidden>
+      </div>
+      <div class="settings-row">
+        <div>
+          <div style="color: var(--danger);">Reset</div>
+          <div class="meta">Wipe everything and re-seed sample data</div>
+        </div>
+        <button class="btn btn-danger" id="reset-btn">Reset</button>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <h3>About</h3>
+      <div class="settings-row">
+        <div>Version</div>
+        <div class="meta" id="about-version">Phase 4 (v1)</div>
+      </div>
+      <div class="settings-row">
+        <div>Storage key</div>
+        <div class="meta">agendaai_v1</div>
+      </div>
+      <div class="settings-row">
+        <div>Last export</div>
+        <div class="meta" id="about-last-export">never</div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<nav class="botnav">
+  <button data-tab="today" class="active">Today</button>
+  <button data-tab="calendar">Calendar</button>
+  <button data-tab="history">History</button>
+  <button data-tab="settings">Settings</button>
+</nav>
+
+<div class="modal modal-blocking" id="morning-modal" role="dialog" aria-modal="true">
+  <div class="modal-panel">
+    <h2>Good morning</h2>
+    <div class="popup-meta">Log last night's sleep before starting your day.</div>
+
+    <div class="field">
+      <label>Wake time (now)</label>
+      <div class="wheel-picker" id="mc-wake-wheel"></div>
+    </div>
+    <div class="field">
+      <label>Bedtime last night</label>
+      <div class="wheel-picker" id="mc-bed-wheel"></div>
+    </div>
+
+    <div class="field">
+      <label>Mood</label>
+      <div class="scale" id="mc-mood">
+        <button type="button" class="scale-btn" data-val="1">1</button>
+        <button type="button" class="scale-btn" data-val="2">2</button>
+        <button type="button" class="scale-btn" data-val="3">3</button>
+        <button type="button" class="scale-btn" data-val="4">4</button>
+        <button type="button" class="scale-btn" data-val="5">5</button>
+      </div>
+      <div class="scale-labels"><span>low</span><span>high</span></div>
+    </div>
+
+    <div class="field">
+      <label>Energy</label>
+      <div class="scale" id="mc-energy">
+        <button type="button" class="scale-btn" data-val="1">1</button>
+        <button type="button" class="scale-btn" data-val="2">2</button>
+        <button type="button" class="scale-btn" data-val="3">3</button>
+        <button type="button" class="scale-btn" data-val="4">4</button>
+        <button type="button" class="scale-btn" data-val="5">5</button>
+      </div>
+      <div class="scale-labels"><span>low</span><span>high</span></div>
+    </div>
+
+    <div class="field">
+      <label>Flags</label>
+      <div class="flags-row" id="mc-flags">
+        <button type="button" class="flag-chip" data-flag="illness">Illness</button>
+        <button type="button" class="flag-chip" data-flag="travel">Travel</button>
+        <button type="button" class="flag-chip" data-flag="menstrual">Menstrual</button>
+      </div>
+    </div>
+
+    <div class="form-actions">
+      <div class="spacer"></div>
+      <button type="button" class="btn btn-primary" id="mc-submit-btn">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="form-modal" role="dialog" aria-modal="true">
+  <div class="modal-panel">
+    <h2 id="form-title">Add item</h2>
+
+    <div class="type-tabs" id="type-tabs">
+      <button type="button" data-type="habit" class="active">Habit</button>
+      <button type="button" data-type="task">Task</button>
+      <button type="button" data-type="event">Event</button>
+    </div>
+
+    <div class="field">
+      <label for="f-title">Title</label>
+      <input type="text" id="f-title" placeholder="e.g. Morning workout" autocomplete="off">
+    </div>
+
+    <div id="habit-fields">
+      <div class="field">
+        <label>Time</label>
+        <div class="wheel-picker" id="f-time-wheel"></div>
+      </div>
+      <div class="field">
+        <label>Days</label>
+        <div class="days-grid" id="days-grid">
+          <button type="button" class="day-btn" data-day="M">M</button>
+          <button type="button" class="day-btn" data-day="T">T</button>
+          <button type="button" class="day-btn" data-day="W">W</button>
+          <button type="button" class="day-btn" data-day="R">Th</button>
+          <button type="button" class="day-btn" data-day="F">F</button>
+          <button type="button" class="day-btn" data-day="S">Sa</button>
+          <button type="button" class="day-btn" data-day="U">Su</button>
+        </div>
+        <div class="preset-row">
+          <button type="button" class="preset-btn" data-preset="daily">Daily</button>
+          <button type="button" class="preset-btn" data-preset="weekdays">Weekdays</button>
+          <button type="button" class="preset-btn" data-preset="weekends">Weekends</button>
+          <button type="button" class="preset-btn" data-preset="clear">Clear</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="task-fields" hidden>
+      <div class="field">
+        <label for="f-task-date">Date</label>
+        <input type="date" id="f-task-date">
+      </div>
+      <div class="field">
+        <label>Time</label>
+        <div class="wheel-picker" id="f-task-time-wheel"></div>
+      </div>
+    </div>
+
+    <div id="event-fields" hidden>
+      <div class="field">
+        <label for="f-event-date">Date</label>
+        <input type="date" id="f-event-date">
+      </div>
+      <div class="field">
+        <label>Start</label>
+        <div class="wheel-picker" id="f-event-start-wheel"></div>
+      </div>
+      <div class="field">
+        <label>End</label>
+        <div class="wheel-picker" id="f-event-end-wheel"></div>
+      </div>
+    </div>
+
+    <div class="field" id="duration-field">
+      <label for="f-duration">Duration (minutes)</label>
+      <input type="number" id="f-duration" min="1" step="1" inputmode="numeric" placeholder="30">
+    </div>
+
+    <div class="field">
+      <label for="f-notes">Notes</label>
+      <textarea id="f-notes" placeholder="Optional"></textarea>
+    </div>
+
+    <div id="form-error" class="error-msg" hidden></div>
+
+    <div class="form-actions">
+      <button type="button" class="btn btn-danger" id="form-delete-btn" hidden>Delete</button>
+      <div class="spacer"></div>
+      <button type="button" class="btn btn-ghost" id="form-cancel-btn">Cancel</button>
+      <button type="button" class="btn btn-primary" id="form-save-btn">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="action-sheet" role="dialog" aria-modal="true">
+  <div class="modal-panel action-panel">
+    <div class="action-title" id="action-title">Item</div>
+    <button type="button" class="action-btn primary" id="action-done">Mark done</button>
+    <button type="button" class="action-btn danger" id="action-skip">Skip today</button>
+    <button type="button" class="action-btn" id="action-edit">Edit</button>
+    <button type="button" class="action-btn cancel" id="action-cancel">Cancel</button>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+// Service worker registration (Phase 4 — PWA wrapper).
+// Lets the app install to iPhone home screen and work offline.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(err => {
+      console.warn('SW registration failed:', err);
+    });
+  });
+}
+
+// ============================================================================
+// AgendaAI
+// ============================================================================
+
+const STORAGE_KEY = 'agendaai_v1';
+const BANNER_KEY = 'agendaai_sample_banner_dismissed';
+
+// JS Date.getDay(): 0=Sun, 1=Mon, ... 6=Sat
+const DAY_CODES = ['U', 'M', 'T', 'W', 'R', 'F', 'S'];
+const ALL_DAYS = ['M', 'T', 'W', 'R', 'F', 'S', 'U'];
+
+// ---------------- helpers ----------------
+
+function uuid() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
+function nowIso() { return new Date().toISOString(); }
+
+function ymd(d) {
+  return d.getFullYear() + '-' +
+    String(d.getMonth() + 1).padStart(2, '0') + '-' +
+    String(d.getDate()).padStart(2, '0');
+}
+
+function todayDate() { return ymd(new Date()); }
+function todayDayCode() { return DAY_CODES[new Date().getDay()]; }
+
+function fmt12(hhmm) {
+  if (!hhmm) return '';
+  const [h, m] = hhmm.split(':').map(Number);
+  const period = h >= 12 ? 'pm' : 'am';
+  const h12 = ((h + 11) % 12) + 1;
+  return m === 0 ? `${h12}${period}` : `${h12}:${String(m).padStart(2, '0')}${period}`;
+}
+
+function addMinutes(hhmm, minutes) {
+  const [h, m] = hhmm.split(':').map(Number);
+  const total = h * 60 + m + minutes;
+  const wrapped = ((total % 1440) + 1440) % 1440;
+  return `${String(Math.floor(wrapped / 60)).padStart(2, '0')}:${String(wrapped % 60).padStart(2, '0')}`;
+}
+
+function hoursToHuman(h) {
+  if (h == null || isNaN(h)) return '';
+  const mins = Math.round(h * 60);
+  if (mins < 60) return `${mins}m`;
+  if (mins % 60 === 0) return `${mins / 60}h`;
+  return `${Math.floor(mins / 60)}h ${mins % 60}m`;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
+function parseYmd(s) {
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
+function timeBucket(hhmm) {
+  const [h] = hhmm.split(':').map(Number);
+  if (h < 6)  return 'night';
+  if (h < 9)  return 'early-morning';
+  if (h < 12) return 'morning';
+  if (h < 14) return 'midday';
+  if (h < 18) return 'afternoon';
+  return 'evening';
+}
+
+function nowHHMM() {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
+
+function minsSinceMidnight(hhmm) {
+  const [h, m] = hhmm.split(':').map(Number);
+  return h * 60 + m;
+}
+
+function addDays(date, days) {
+  const d = parseYmd(date);
+  d.setDate(d.getDate() + days);
+  return ymd(d);
+}
+
+// ---------------- wheel time picker ----------------
+
+class WheelTimePicker {
+  constructor(container, opts = {}) {
+    this.container = container;
+    this.itemHeight = 36;
+    this.visibleCount = 5;
+    this.cols = {};
+    this.pendingValue = '09:00';
+    this.onchange = opts.onchange || null;
+    this._suppressChange = false;
+    this._changeTimer = null;
+    this.build();
+    this.bindScroll();
+  }
+
+  build() {
+    const hours = Array.from({ length: 12 }, (_, i) => i + 1);
+    const minutes = Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0'));
+    const periods = ['AM', 'PM'];
+    const pad = (this.visibleCount - 1) / 2 * this.itemHeight;
+    const padHtml = `<div style="height:${pad}px;flex-shrink:0;"></div>`;
+
+    const colHtml = (name, items) => `
+      <div class="wheel-col" data-col="${name}">
+        ${padHtml}
+        ${items.map(v => `<div class="wheel-item" data-value="${v}">${v}</div>`).join('')}
+        ${padHtml}
+      </div>
+    `;
+
+    this.container.innerHTML =
+      colHtml('hour', hours) +
+      colHtml('minute', minutes) +
+      colHtml('period', periods) +
+      `<div class="wheel-overlay"></div>`;
+
+    this.cols.hour   = this.container.querySelector('[data-col="hour"]');
+    this.cols.minute = this.container.querySelector('[data-col="minute"]');
+    this.cols.period = this.container.querySelector('[data-col="period"]');
+  }
+
+  bindScroll() {
+    Object.values(this.cols).forEach(col => {
+      col.addEventListener('scroll', () => {
+        this.updateSelection(col);
+        if (this.onchange && !this._suppressChange) {
+          clearTimeout(this._changeTimer);
+          this._changeTimer = setTimeout(() => this.onchange(this.getValue()), 400);
+        }
+      }, { passive: true });
+      col.querySelectorAll('.wheel-item').forEach((item, i) => {
+        item.addEventListener('click', () => {
+          col.scrollTo({ top: i * this.itemHeight, behavior: 'smooth' });
+        });
+      });
+    });
+  }
+
+  updateSelection(col) {
+    const idx = Math.round(col.scrollTop / this.itemHeight);
+    col.querySelectorAll('.wheel-item').forEach((item, i) => {
+      item.classList.toggle('selected', i === idx);
+    });
+  }
+
+  apply() {
+    if (this.container.offsetHeight === 0) return;
+    const [h24, m] = this.pendingValue.split(':').map(Number);
+    const period = h24 >= 12 ? 'PM' : 'AM';
+    const h12 = ((h24 + 11) % 12) + 1;
+    this._suppressChange = true;
+    this.cols.hour.scrollTop = (h12 - 1) * this.itemHeight;
+    this.cols.minute.scrollTop = m * this.itemHeight;
+    this.cols.period.scrollTop = (period === 'AM' ? 0 : 1) * this.itemHeight;
+    Object.values(this.cols).forEach(col => this.updateSelection(col));
+    setTimeout(() => { this._suppressChange = false; }, 80);
+  }
+
+  setValue(hhmm) {
+    this.pendingValue = (hhmm && /^\d{2}:\d{2}$/.test(hhmm)) ? hhmm : '09:00';
+    this.apply();
+  }
+
+  getValue() {
+    const hourIdx   = Math.round(this.cols.hour.scrollTop   / this.itemHeight);
+    const minuteIdx = Math.round(this.cols.minute.scrollTop / this.itemHeight);
+    const periodIdx = Math.round(this.cols.period.scrollTop / this.itemHeight);
+
+    const h12 = Math.max(1, Math.min(12, hourIdx + 1));
+    const m   = Math.max(0, Math.min(59, minuteIdx));
+    const isPm = periodIdx === 1;
+
+    let h24;
+    if (isPm) h24 = (h12 === 12) ? 12 : h12 + 12;
+    else      h24 = (h12 === 12) ? 0  : h12;
+
+    return `${String(h24).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  }
+}
+
+const wheelPickers = {};
+function initWheelPickers() {
+  wheelPickers.habitTime  = new WheelTimePicker(document.getElementById('f-time-wheel'));
+  wheelPickers.taskTime   = new WheelTimePicker(document.getElementById('f-task-time-wheel'));
+  wheelPickers.eventStart = new WheelTimePicker(document.getElementById('f-event-start-wheel'));
+  wheelPickers.eventEnd   = new WheelTimePicker(document.getElementById('f-event-end-wheel'));
+  wheelPickers.morningWake = new WheelTimePicker(document.getElementById('mc-wake-wheel'));
+  wheelPickers.morningBed  = new WheelTimePicker(document.getElementById('mc-bed-wheel'));
+}
+
+// ---------------- state ----------------
+
+let state = loadState();
+
+function loadState() {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.meta && parsed.meta.version === 1) {
+        return ensureShape(parsed);
+      }
+    } catch (e) {
+      console.error('Failed to parse stored data', e);
+    }
+  }
+  return seedState();
+}
+
+function ensureShape(s) {
+  s.habits ||= [];
+  s.tasks ||= [];
+  s.events ||= [];
+  s.completions ||= [];
+  s.missed ||= [];
+  s.daily_state ||= [];
+  s.templates ||= [];
+  // Migrate: drop the wake-anchored anchor field; convert wake habits to fixed at 7:00 if no time
+  for (const h of s.habits) {
+    if (h.anchor && h.anchor.type === 'wake') h.time = h.time || '07:00';
+    delete h.anchor;
+  }
+  return s;
+}
+
+function seedState() {
+  const now = nowIso();
+  return {
+    meta: { version: 1, created_at: now, last_export_at: null },
+    habits: [
+      {
+        id: uuid(),
+        title: 'Morning workout',
+        time: '06:30',
+        days: ALL_DAYS.slice(),
+        duration: 0.75,
+        notes: 'Sample habit — edit or delete me',
+        created_at: now,
+        archived: false,
+        sample: true
+      },
+      {
+        id: uuid(),
+        title: 'Read',
+        time: '21:00',
+        days: ALL_DAYS.slice(),
+        duration: 0.5,
+        notes: 'Sample habit',
+        created_at: now,
+        archived: false,
+        sample: true
+      }
+    ],
+    tasks: [],
+    events: [],
+    completions: [],
+    missed: [],
+    daily_state: [],
+    templates: []
+  };
+}
+
+function saveState() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function yesterdayDate() {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return ymd(d);
+}
+
+function ensureDailyState(date) {
+  let ds = state.daily_state.find(d => d.date === date);
+  if (!ds) {
+    ds = { date, wake_time: null, bedtime: null, mood_am: null, mood_pm: null,
+           energy: null, stress: null, illness: false, travel: false, hours_slept: null };
+    state.daily_state.push(ds);
+  }
+  return ds;
+}
+
+function computeAndStoreHoursSlept() {
+  const today = todayDate();
+  const yest = yesterdayDate();
+  const dsToday = state.daily_state.find(d => d.date === today);
+  const dsYest = state.daily_state.find(d => d.date === yest);
+  const wake = dsToday && dsToday.wake_time;
+  const bed = dsYest && dsYest.bedtime;
+  if (!wake || !bed) {
+    if (dsToday) dsToday.hours_slept = null;
+    return;
+  }
+  const [bH, bM] = bed.split(':').map(Number);
+  const [wH, wM] = wake.split(':').map(Number);
+  let bedMins = bH * 60 + bM;
+  let wakeMins = wH * 60 + wM;
+  if (wakeMins <= bedMins) wakeMins += 1440;
+  ensureDailyState(today).hours_slept = (wakeMins - bedMins) / 60;
+}
+
+// ---------------- completions / missed ----------------
+
+function findCompletion(refId, date) {
+  return state.completions.find(c => c.ref_id === refId && c.date === date);
+}
+function findMissed(refId, date) {
+  return state.missed.find(m => m.ref_id === refId && m.date === date);
+}
+function isCompletedToday(refId) { return !!findCompletion(refId, todayDate()); }
+function isSkippedToday(refId)   { return !!findMissed(refId, todayDate()); }
+
+function writeCompletion(refId, refType, plannedTime) {
+  // remove any existing miss for today, since done overrides
+  state.missed = state.missed.filter(m => !(m.ref_id === refId && m.date === todayDate()));
+
+  const now = new Date();
+  const time_done = nowHHMM();
+  let minutes_from_planned = 0;
+  if (plannedTime) {
+    minutes_from_planned = minsSinceMidnight(time_done) - minsSinceMidnight(plannedTime);
+    if (minutes_from_planned < -120) minutes_from_planned = -120;
+    if (minutes_from_planned > 600)  minutes_from_planned = 600;
+  }
+  state.completions.push({
+    id: uuid(),
+    ref_id: refId,
+    ref_type: refType,
+    date: todayDate(),
+    time_done,
+    completed_at: now.toISOString(),
+    time_bucket: timeBucket(time_done),
+    day_of_week: now.getDay(),
+    minutes_from_planned
+  });
+}
+
+function undoCompletion(refId) {
+  state.completions = state.completions.filter(
+    c => !(c.ref_id === refId && c.date === todayDate())
+  );
+}
+
+function writeMissed(refId, refType) {
+  state.completions = state.completions.filter(
+    c => !(c.ref_id === refId && c.date === todayDate())
+  );
+  state.missed.push({
+    id: uuid(),
+    ref_id: refId,
+    ref_type: refType,
+    date: todayDate(),
+    reason: 'manual'
+  });
+}
+
+function undoMissed(refId) {
+  state.missed = state.missed.filter(
+    m => !(m.ref_id === refId && m.date === todayDate())
+  );
+}
+
+// ---------------- streak math ----------------
+
+function currentStreak(habitId, endingDate) {
+  const habit = state.habits.find(h => h.id === habitId);
+  if (!habit) return 0;
+  const startYmd = habit.created_at ? ymd(new Date(habit.created_at)) : null;
+  let streak = 0;
+  const d = parseYmd(endingDate);
+  const today = todayDate();
+  let safety = 3650;
+  while (safety-- > 0) {
+    const dStr = ymd(d);
+    if (startYmd && dStr < startYmd) return streak;
+    const dCode = DAY_CODES[d.getDay()];
+    if (!habit.days.includes(dCode)) { d.setDate(d.getDate() - 1); continue; }
+    if (findCompletion(habitId, dStr)) {
+      streak += 1;
+      d.setDate(d.getDate() - 1);
+      continue;
+    }
+    if (dStr === today) {
+      // not yet done today; don't break streak
+      d.setDate(d.getDate() - 1);
+      continue;
+    }
+    return streak;
+  }
+  return streak;
+}
+
+function previousStreak(habitId, endingDate) {
+  // streak as of yesterday (or earlier "ending"-1)
+  return currentStreak(habitId, addDays(endingDate, -1));
+}
+
+function missStreak(habitId, endingDate) {
+  const habit = state.habits.find(h => h.id === habitId);
+  if (!habit) return 0;
+  let streak = 0;
+  const d = parseYmd(endingDate);
+  const today = todayDate();
+  let safety = 30;
+  while (safety-- > 0) {
+    const dStr = ymd(d);
+    const dCode = DAY_CODES[d.getDay()];
+    if (!habit.days.includes(dCode)) { d.setDate(d.getDate() - 1); continue; }
+    if (dStr === today) { d.setDate(d.getDate() - 1); continue; }
+    if (findCompletion(habitId, dStr)) return streak;
+    streak += 1;
+    d.setDate(d.getDate() - 1);
+  }
+  return streak;
+}
+
+// ---------------- daily summary ----------------
+
+function dailySummary(date) {
+  const dCode = DAY_CODES[parseYmd(date).getDay()];
+  const habitsToday = state.habits.filter(h => !h.archived && h.days.includes(dCode));
+  const tasksToday = state.tasks.filter(t => t.date === date);
+  const expected = habitsToday.length + tasksToday.length;
+  const compsToday = state.completions.filter(c => c.date === date);
+  const done = compsToday.length;
+
+  const isToday = date === todayDate();
+  const nowMins = isToday ? minsSinceMidnight(nowHHMM()) : 24 * 60;
+
+  const missed = [];
+  const checkMissed = (item) => {
+    if (compsToday.some(c => c.ref_id === item.id)) return;
+    if (!isToday) { missed.push(item.title); return; }
+    if (item.time && minsSinceMidnight(item.time) < nowMins) missed.push(item.title);
+  };
+  habitsToday.forEach(checkMissed);
+  tasksToday.forEach(checkMissed);
+
+  const streaksUpdated = [];
+  const streaksBroken = [];
+  for (const h of habitsToday) {
+    const isDone = compsToday.some(c => c.ref_id === h.id);
+    if (isDone) {
+      streaksUpdated.push({ title: h.title, streak: currentStreak(h.id, date) });
+    } else if (!isToday) {
+      const prev = previousStreak(h.id, date);
+      if (prev > 0) streaksBroken.push({ title: h.title, prev });
+    }
+  }
+
+  const ds = state.daily_state.find(d => d.date === date);
+  const sleep = ds ? ds.hours_slept : null;
+  const moodAm = ds ? ds.mood_am : null;
+  const moodPm = ds ? ds.mood_pm : null;
+
+  let firstTime = null, lastTime = null, largestGap = 0;
+  const sortedComps = compsToday
+    .map(c => new Date(c.completed_at).getTime())
+    .sort((a, b) => a - b);
+  if (sortedComps.length) {
+    firstTime = sortedComps[0];
+    lastTime  = sortedComps[sortedComps.length - 1];
+    for (let i = 1; i < sortedComps.length; i++) {
+      const gap = (sortedComps[i] - sortedComps[i-1]) / 60000;
+      if (gap > largestGap) largestGap = gap;
+    }
+  }
+
+  return {
+    completion_pct: expected > 0 ? done / expected : 0,
+    expected, done, missed,
+    streaks_updated: streaksUpdated,
+    streaks_broken: streaksBroken,
+    sleep_hours: sleep,
+    sleep_target_delta: sleep != null ? sleep - 7.5 : null,
+    mood_am: moodAm, mood_pm: moodPm,
+    mood_delta: (moodAm != null && moodPm != null) ? moodPm - moodAm : null,
+    first_task_time: firstTime, last_task_time: lastTime,
+    largest_gap_minutes: largestGap
+  };
+}
+
+function renderDailySummary() {
+  const wrap = document.getElementById('daily-summary-wrap');
+  const s = dailySummary(todayDate());
+  if (s.expected === 0) { wrap.innerHTML = ''; return; }
+  const pct = Math.round(s.completion_pct * 100);
+  const fmtT = ms => ms ? fmt12(`${String(new Date(ms).getHours()).padStart(2,'0')}:${String(new Date(ms).getMinutes()).padStart(2,'0')}`) : '—';
+  const moodArrow = s.mood_delta == null ? '' :
+    (s.mood_delta > 0 ? `(+${s.mood_delta})` : s.mood_delta < 0 ? `(${s.mood_delta})` : '(±0)');
+
+  const parts = [];
+  parts.push(`
+    <div class="summary-panel">
+      <h3>Today's Summary</h3>
+      <div class="summary-pct">
+        <span class="big">${pct}%</span>
+        <span class="label">${s.done} of ${s.expected} done</span>
+      </div>
+      <div class="pct-bar"><div class="fill" style="width:${pct}%"></div></div>
+  `);
+
+  if (s.missed.length) {
+    parts.push(`
+      <div class="summary-row"><span class="k">Missed (so far)</span><span class="v">${s.missed.length}</span></div>
+      <ul class="summary-list">${s.missed.map(t => `<li>${escapeHtml(t)}</li>`).join('')}</ul>
+    `);
+  }
+
+  if (s.streaks_updated.length) {
+    parts.push(`<div class="summary-row"><span class="k">Streaks updated</span><span class="v"></span></div>`);
+    s.streaks_updated.slice(0, 5).forEach(s2 => {
+      parts.push(`<div class="streak-row"><span>${escapeHtml(s2.title)}</span><span class="count">${s2.streak} day${s2.streak === 1 ? '' : 's'}</span></div>`);
+    });
+  }
+  if (s.streaks_broken.length) {
+    parts.push(`<div class="summary-row"><span class="k">Streaks broken</span><span class="v"></span></div>`);
+    s.streaks_broken.forEach(s2 => {
+      parts.push(`<div class="streak-row"><span>${escapeHtml(s2.title)}</span><span class="count broken">was ${s2.prev}</span></div>`);
+    });
+  }
+
+  if (s.sleep_hours != null) {
+    const dlt = s.sleep_target_delta;
+    const dltStr = dlt == null ? '' : ` (${dlt >= 0 ? '+' : ''}${dlt.toFixed(1)}h vs 7.5)`;
+    parts.push(`<div class="summary-row"><span class="k">Sleep</span><span class="v">${s.sleep_hours.toFixed(1)}h${dltStr}</span></div>`);
+  }
+  if (s.mood_am != null) {
+    parts.push(`<div class="summary-row"><span class="k">Mood (AM)</span><span class="v">${s.mood_am}/5</span></div>`);
+  }
+  if (s.mood_pm != null) {
+    parts.push(`<div class="summary-row"><span class="k">Mood (PM)</span><span class="v">${s.mood_pm}/5 ${moodArrow}</span></div>`);
+  }
+  if (s.first_task_time && s.last_task_time && s.last_task_time !== s.first_task_time) {
+    parts.push(`<div class="summary-row"><span class="k">First → Last</span><span class="v">${fmtT(s.first_task_time)} → ${fmtT(s.last_task_time)}</span></div>`);
+  }
+  if (s.largest_gap_minutes > 60) {
+    const h = Math.floor(s.largest_gap_minutes / 60);
+    const m = Math.round(s.largest_gap_minutes % 60);
+    parts.push(`<div class="summary-row"><span class="k">Largest gap</span><span class="v">${h}h ${m}m</span></div>`);
+  }
+
+  parts.push(`</div>`);
+  wrap.innerHTML = parts.join('');
+}
+
+// ---------------- weekly summary ----------------
+
+function startOfWeek(date) {
+  const d = parseYmd(date);
+  d.setDate(d.getDate() - d.getDay()); // Sunday
+  return ymd(d);
+}
+
+function weekDates(start) {
+  const out = [];
+  for (let i = 0; i < 7; i++) out.push(addDays(start, i));
+  return out;
+}
+
+function weeklySummary(weekStart) {
+  const dates = weekDates(weekStart);
+  const today = todayDate();
+  const activeHabits = state.habits.filter(h => !h.archived);
+
+  const habitStats = activeHabits.map(h => {
+    let expected = 0, done = 0;
+    for (const d of dates) {
+      if (d > today) continue;
+      const dCode = DAY_CODES[parseYmd(d).getDay()];
+      if (!h.days.includes(dCode)) continue;
+      expected += 1;
+      if (findCompletion(h.id, d)) done += 1;
+    }
+    return { id: h.id, title: h.title, expected, done, pct: expected > 0 ? done / expected : 0 };
+  }).filter(s => s.expected > 0);
+
+  const byDay = [];
+  for (let i = 0; i < 7; i++) {
+    const d = dates[i];
+    if (d > today) { byDay.push(null); continue; }
+    const dCode = DAY_CODES[i];
+    const expected = activeHabits.filter(h => h.days.includes(dCode)).length;
+    const done = state.completions.filter(c => c.date === d && c.ref_type === 'habit').length;
+    byDay.push(expected > 0 ? done / expected : null);
+  }
+
+  const sleeps = dates.map(d => state.daily_state.find(ds => ds.date === d))
+    .filter(ds => ds && ds.hours_slept != null).map(ds => ds.hours_slept);
+  const sleepAvg = sleeps.length ? sleeps.reduce((a,b)=>a+b,0) / sleeps.length : null;
+
+  const moods = dates.map(d => state.daily_state.find(ds => ds.date === d))
+    .filter(ds => ds && (ds.mood_am != null || ds.mood_pm != null))
+    .map(ds => {
+      const vals = [ds.mood_am, ds.mood_pm].filter(v => v != null);
+      return vals.reduce((a,b)=>a+b,0) / vals.length;
+    });
+  const moodAvg = moods.length ? moods.reduce((a,b)=>a+b,0) / moods.length : null;
+
+  const totalFocused = state.completions
+    .filter(c => dates.includes(c.date))
+    .reduce((acc, c) => {
+      const item = state.habits.find(h => h.id === c.ref_id)
+                || state.tasks.find(t => t.id === c.ref_id);
+      return acc + (item ? (item.duration || 0) : 0);
+    }, 0);
+
+  const bucketCounts = {};
+  for (const h of activeHabits) {
+    for (const d of dates) {
+      if (d > today) continue;
+      const dCode = DAY_CODES[parseYmd(d).getDay()];
+      if (!h.days.includes(dCode)) continue;
+      if (findCompletion(h.id, d)) continue;
+      if (!h.time) continue;
+      const b = timeBucket(h.time);
+      bucketCounts[b] = (bucketCounts[b] || 0) + 1;
+    }
+  }
+  const mostSkippedBucket = Object.entries(bucketCounts).sort((a,b) => b[1] - a[1])[0]?.[0] || null;
+
+  const dayLabels = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  let bestIdx = -1, worstIdx = -1;
+  for (let i = 0; i < 7; i++) {
+    if (byDay[i] == null) continue;
+    if (bestIdx  === -1 || byDay[i] > byDay[bestIdx])  bestIdx  = i;
+    if (worstIdx === -1 || byDay[i] < byDay[worstIdx]) worstIdx = i;
+  }
+
+  const overall = habitStats.length
+    ? habitStats.reduce((a,b) => a + b.pct, 0) / habitStats.length : 0;
+
+  return {
+    week_start: weekStart,
+    overall_pct: overall,
+    crushing_it: habitStats.filter(s => s.pct >= 0.90),
+    at_risk:     habitStats.filter(s => s.pct < 0.60),
+    best_day:  bestIdx  >= 0 ? dayLabels[bestIdx]  : null,
+    worst_day: worstIdx >= 0 ? dayLabels[worstIdx] : null,
+    sleep_avg: sleepAvg, mood_avg: moodAvg,
+    total_focused_hours: totalFocused,
+    most_skipped_bucket: mostSkippedBucket,
+    by_day: byDay
+  };
+}
+
+function shouldShowWeeklySummary() {
+  const now = new Date();
+  const dow = now.getDay();
+  const hr = now.getHours();
+  // Sunday evening (Sun + 18:00+) OR Monday before noon
+  return (dow === 0 && hr >= 18) || (dow === 1 && hr < 12);
+}
+
+function renderWeeklySummary() {
+  const wrap = document.getElementById('weekly-summary-wrap');
+  if (!shouldShowWeeklySummary()) { wrap.innerHTML = ''; return; }
+
+  const thisStart = startOfWeek(todayDate());
+  const w = weeklySummary(thisStart);
+  const prev = weeklySummary(addDays(thisStart, -7));
+  const overall = Math.round(w.overall_pct * 100);
+  const delta = Math.round((w.overall_pct - prev.overall_pct) * 100);
+  const deltaStr = (delta > 0 ? `+${delta}` : `${delta}`) + 'pp vs last week';
+  const sleepDeltaStr = (w.sleep_avg != null && prev.sleep_avg != null)
+    ? ` (${((w.sleep_avg - prev.sleep_avg) >= 0 ? '+' : '')}${(w.sleep_avg - prev.sleep_avg).toFixed(1)}h)` : '';
+
+  const parts = [];
+  parts.push(`
+    <div class="summary-panel">
+      <h3>This Week</h3>
+      <div class="summary-pct">
+        <span class="big">${overall}%</span>
+        <span class="label">${deltaStr}</span>
+      </div>
+      <div class="pct-bar"><div class="fill" style="width:${overall}%"></div></div>
+  `);
+  if (w.crushing_it.length) {
+    parts.push(`<div class="summary-row"><span class="k">Crushing it</span><span class="v">${w.crushing_it.map(s => escapeHtml(s.title)).join(', ')}</span></div>`);
+  }
+  if (w.at_risk.length) {
+    parts.push(`<div class="summary-row"><span class="k">At risk</span><span class="v">${w.at_risk.map(s => escapeHtml(s.title)).join(', ')}</span></div>`);
+  }
+  if (w.best_day)  parts.push(`<div class="summary-row"><span class="k">Best day</span><span class="v">${w.best_day}</span></div>`);
+  if (w.worst_day) parts.push(`<div class="summary-row"><span class="k">Worst day</span><span class="v">${w.worst_day}</span></div>`);
+  if (w.sleep_avg != null) {
+    parts.push(`<div class="summary-row"><span class="k">Avg sleep</span><span class="v">${w.sleep_avg.toFixed(1)}h${sleepDeltaStr}</span></div>`);
+  }
+  if (w.mood_avg != null) {
+    parts.push(`<div class="summary-row"><span class="k">Avg mood</span><span class="v">${w.mood_avg.toFixed(1)}/5</span></div>`);
+  }
+  if (w.total_focused_hours > 0) {
+    parts.push(`<div class="summary-row"><span class="k">Focused hours</span><span class="v">${w.total_focused_hours.toFixed(1)}h</span></div>`);
+  }
+  if (w.most_skipped_bucket) {
+    parts.push(`<div class="summary-row"><span class="k">Most skipped</span><span class="v">${w.most_skipped_bucket}</span></div>`);
+  }
+  parts.push(`</div>`);
+  wrap.innerHTML = parts.join('');
+}
+
+// ---------------- insight cards ----------------
+
+function computeInsights() {
+  const cards = [];
+  const today = todayDate();
+  const thisStart = startOfWeek(today);
+  const thisWeek = weeklySummary(thisStart);
+  const lastWeek = weeklySummary(addDays(thisStart, -7));
+
+  // Rule 2: any habit with miss-streak >= 3
+  for (const h of state.habits) {
+    if (h.archived) continue;
+    const ms = missStreak(h.id, today);
+    if (ms >= 3) cards.push({ tone: 'warn', title: `${h.title} skipped ${ms} days in a row`, body: 'Time to restart, or rethink the cadence.' });
+  }
+
+  // Rule 7: long-streak broken
+  for (const h of state.habits) {
+    if (h.archived) continue;
+    const yest = addDays(today, -1);
+    const yestCode = DAY_CODES[parseYmd(yest).getDay()];
+    if (!h.days.includes(yestCode)) continue;
+    if (findCompletion(h.id, yest)) continue;
+    const prev = currentStreak(h.id, addDays(yest, -1));
+    if (prev >= 7) cards.push({ tone: 'warn', title: `Long streak broken: ${h.title}`, body: `Was ${prev} days.` });
+  }
+
+  // Rule 4: bucket completion
+  const bucketDoneByBucket = {};
+  const bucketExpectedByBucket = {};
+  for (const h of state.habits) {
+    if (h.archived || !h.time) continue;
+    const b = timeBucket(h.time);
+    for (const d of weekDates(thisStart)) {
+      if (d > today) continue;
+      const dCode = DAY_CODES[parseYmd(d).getDay()];
+      if (!h.days.includes(dCode)) continue;
+      bucketExpectedByBucket[b] = (bucketExpectedByBucket[b] || 0) + 1;
+      if (findCompletion(h.id, d)) bucketDoneByBucket[b] = (bucketDoneByBucket[b] || 0) + 1;
+    }
+  }
+  for (const b in bucketExpectedByBucket) {
+    const exp = bucketExpectedByBucket[b];
+    const done = bucketDoneByBucket[b] || 0;
+    if (exp < 3) continue;
+    const rate = done / exp;
+    if (rate >= 0.85) cards.push({ tone: 'good', title: `${b} habits: ${Math.round(rate*100)}% completion this week`, body: 'Strong consistency.' });
+    else if (rate <= 0.40) cards.push({ tone: 'warn', title: `${b} habits: ${Math.round(rate*100)}% completion this week`, body: 'This window keeps getting missed.' });
+  }
+
+  // Rule 5: habit at_risk now, crushing_it last week
+  const lastIds = new Set(lastWeek.crushing_it.map(s => s.id));
+  for (const s of thisWeek.at_risk) {
+    if (lastIds.has(s.id)) cards.push({ tone: 'warn', title: `${s.title} dropped from crushing-it to at-risk this week`, body: '' });
+  }
+
+  // Rule 6: focused hours up >=5 vs last week
+  if (thisWeek.total_focused_hours - lastWeek.total_focused_hours >= 5) {
+    const diff = Math.round(thisWeek.total_focused_hours - lastWeek.total_focused_hours);
+    cards.push({ tone: 'good', title: `Focused hours up by ${diff}h this week`, body: '' });
+  }
+
+  // Rule 1: bedtime drift >=30 min later vs last week
+  const avgBedtime = (dates) => {
+    const mins = dates.map(d => state.daily_state.find(ds => ds.date === d))
+      .filter(ds => ds && ds.bedtime)
+      .map(ds => {
+        let m = minsSinceMidnight(ds.bedtime);
+        // treat 00:00-04:00 as next day
+        if (m < 4 * 60) m += 1440;
+        return m;
+      });
+    return mins.length ? mins.reduce((a,b)=>a+b,0) / mins.length : null;
+  };
+  const thisBed = avgBedtime(weekDates(thisStart));
+  const lastBed = avgBedtime(weekDates(addDays(thisStart, -7)));
+  if (thisBed != null && lastBed != null && (thisBed - lastBed) >= 30) {
+    cards.push({ tone: 'warn', title: `Bedtime drifted ${Math.round(thisBed - lastBed)} min later vs last week`, body: 'Sleep regularity matters.' });
+  }
+
+  return cards;
+}
+
+function renderInsights() {
+  const wrap = document.getElementById('insights-wrap');
+  const cards = computeInsights();
+  if (cards.length === 0) { wrap.innerHTML = ''; return; }
+  wrap.innerHTML = cards.map(c => `
+    <div class="insight-card ${c.tone}">
+      <h4>${escapeHtml(c.title)}</h4>
+      ${c.body ? `<p>${escapeHtml(c.body)}</p>` : ''}
+    </div>
+  `).join('');
+}
+
+// ---------------- morning popup (blocking) ----------------
+
+const morningState = {
+  mood: null,
+  energy: null,
+  flags: { illness: false, travel: false, menstrual: false }
+};
+
+function shouldShowMorningPopup() {
+  const h = new Date().getHours();
+  if (h < 7) return false; // 7am local time
+  const ds = state.daily_state.find(d => d.date === todayDate());
+  return !ds || !ds.wake_time;
+}
+
+function showMorningPopup() {
+  morningState.mood = null;
+  morningState.energy = null;
+  morningState.flags = { illness: false, travel: false, menstrual: false };
+  const wake = nowHHMM();
+  const dsYest = state.daily_state.find(d => d.date === yesterdayDate());
+  const bed = (dsYest && dsYest.bedtime) || '23:00';
+  document.getElementById('morning-modal').classList.add('open');
+  requestAnimationFrame(() => {
+    if (wheelPickers.morningWake) wheelPickers.morningWake.setValue(wake);
+    if (wheelPickers.morningBed)  wheelPickers.morningBed.setValue(bed);
+    refreshScale('#mc-mood',   null);
+    refreshScale('#mc-energy', null);
+    refreshFlags();
+  });
+}
+
+function hideMorningPopup() {
+  document.getElementById('morning-modal').classList.remove('open');
+}
+
+function maybeShowMorningPopup() {
+  if (shouldShowMorningPopup()) showMorningPopup();
+  else hideMorningPopup();
+}
+
+function refreshScale(selector, value) {
+  document.querySelectorAll(`${selector} .scale-btn`).forEach(b => {
+    b.classList.toggle('active', String(value) === b.dataset.val);
+  });
+}
+
+function refreshFlags() {
+  document.querySelectorAll('#mc-flags .flag-chip').forEach(b => {
+    b.classList.toggle('active', !!morningState.flags[b.dataset.flag]);
+  });
+}
+
+function submitMorningPopup() {
+  const wake = wheelPickers.morningWake.getValue();
+  const bed  = wheelPickers.morningBed.getValue();
+
+  const dsToday = ensureDailyState(todayDate());
+  dsToday.wake_time = wake;
+  if (morningState.mood   != null) dsToday.mood_am = morningState.mood;
+  if (morningState.energy != null) dsToday.energy  = morningState.energy;
+  dsToday.illness = !!morningState.flags.illness;
+  dsToday.travel  = !!morningState.flags.travel;
+
+  const dsYest = ensureDailyState(yesterdayDate());
+  dsYest.bedtime = bed;
+
+  computeAndStoreHoursSlept();
+  saveState();
+  hideMorningPopup();
+  toast('Morning log saved');
+  render();
+}
+
+// ---------------- action sheet ----------------
+
+const actionSheet = document.getElementById('action-sheet');
+let actionContext = null; // { kind, id }
+
+function openActionSheet(kind, id) {
+  actionContext = { kind, id };
+  const item = kind === 'habit' ? state.habits.find(h => h.id === id)
+             : kind === 'task'  ? state.tasks.find(t => t.id === id)
+             : state.events.find(e => e.id === id);
+  if (!item) return;
+  document.getElementById('action-title').textContent = item.title;
+  const doneBtn = document.getElementById('action-done');
+  const skipBtn = document.getElementById('action-skip');
+  if (kind === 'event') {
+    doneBtn.hidden = true;
+    skipBtn.hidden = true;
+  } else {
+    doneBtn.hidden = false;
+    skipBtn.hidden = false;
+    if (isCompletedToday(id)) {
+      doneBtn.textContent = 'Mark not done';
+    } else {
+      doneBtn.textContent = 'Mark done';
+    }
+    if (isSkippedToday(id)) {
+      skipBtn.textContent = 'Unskip';
+    } else {
+      skipBtn.textContent = 'Skip today';
+    }
+  }
+  actionSheet.classList.add('open');
+}
+
+function closeActionSheet() {
+  actionSheet.classList.remove('open');
+  actionContext = null;
+}
+
+function handleActionDone() {
+  if (!actionContext) return;
+  const { kind, id } = actionContext;
+  const item = kind === 'habit' ? state.habits.find(h => h.id === id)
+                                 : state.tasks.find(t => t.id === id);
+  if (!item) { closeActionSheet(); return; }
+  if (isCompletedToday(id)) {
+    undoCompletion(id);
+  } else {
+    writeCompletion(id, kind, item.time || null);
+  }
+  saveState();
+  closeActionSheet();
+  render();
+}
+
+function handleActionSkip() {
+  if (!actionContext) return;
+  const { kind, id } = actionContext;
+  if (isSkippedToday(id)) {
+    undoMissed(id);
+  } else {
+    writeMissed(id, kind);
+  }
+  saveState();
+  closeActionSheet();
+  render();
+}
+
+function handleActionEdit() {
+  if (!actionContext) return;
+  const { kind, id } = actionContext;
+  closeActionSheet();
+  openEditModal(kind, id);
+}
+
+// ---------------- timeline ----------------
+
+function buildTimeline() {
+  const today = todayDate();
+  const dayCode = todayDayCode();
+  const items = [];
+
+  for (const h of state.habits) {
+    if (h.archived) continue;
+    if (!h.days || !h.days.includes(dayCode)) continue;
+
+    items.push({
+      kind: 'habit',
+      id: h.id,
+      title: h.title,
+      time: h.time,
+      duration: h.duration,
+      notes: h.notes
+    });
+  }
+
+  for (const t of state.tasks) {
+    if (t.date !== today) continue;
+    items.push({
+      kind: 'task',
+      id: t.id,
+      title: t.title,
+      time: t.time,
+      duration: t.duration,
+      notes: t.notes,
+      done: t.done
+    });
+  }
+
+  for (const e of state.events) {
+    if (e.date !== today) continue;
+    items.push({
+      kind: 'event',
+      id: e.id,
+      title: e.title,
+      time: e.start,
+      end: e.end,
+      notes: e.notes
+    });
+  }
+
+  items.sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99'));
+  return items;
+}
+
+function renderTimeline() {
+  const container = document.getElementById('timeline');
+  const items = buildTimeline();
+
+  if (items.length === 0) {
+    container.innerHTML = `<div class="empty">Nothing on today's timeline.<br>Tap <strong>+ Add</strong> to create one.</div>`;
+    return;
+  }
+
+  container.innerHTML = items.map(it => {
+    const meta = [];
+    meta.push(`<span class="item-badge badge-kind">${it.kind}</span>`);
+    if (it.kind === 'event' && it.end) {
+      meta.push(`until ${fmt12(it.end)}`);
+    } else if (it.duration) {
+      meta.push(hoursToHuman(it.duration));
+    }
+    const done    = it.kind !== 'event' && isCompletedToday(it.id);
+    const skipped = it.kind !== 'event' && !done && isSkippedToday(it.id);
+    const stateClass = done ? ' done' : skipped ? ' skipped' : '';
+    const check = done ? '&check;' : skipped ? '&minus;' : '';
+    return `
+      <div class="item-row${stateClass}" data-kind="${it.kind}" data-id="${it.id}">
+        <div class="item-time">${fmt12(it.time) || '—'}</div>
+        <div class="item-body">
+          <div class="item-title">${escapeHtml(it.title)}</div>
+          <div class="item-meta">${meta.join(' ')}</div>
+        </div>
+        <div class="item-check">${check}</div>
+      </div>
+    `;
+  }).join('');
+
+  container.querySelectorAll('.item-row').forEach(row => {
+    row.addEventListener('click', () => openActionSheet(row.dataset.kind, row.dataset.id));
+  });
+}
+
+// ---------------- banner ----------------
+
+function shouldShowBanner() {
+  if (localStorage.getItem(BANNER_KEY) === 'true') return false;
+  if (state.habits.length === 0) return false;
+  return state.habits.every(h => h.sample);
+}
+
+function renderBanner() {
+  const wrap = document.getElementById('banner-wrap');
+  if (!shouldShowBanner()) { wrap.innerHTML = ''; return; }
+  wrap.innerHTML = `
+    <div class="banner">
+      <span>Sample data loaded. Tap any habit to edit or delete.</span>
+      <button id="dismiss-banner">Dismiss</button>
+    </div>`;
+  document.getElementById('dismiss-banner').addEventListener('click', dismissBanner);
+}
+
+function dismissBanner() {
+  localStorage.setItem(BANNER_KEY, 'true');
+  renderBanner();
+}
+
+// ---------------- topbar / settings ----------------
+
+function renderTopbar() {
+  const d = new Date();
+  const opts = { weekday: 'long', month: 'long', day: 'numeric' };
+  document.getElementById('topbar-date').textContent = d.toLocaleDateString(undefined, opts);
+}
+
+function renderSettings() {
+  const el = document.getElementById('about-last-export');
+  if (state.meta.last_export_at) {
+    el.textContent = new Date(state.meta.last_export_at).toLocaleString();
+  } else {
+    el.textContent = 'never';
+  }
+}
+
+// ---------------- form modal ----------------
+
+const modal = document.getElementById('form-modal');
+let currentType = 'habit';
+let editingKind = null;
+let editingId = null;
+
+function openAddModal() {
+  editingKind = null;
+  editingId = null;
+  document.getElementById('form-title').textContent = 'Add item';
+  document.getElementById('form-delete-btn').hidden = true;
+
+  document.getElementById('f-title').value = '';
+  document.getElementById('f-notes').value = '';
+  document.getElementById('f-duration').value = 30;
+  document.getElementById('f-task-date').value = todayDate();
+  document.getElementById('f-event-date').value = todayDate();
+
+  wheelPickers.habitTime.setValue('09:00');
+  wheelPickers.taskTime.setValue('09:00');
+  wheelPickers.eventStart.setValue('09:00');
+  wheelPickers.eventEnd.setValue('10:00');
+
+  setSelectedDays(ALL_DAYS);
+  clearError();
+  modal.classList.add('open');
+
+  requestAnimationFrame(() => {
+    setType('habit');
+    document.getElementById('f-title').focus();
+  });
+}
+
+function openEditModal(kind, id) {
+  editingKind = kind;
+  editingId = id;
+  document.getElementById('form-title').textContent = `Edit ${kind}`;
+  document.getElementById('form-delete-btn').hidden = false;
+  clearError();
+
+  if (kind === 'habit') {
+    const h = state.habits.find(x => x.id === id);
+    if (!h) return;
+    document.getElementById('f-title').value = h.title;
+    document.getElementById('f-notes').value = h.notes || '';
+    document.getElementById('f-duration').value = Math.round((h.duration || 0) * 60);
+    setSelectedDays(h.days || []);
+    wheelPickers.habitTime.setValue(h.time || '09:00');
+  } else if (kind === 'task') {
+    const t = state.tasks.find(x => x.id === id);
+    if (!t) return;
+    document.getElementById('f-title').value = t.title;
+    document.getElementById('f-task-date').value = t.date;
+    wheelPickers.taskTime.setValue(t.time || '09:00');
+    document.getElementById('f-duration').value = Math.round((t.duration || 0) * 60);
+    document.getElementById('f-notes').value = t.notes || '';
+  } else if (kind === 'event') {
+    const e = state.events.find(x => x.id === id);
+    if (!e) return;
+    document.getElementById('f-title').value = e.title;
+    document.getElementById('f-event-date').value = e.date;
+    wheelPickers.eventStart.setValue(e.start || '09:00');
+    wheelPickers.eventEnd.setValue(e.end || '10:00');
+    document.getElementById('f-notes').value = e.notes || '';
+  }
+
+  modal.classList.add('open');
+  requestAnimationFrame(() => setType(kind));
+}
+
+function closeModal() { modal.classList.remove('open'); }
+
+function setType(type) {
+  if (editingKind && editingKind !== type) return; // can't change type while editing
+  currentType = type;
+  document.querySelectorAll('#type-tabs button').forEach(b => {
+    b.classList.toggle('active', b.dataset.type === type);
+    b.disabled = !!editingKind && b.dataset.type !== editingKind;
+    b.style.opacity = b.disabled ? '0.4' : '';
+  });
+  document.getElementById('habit-fields').hidden = type !== 'habit';
+  document.getElementById('task-fields').hidden = type !== 'task';
+  document.getElementById('event-fields').hidden = type !== 'event';
+  document.getElementById('duration-field').hidden = type === 'event';
+
+  requestAnimationFrame(() => {
+    if (type === 'habit') wheelPickers.habitTime.apply();
+    else if (type === 'task') wheelPickers.taskTime.apply();
+    else if (type === 'event') {
+      wheelPickers.eventStart.apply();
+      wheelPickers.eventEnd.apply();
+    }
+  });
+}
+
+function getSelectedDays() {
+  return Array.from(document.querySelectorAll('#days-grid .day-btn.active'))
+    .map(b => b.dataset.day);
+}
+
+function setSelectedDays(days) {
+  document.querySelectorAll('#days-grid .day-btn').forEach(b => {
+    b.classList.toggle('active', days.includes(b.dataset.day));
+  });
+}
+
+function showError(msg) {
+  const el = document.getElementById('form-error');
+  el.textContent = msg;
+  el.hidden = false;
+}
+
+function clearError() {
+  document.getElementById('form-error').hidden = true;
+}
+
+function saveForm() {
+  clearError();
+  const title = document.getElementById('f-title').value.trim();
+  const notes = document.getElementById('f-notes').value.trim();
+  if (!title) { showError('Title is required.'); return; }
+
+  if (currentType === 'habit') {
+    const time = wheelPickers.habitTime.getValue();
+    const days = getSelectedDays();
+    if (days.length === 0) { showError('Pick at least one day.'); return; }
+    const durMin = parseFloat(document.getElementById('f-duration').value);
+    if (!durMin || durMin <= 0) {
+      showError('Duration must be a positive number of minutes.');
+      return;
+    }
+
+    if (editingId) {
+      const h = state.habits.find(x => x.id === editingId);
+      Object.assign(h, { title, time, days, duration: durMin / 60, notes });
+      delete h.sample;
+    } else {
+      state.habits.push({
+        id: uuid(),
+        title, time, days,
+        duration: durMin / 60,
+        notes,
+        created_at: nowIso(),
+        archived: false
+      });
+    }
+  } else if (currentType === 'task') {
+    const date = document.getElementById('f-task-date').value;
+    const time = wheelPickers.taskTime.getValue();
+    if (!date) { showError('Date is required.'); return; }
+    const durMin = parseFloat(document.getElementById('f-duration').value);
+    if (!durMin || durMin <= 0) {
+      showError('Duration must be a positive number of minutes.');
+      return;
+    }
+
+    if (editingId) {
+      const t = state.tasks.find(x => x.id === editingId);
+      Object.assign(t, { title, date, time, duration: durMin / 60, notes });
+    } else {
+      state.tasks.push({
+        id: uuid(),
+        title, date, time,
+        duration: durMin / 60,
+        notes,
+        created_at: nowIso(),
+        done: false
+      });
+    }
+  } else if (currentType === 'event') {
+    const date = document.getElementById('f-event-date').value;
+    const start = wheelPickers.eventStart.getValue();
+    const end = wheelPickers.eventEnd.getValue();
+    if (!date) { showError('Date is required.'); return; }
+    if (start >= end) { showError('End must be after start.'); return; }
+
+    if (editingId) {
+      const e = state.events.find(x => x.id === editingId);
+      Object.assign(e, { title, date, start, end, notes });
+    } else {
+      state.events.push({
+        id: uuid(),
+        title, date, start, end, notes,
+        created_at: nowIso()
+      });
+    }
+  }
+
+  saveState();
+  closeModal();
+  render();
+  toast(editingId ? 'Updated' : 'Added');
+}
+
+function deleteCurrent() {
+  if (!editingKind || !editingId) return;
+  if (!confirm('Delete this item?')) return;
+  if (editingKind === 'habit')      state.habits = state.habits.filter(x => x.id !== editingId);
+  else if (editingKind === 'task')  state.tasks  = state.tasks.filter(x => x.id !== editingId);
+  else if (editingKind === 'event') state.events = state.events.filter(x => x.id !== editingId);
+  saveState();
+  closeModal();
+  render();
+  toast('Deleted');
+}
+
+// ---------------- export / import / reset ----------------
+
+function exportData() {
+  state.meta.last_export_at = nowIso();
+  saveState();
+  const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `agendaai-${todayDate()}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  renderSettings();
+  toast('Exported data.json');
+}
+
+function importData(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const parsed = JSON.parse(reader.result);
+      if (!parsed || !parsed.meta || parsed.meta.version !== 1) {
+        toast('Invalid file: expected agendaai schema v1');
+        return;
+      }
+      if (!confirm('Replace all current data with the imported file?')) return;
+      state = ensureShape(parsed);
+      saveState();
+      render();
+      toast('Imported');
+    } catch (e) {
+      toast('Import failed: ' + e.message);
+    }
+  };
+  reader.onerror = () => toast('Could not read file');
+  reader.readAsText(file);
+}
+
+function resetData() {
+  if (!confirm('Wipe all data and re-seed sample habits? This cannot be undone.')) return;
+  state = seedState();
+  saveState();
+  localStorage.removeItem(BANNER_KEY);
+  render();
+  toast('Reset to sample data');
+}
+
+// ---------------- toast ----------------
+
+let toastTimer;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 1800);
+}
+
+// ---------------- tabs ----------------
+
+function switchTab(tab) {
+  document.querySelectorAll('.tab-view').forEach(v => v.classList.remove('active'));
+  document.getElementById(`tab-${tab}`).classList.add('active');
+  document.querySelectorAll('.botnav button').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === tab);
+  });
+  if (tab === 'settings') renderSettings();
+}
+
+// ---------------- main render ----------------
+
+function render() {
+  renderTopbar();
+  renderBanner();
+  renderWeeklySummary();
+  renderTimeline();
+  renderDailySummary();
+  renderInsights();
+  renderHistory();
+  renderCalendar();
+  renderSettings();
+  maybeShowMorningPopup();
+}
+
+// ---------------- calendar ----------------
+
+let calendarViewYM = (() => {
+  const d = new Date();
+  return { y: d.getFullYear(), m: d.getMonth() };
+})();
+let calendarSelectedDate = todayDate();
+
+function shiftCalendarMonth(delta) {
+  const d = new Date(calendarViewYM.y, calendarViewYM.m + delta, 1);
+  calendarViewYM = { y: d.getFullYear(), m: d.getMonth() };
+  renderCalendar();
+}
+
+function renderCalendar() {
+  const grid  = document.getElementById('cal-grid');
+  const label = document.getElementById('cal-month-label');
+  if (!grid || !label) return;
+
+  const monthDate = new Date(calendarViewYM.y, calendarViewYM.m, 1);
+  label.textContent = monthDate.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+
+  const firstDow = monthDate.getDay(); // 0 = Sunday
+  const daysInMonth = new Date(calendarViewYM.y, calendarViewYM.m + 1, 0).getDate();
+  const daysInPrevMonth = new Date(calendarViewYM.y, calendarViewYM.m, 0).getDate();
+
+  const today = todayDate();
+  const cells = [];
+
+  // Previous month tail
+  for (let i = firstDow - 1; i >= 0; i--) {
+    const day = daysInPrevMonth - i;
+    const d = new Date(calendarViewYM.y, calendarViewYM.m - 1, day);
+    cells.push({ date: ymd(d), day, otherMonth: true });
+  }
+  // Current month
+  for (let day = 1; day <= daysInMonth; day++) {
+    const d = new Date(calendarViewYM.y, calendarViewYM.m, day);
+    cells.push({ date: ymd(d), day, otherMonth: false });
+  }
+  // Next month head (fill to multiple of 7)
+  while (cells.length % 7 !== 0) {
+    const idx = cells.length - (firstDow + daysInMonth);
+    const day = idx + 1;
+    const d = new Date(calendarViewYM.y, calendarViewYM.m + 1, day);
+    cells.push({ date: ymd(d), day, otherMonth: true });
+  }
+
+  grid.innerHTML = cells.map(c => {
+    const classes = ['calendar-day'];
+    if (c.otherMonth) classes.push('other-month');
+    if (c.date === today) classes.push('today');
+    if (c.date === calendarSelectedDate) classes.push('selected');
+    if (c.date <= today && !c.otherMonth) {
+      const s = dailySummary(c.date);
+      if (s.expected > 0) {
+        const pct = s.completion_pct;
+        if (pct >= 0.75) classes.push('high');
+        else if (pct >= 0.40) classes.push('mid');
+        else classes.push('low');
+      }
+    }
+    return `<div class="${classes.join(' ')}" data-date="${c.date}">${c.day}</div>`;
+  }).join('');
+
+  grid.querySelectorAll('.calendar-day').forEach(el => {
+    el.addEventListener('click', () => {
+      calendarSelectedDate = el.dataset.date;
+      renderCalendar();
+    });
+  });
+
+  renderCalendarDetail();
+}
+
+function renderCalendarDetail() {
+  const wrap = document.getElementById('cal-detail');
+  if (!wrap) return;
+  const date = calendarSelectedDate;
+  const dObj = parseYmd(date);
+  const dCode = DAY_CODES[dObj.getDay()];
+  const dStr = dObj.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+
+  const habits = state.habits.filter(h => !h.archived && h.days.includes(dCode));
+  const tasks  = state.tasks.filter(t => t.date === date);
+  const events = state.events.filter(e => e.date === date);
+
+  const all = [
+    ...habits.map(h => ({ kind: 'habit', id: h.id, title: h.title, time: h.time, duration: h.duration })),
+    ...tasks.map(t  => ({ kind: 'task',  id: t.id, title: t.title, time: t.time, duration: t.duration })),
+    ...events.map(e => ({ kind: 'event', id: e.id, title: e.title, time: e.start, end: e.end }))
+  ].sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99'));
+
+  const summary = dailySummary(date);
+  const today = todayDate();
+
+  const summaryStr = summary.expected > 0
+    ? `${summary.done}/${summary.expected} completed (${Math.round(summary.completion_pct * 100)}%)`
+    : 'Nothing scheduled.';
+
+  const addBtnHtml = `<button type="button" class="btn btn-primary cal-add-btn" id="cal-add-btn">+ Add to this day</button>`;
+
+  if (all.length === 0) {
+    wrap.innerHTML = `
+      <h3>${dStr}</h3>
+      <div class="meta">${summaryStr}</div>
+      ${addBtnHtml}
+    `;
+    wireCalendarAddBtn(date);
+    return;
+  }
+
+  wrap.innerHTML = `
+    <h3>${dStr}</h3>
+    <div class="meta">${summaryStr}</div>
+    ${addBtnHtml}
+    ${all.map(it => {
+      const meta = [];
+      meta.push(`<span class="item-badge badge-kind">${it.kind}</span>`);
+      if (it.kind === 'event' && it.end) meta.push(`until ${fmt12(it.end)}`);
+      else if (it.duration) meta.push(hoursToHuman(it.duration));
+      const done = it.kind !== 'event' && date <= today && state.completions.some(c => c.ref_id === it.id && c.date === date);
+      const skipped = it.kind !== 'event' && !done && state.missed.some(m => m.ref_id === it.id && m.date === date);
+      const stateClass = done ? ' done' : skipped ? ' skipped' : '';
+      const check = done ? '&check;' : skipped ? '&minus;' : '';
+      return `
+        <div class="item-row${stateClass}" data-kind="${it.kind}" data-id="${it.id}">
+          <div class="item-time">${fmt12(it.time) || '—'}</div>
+          <div class="item-body">
+            <div class="item-title">${escapeHtml(it.title)}</div>
+            <div class="item-meta">${meta.join(' ')}</div>
+          </div>
+          <div class="item-check">${check}</div>
+        </div>
+      `;
+    }).join('')}
+  `;
+  wireCalendarAddBtn(date);
+
+  wrap.querySelectorAll('.item-row[data-kind][data-id]').forEach(row => {
+    row.addEventListener('click', () => openEditModal(row.dataset.kind, row.dataset.id));
+  });
+}
+
+function wireCalendarAddBtn(date) {
+  const btn = document.getElementById('cal-add-btn');
+  if (btn) btn.addEventListener('click', () => openAddModalForDate(date));
+}
+
+function openAddModalForDate(date) {
+  openAddModal();
+  // Default to task and pre-fill date once the modal is laid out.
+  requestAnimationFrame(() => {
+    setType('task');
+    const taskDateEl = document.getElementById('f-task-date');
+    const eventDateEl = document.getElementById('f-event-date');
+    if (taskDateEl)  taskDateEl.value  = date;
+    if (eventDateEl) eventDateEl.value = date;
+  });
+}
+
+function renderHistory() {
+  const wrap = document.getElementById('history-wrap');
+  const today = todayDate();
+
+  const datesWithData = new Set();
+  state.completions.forEach(c => datesWithData.add(c.date));
+  state.daily_state.forEach(d => datesWithData.add(d.date));
+  state.missed.forEach(m => datesWithData.add(m.date));
+
+  if (datesWithData.size === 0) {
+    wrap.innerHTML = `<div class="empty">No history yet.<br>Mark items done as you go.</div>`;
+    return;
+  }
+
+  const days = [];
+  for (let i = 1; i <= 14; i++) {
+    const d = addDays(today, -i);
+    if (!datesWithData.has(d) && new Date(d) < new Date(state.meta.created_at)) break;
+    const s = dailySummary(d);
+    if (s.expected === 0 && !state.daily_state.find(x => x.date === d)) continue;
+    days.push({ date: d, summary: s });
+  }
+
+  if (days.length === 0) {
+    wrap.innerHTML = `<div class="empty">No history yet.<br>Mark items done as you go.</div>`;
+    return;
+  }
+
+  wrap.innerHTML = days.map(({ date, summary }) => {
+    const dObj = parseYmd(date);
+    const dStr = dObj.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+    const pct = summary.expected > 0 ? Math.round(summary.completion_pct * 100) : null;
+    const sleep = summary.sleep_hours;
+    const ds = state.daily_state.find(x => x.date === date);
+    const meta = [];
+    if (pct != null) meta.push(`<span class="item-badge badge-kind">${pct}%</span>`);
+    if (sleep != null) meta.push(`${sleep.toFixed(1)}h sleep`);
+    if (ds && ds.mood_pm != null) meta.push(`mood ${ds.mood_pm}/5`);
+    return `
+      <div class="item-row" style="cursor: default;">
+        <div class="item-time">${dStr}</div>
+        <div class="item-body">
+          <div class="item-title">${summary.done}/${summary.expected} completed</div>
+          <div class="item-meta">${meta.join(' &middot; ') || '—'}</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+// ---------------- wire-up ----------------
+
+document.getElementById('add-btn').addEventListener('click', openAddModal);
+
+document.querySelectorAll('.botnav button').forEach(b => {
+  b.addEventListener('click', () => switchTab(b.dataset.tab));
+});
+
+document.querySelectorAll('#type-tabs button').forEach(b => {
+  b.addEventListener('click', () => setType(b.dataset.type));
+});
+
+document.querySelectorAll('#days-grid .day-btn').forEach(b => {
+  b.addEventListener('click', () => b.classList.toggle('active'));
+});
+
+document.querySelectorAll('.preset-btn').forEach(b => {
+  b.addEventListener('click', () => {
+    const p = b.dataset.preset;
+    if (p === 'daily')         setSelectedDays(ALL_DAYS);
+    else if (p === 'weekdays') setSelectedDays(['M', 'T', 'W', 'R', 'F']);
+    else if (p === 'weekends') setSelectedDays(['S', 'U']);
+    else if (p === 'clear')    setSelectedDays([]);
+  });
+});
+
+document.getElementById('form-cancel-btn').addEventListener('click', closeModal);
+document.getElementById('form-save-btn').addEventListener('click', saveForm);
+document.getElementById('form-delete-btn').addEventListener('click', deleteCurrent);
+
+modal.addEventListener('click', e => {
+  if (e.target === modal) closeModal();
+});
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && modal.classList.contains('open')) closeModal();
+});
+
+document.getElementById('export-btn').addEventListener('click', exportData);
+document.getElementById('import-btn').addEventListener('click', () => {
+  document.getElementById('import-file').click();
+});
+document.getElementById('import-file').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (file) importData(file);
+  e.target.value = '';
+});
+document.getElementById('reset-btn').addEventListener('click', resetData);
+
+// Morning popup
+document.querySelectorAll('#mc-mood .scale-btn').forEach(b => {
+  b.addEventListener('click', () => {
+    morningState.mood = Number(b.dataset.val);
+    refreshScale('#mc-mood', morningState.mood);
+  });
+});
+document.querySelectorAll('#mc-energy .scale-btn').forEach(b => {
+  b.addEventListener('click', () => {
+    morningState.energy = Number(b.dataset.val);
+    refreshScale('#mc-energy', morningState.energy);
+  });
+});
+document.querySelectorAll('#mc-flags .flag-chip').forEach(b => {
+  b.addEventListener('click', () => {
+    const f = b.dataset.flag;
+    morningState.flags[f] = !morningState.flags[f];
+    refreshFlags();
+  });
+});
+document.getElementById('mc-submit-btn').addEventListener('click', submitMorningPopup);
+
+// Calendar nav
+document.getElementById('cal-prev').addEventListener('click', () => shiftCalendarMonth(-1));
+document.getElementById('cal-next').addEventListener('click', () => shiftCalendarMonth(1));
+
+// Action sheet
+document.getElementById('action-done').addEventListener('click', handleActionDone);
+document.getElementById('action-skip').addEventListener('click', handleActionSkip);
+document.getElementById('action-edit').addEventListener('click', handleActionEdit);
+document.getElementById('action-cancel').addEventListener('click', closeActionSheet);
+actionSheet.addEventListener('click', e => {
+  if (e.target === actionSheet) closeActionSheet();
+});
+
+initWheelPickers();
+render();
+
+// Poll once a minute so the morning popup fires even if the app was
+// opened before 7am and left open.
+setInterval(maybeShowMorningPopup, 60 * 1000);
+</script>
+</body>
+</html>
