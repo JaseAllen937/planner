@@ -32,10 +32,7 @@
 <main>
   <section class="tab-view active" id="tab-today">
     <div id="banner-wrap"></div>
-    <div id="weekly-summary-wrap"></div>
     <div id="timeline"></div>
-    <div id="daily-summary-wrap"></div>
-    <div id="insights-wrap"></div>
   </section>
 
   <section class="tab-view" id="tab-calendar">
@@ -52,6 +49,9 @@
   </section>
 
   <section class="tab-view" id="tab-history">
+    <div id="weekly-summary-wrap"></div>
+    <div id="daily-summary-wrap"></div>
+    <div id="insights-wrap"></div>
     <div id="history-wrap"></div>
   </section>
 
@@ -103,7 +103,7 @@
 <nav class="botnav">
   <button data-tab="today" class="active">Today</button>
   <button data-tab="calendar">Calendar</button>
-  <button data-tab="history">History</button>
+  <button data-tab="history">Stats</button>
   <button data-tab="settings">Settings</button>
 </nav>
 
@@ -684,12 +684,14 @@ function previousStreak(habitId, endingDate) {
 function missStreak(habitId, endingDate) {
   const habit = state.habits.find(h => h.id === habitId);
   if (!habit) return 0;
+  const startYmd = habit.created_at ? ymd(new Date(habit.created_at)) : null;
   let streak = 0;
   const d = parseYmd(endingDate);
   const today = todayDate();
   let safety = 30;
   while (safety-- > 0) {
     const dStr = ymd(d);
+    if (startYmd && dStr < startYmd) return streak;
     const dCode = DAY_CODES[d.getDay()];
     if (!habit.days.includes(dCode)) { d.setDate(d.getDate() - 1); continue; }
     if (dStr === today) { d.setDate(d.getDate() - 1); continue; }
