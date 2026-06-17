@@ -683,3 +683,69 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
   font-weight: 500;
 }
 .toast.show { opacity: 1; }
+
+/* ---------- Unified item form (v2 merge) ---------- */
+.toggle-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px;
+  background: var(--panel-2);
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  font-size: 14px; color: var(--text);
+  text-transform: none; letter-spacing: 0;
+  font-weight: 500;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  margin-bottom: 0;
+}
+.toggle-row input[type="checkbox"] {
+  width: 18px; height: 18px;
+  min-height: 18px;
+  margin: 0; padding: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.priority-select {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  background: var(--bg); padding: 4px;
+  border-radius: var(--radius); border: 1px solid var(--border);
+}
+.prio-btn {
+  background: transparent; border: none;
+  color: var(--muted); padding: 8px;
+  border-radius: var(--radius-sm); font-size: 13px;
+  cursor: pointer; min-height: 36px;
+  font-weight: 500;
+  font-family: var(--font-sans);
+}
+.prio-btn.active {
+  background: var(--panel-2); color: var(--text);
+  box-shadow: var(--shadow-sm);
+}
+.prio-btn[data-prio="high"].active   { color: var(--danger); }
+.prio-btn[data-prio="medium"].active { color: var(--accent); }
+
+/* ---------- All-day band on timeline ---------- */
+.allday-band {
+  background: var(--panel); border: 1px solid transparent;
+  border-radius: var(--radius-lg); padding: 10px 14px;
+  margin-bottom: 12px; box-shadow: var(--shadow-sm);
+}
+.allday-label {
+  font-size: 10px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.08em;
+  font-weight: 700; font-family: var(--font-mono);
+  margin-bottom: 8px;
+}
+.allday-band .item-row {
+  margin-bottom: 6px;
+  padding: 8px 10px;
+  min-height: 44px;
+  box-shadow: none;
+  border: 1px solid var(--border);
+  background: transparent;
+}
+.allday-band .item-row:last-child { margin-bottom: 0; }
+.allday-band .item-time { display: none; }
