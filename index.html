@@ -96,6 +96,24 @@
     </div>
 
     <div class="settings-section">
+      <h3>Reminders</h3>
+      <div class="settings-row">
+        <div>
+          <div>Daily reminder</div>
+          <div class="meta" id="reminders-status">Off</div>
+        </div>
+        <button class="btn" id="reminders-toggle-btn">Enable</button>
+      </div>
+      <div class="settings-row" id="reminder-hour-row" hidden>
+        <div>
+          <div>Reminder time</div>
+          <div class="meta">When you'd like the daily digest</div>
+        </div>
+        <input type="time" id="reminder-hour-input" step="3600" value="09:00" class="reminder-time-input">
+      </div>
+    </div>
+
+    <div class="settings-section">
       <h3>Data</h3>
       <div class="settings-row">
         <div>
@@ -335,6 +353,13 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 // Sync-related localStorage keys (separate from agendaai_v1).
 const SESSION_KEY   = 'agendaai_session';     // { access_token, refresh_token, user_id, email }
 const SYNCED_AT_KEY = 'agendaai_synced_at';   // ISO timestamp of last successful pull/push
+
+// ---- Push notifications ----
+// VAPID public key is safe to commit (it's the application server identity,
+// not a secret). The private key lives in a GitHub Actions secret.
+const VAPID_PUBLIC_KEY = "BCxQNovtakEZ1v6veQ0x93T1FuaH0MZ22Puxk-elQ_ypzKYThqFmfEuyQBC29SusN1rRBSVv7h4CiWUfjP8d-x8";
+const REMINDER_HOUR_KEY = 'agendaai_reminder_hour';
+const REMINDERS_ON_KEY  = 'agendaai_reminders_on';
 
 // JS Date.getDay(): 0=Sun, 1=Mon, ... 6=Sat
 const DAY_CODES = ['U', 'M', 'T', 'W', 'R', 'F', 'S'];
@@ -1503,6 +1528,7 @@ function renderSettings() {
   }
   renderAccountSection();
   renderSyncStatus();
+  renderReminderSection();
 }
 
 // ---------------- form modal ----------------
@@ -2446,12 +2472,162 @@ function renderSyncStatus() {
 // Periodically refresh the "Synced · Xm ago" string.
 setInterval(renderSyncStatus, 30 * 1000);
 
+// ============================================================================
+// Push notifications — single bundled daily reminder.
+// Server side (GitHub Action) reads push_subscriptions hourly and sends the
+// digest. This client just owns the permission + subscribe + settings UI.
+// ============================================================================
+
+function urlBase64ToUint8Array(b64) {
+  const padding = '='.repeat((4 - b64.length % 4) % 4);
+  const base = (b64 + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+function getStoredReminderHour() {
+  const v = localStorage.getItem(REMINDER_HOUR_KEY);
+  return v == null ? 9 : Number(v);
+}
+function isRemindersOn() {
+  return localStorage.getItem(REMINDERS_ON_KEY) === 'true';
+}
+function formatHour12(h) {
+  if (h === 0)  return '12am';
+  if (h < 12)   return `${h}am`;
+  if (h === 12) return '12pm';
+  return `${h - 12}pm`;
+}
+
+async function enableReminders() {
+  if (!getSession()) {
+    toast('Sign in first to enable reminders.');
+    return;
+  }
+  if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+    toast('Push notifications not supported on this device.');
+    return;
+  }
+  try {
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') { toast('Notification permission denied.'); return; }
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+      });
+    }
+    const hour = getStoredReminderHour();
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const session = getSession();
+    await supaFetch(`/push_subscriptions`, {
+      method: 'POST',
+      headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify({
+        user_id: session.user_id,
+        subscription: sub.toJSON(),
+        reminder_hour: hour,
+        timezone: tz
+      })
+    });
+    localStorage.setItem(REMINDERS_ON_KEY, 'true');
+    localStorage.setItem(REMINDER_HOUR_KEY, String(hour));
+    renderReminderSection();
+    toast('Reminders on');
+  } catch (e) {
+    console.error(e);
+    toast('Could not enable: ' + (e.message || 'unknown error'));
+  }
+}
+
+async function disableReminders() {
+  try {
+    if ('serviceWorker' in navigator) {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) await sub.unsubscribe();
+    }
+    const session = getSession();
+    if (session) {
+      try {
+        await supaFetch(`/push_subscriptions?user_id=eq.${session.user_id}`, { method: 'DELETE' });
+      } catch (e) {
+        console.warn('Failed to delete subscription row:', e);
+      }
+    }
+    localStorage.setItem(REMINDERS_ON_KEY, 'false');
+    renderReminderSection();
+    toast('Reminders off');
+  } catch (e) {
+    console.error(e);
+    toast('Could not disable: ' + (e.message || 'unknown error'));
+  }
+}
+
+async function updateReminderHour(hour) {
+  localStorage.setItem(REMINDER_HOUR_KEY, String(hour));
+  renderReminderSection();
+  if (!getSession() || !isRemindersOn()) return;
+  try {
+    const session = getSession();
+    await supaFetch(`/push_subscriptions?user_id=eq.${session.user_id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ reminder_hour: hour })
+    });
+  } catch (e) {
+    console.warn('Could not patch reminder_hour:', e);
+  }
+}
+
+function renderReminderSection() {
+  const statusEl  = document.getElementById('reminders-status');
+  const toggleBtn = document.getElementById('reminders-toggle-btn');
+  const hourRow   = document.getElementById('reminder-hour-row');
+  const hourInput = document.getElementById('reminder-hour-input');
+  if (!statusEl || !toggleBtn) return;
+  const session = getSession();
+  if (!session) {
+    statusEl.textContent = 'Sign in to enable';
+    toggleBtn.textContent = 'Enable';
+    toggleBtn.disabled = true;
+    toggleBtn.style.opacity = '0.5';
+    if (hourRow) hourRow.hidden = true;
+    return;
+  }
+  toggleBtn.disabled = false;
+  toggleBtn.style.opacity = '';
+  if (isRemindersOn()) {
+    const h = getStoredReminderHour();
+    statusEl.textContent = `On · ${formatHour12(h)}`;
+    toggleBtn.textContent = 'Disable';
+    if (hourRow) hourRow.hidden = false;
+    if (hourInput) hourInput.value = `${String(h).padStart(2, '0')}:00`;
+  } else {
+    statusEl.textContent = 'Off';
+    toggleBtn.textContent = 'Enable';
+    if (hourRow) hourRow.hidden = true;
+  }
+}
+
 // ---------------- wire-up ----------------
 
 document.getElementById('add-btn').addEventListener('click', openAddModal);
 document.getElementById('upcoming-add-btn').addEventListener('click', () => {
   // Reuse the existing add flow but default the type to To-do for this tab.
   openAddModalForDate(todayDate());
+});
+
+document.getElementById('reminders-toggle-btn').addEventListener('click', () => {
+  if (isRemindersOn()) disableReminders();
+  else                 enableReminders();
+});
+document.getElementById('reminder-hour-input').addEventListener('change', e => {
+  const h = Number((e.target.value || '09:00').split(':')[0]);
+  updateReminderHour(h);
 });
 
 document.querySelectorAll('.botnav button').forEach(b => {
@@ -2598,6 +2774,15 @@ actionSheet.addEventListener('click', e => {
 
 initWheelPickers();
 render();
+
+// If we were opened from a notification click (./index.html?view=upcoming),
+// jump to the Upcoming tab once the UI is up.
+try {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('view') === 'upcoming') {
+    setTimeout(() => switchTab('upcoming'), 0);
+  }
+} catch (e) { /* no-op */ }
 
 // Local render finishes above — only AFTER that do we touch the network.
 // initialSync is fire-and-forget; failures never block the app.

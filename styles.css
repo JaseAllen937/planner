@@ -856,6 +856,8 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
   color: var(--text-secondary);
 }
 #account-signed-in .settings-row { padding: 12px 0; border-top: none; }
+
+.reminder-time-input { width: auto; max-width: 130px; min-width: 110px; }
 #account-email-display { font-weight: 600; color: var(--text-primary); font-size: 15px; }
 
 /* ---------- Upcoming tab ---------- */

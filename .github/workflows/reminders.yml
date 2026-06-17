@@ -1,0 +1,41 @@
+name: Send daily reminders
+
+# Run every hour on the hour (UTC). The script per-row decides whether to
+# fire based on the user's local timezone + their chosen reminder_hour.
+# workflow_dispatch is for manual testing — set force=true to ignore the
+# hour check and send to every active subscription.
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Force send to all subscriptions, ignoring reminder_hour.'
+        required: false
+        default: 'true'
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install web-push
+        run: npm install web-push@3
+
+      - name: Send
+        env:
+          # VAPID public key is safe to commit / put in plain env.
+          VAPID_PUBLIC_KEY:    "BCxQNovtakEZ1v6veQ0x93T1FuaH0MZ22Puxk-elQ_ypzKYThqFmfEuyQBC29SusN1rRBSVv7h4CiWUfjP8d-x8"
+          SUPABASE_URL:        "https://jmvetxcxvabrzoppoxwm.supabase.co"
+          # Secrets — never committed.
+          VAPID_PRIVATE_KEY:        ${{ secrets.VAPID_PRIVATE_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          # Force-send when manually dispatched (handy for testing).
+          FORCE_SEND: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.force == 'true') }}
+        run: node scripts/send-reminders.js
