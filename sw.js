@@ -1,7 +1,7 @@
 // AgendaAI service worker.
 // BUMP THIS VERSION when you ship changes, otherwise the iPhone keeps the
 // old cached files forever.
-const VERSION = 'v7';
+const VERSION = 'v8';
 const CACHE = `agendaai-${VERSION}`;
 const ASSETS = [
   './',
@@ -27,6 +27,9 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
+  // Never intercept cloud-sync calls — they must always hit the network.
+  const url = new URL(e.request.url);
+  if (url.hostname.endsWith('supabase.co')) return;
   e.respondWith(
     caches.match(e.request).then(r => r || fetch(e.request))
   );

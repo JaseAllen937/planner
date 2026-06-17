@@ -749,3 +749,17 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 }
 .allday-band .item-row:last-child { margin-bottom: 0; }
 .allday-band .item-time { display: none; }
+
+/* ---------- Account & Backup (Supabase sync) ---------- */
+.account-actions {
+  display: flex; gap: 8px; justify-content: flex-end;
+  margin-top: 4px;
+}
+.sync-status-line {
+  padding: 10px 0 0;
+  border-top: 1px solid var(--border);
+  margin-top: 12px;
+  font-size: 12px;
+}
+#account-signed-in .settings-row { padding: 6px 0 12px; border-top: none; }
+#account-email-display { font-weight: 600; color: var(--text); }

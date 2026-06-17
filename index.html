@@ -57,6 +57,37 @@
 
   <section class="tab-view" id="tab-settings">
     <div class="settings-section">
+      <h3>Account &amp; Backup</h3>
+
+      <div id="account-signed-out" hidden>
+        <div class="field">
+          <label for="account-email">Email</label>
+          <input type="email" id="account-email" autocomplete="email" placeholder="you@example.com">
+        </div>
+        <div class="field">
+          <label for="account-password">Password</label>
+          <input type="password" id="account-password" autocomplete="current-password">
+        </div>
+        <div id="account-error" class="error-msg" hidden></div>
+        <div class="account-actions">
+          <button class="btn" id="account-signup-btn">Sign up</button>
+          <button class="btn btn-primary" id="account-signin-btn">Sign in</button>
+        </div>
+      </div>
+
+      <div id="account-signed-in" hidden>
+        <div class="settings-row">
+          <div>
+            <div id="account-email-display">—</div>
+          </div>
+          <button class="btn" id="account-signout-btn">Sign out</button>
+        </div>
+      </div>
+
+      <div class="meta sync-status-line" id="sync-status">Not signed in</div>
+    </div>
+
+    <div class="settings-section">
       <h3>Data</h3>
       <div class="settings-row">
         <div>
@@ -285,6 +316,16 @@ if ('serviceWorker' in navigator) {
 
 const STORAGE_KEY = 'agendaai_v1';
 const BANNER_KEY = 'agendaai_sample_banner_dismissed';
+
+// ---- Supabase cloud sync (vanilla fetch — no SDK) ----
+// The anon key is public by design (RLS enforces per-user access).
+// PASTE YOUR ANON KEY HERE — see Supabase Project Settings -> API.
+const SUPABASE_URL = "https://jmvetxcxvabrzoppoxwm.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImptdmV0eGN4dmFicnpvcHBveHdtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2NjQ5NDgsImV4cCI6MjA5NzI0MDk0OH0.R1ll_ccsBp4t4D3lDm7ZFJJAlKVekPaw907wUQm7bZw";
+
+// Sync-related localStorage keys (separate from agendaai_v1).
+const SESSION_KEY   = 'agendaai_session';     // { access_token, refresh_token, user_id, email }
+const SYNCED_AT_KEY = 'agendaai_synced_at';   // ISO timestamp of last successful pull/push
 
 // JS Date.getDay(): 0=Sun, 1=Mon, ... 6=Sat
 const DAY_CODES = ['U', 'M', 'T', 'W', 'R', 'F', 'S'];
@@ -584,13 +625,17 @@ function ensureShape(s) {
   // Ensure items[] exists in any case (fresh v2 states without legacy data)
   s.items ||= [];
 
+  // Cloud-sync uses meta.updated_at as the conflict-resolution timestamp.
+  // Backfill it for pre-sync states.
+  if (!s.meta.updated_at) s.meta.updated_at = s.meta.created_at || nowIso();
+
   return s;
 }
 
 function seedState() {
   const now = nowIso();
   return {
-    meta: { version: 2, created_at: now, last_export_at: null },
+    meta: { version: 2, created_at: now, updated_at: now, last_export_at: null },
     habits: [
       {
         id: uuid(),
@@ -624,6 +669,15 @@ function seedState() {
 }
 
 function saveState() {
+  state.meta.updated_at = nowIso();
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  // Schedule a debounced background push to Supabase (no-op if not signed in).
+  triggerSync();
+}
+
+// Like saveState but doesn't bump meta.updated_at and doesn't trigger a sync.
+// Used when applying a remote pull (the remote's updated_at is authoritative).
+function saveStateLocalOnly() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
@@ -1435,6 +1489,8 @@ function renderSettings() {
   } else {
     el.textContent = 'never';
   }
+  renderAccountSection();
+  renderSyncStatus();
 }
 
 // ---------------- form modal ----------------
@@ -1964,6 +2020,265 @@ function renderHistory() {
   }).join('');
 }
 
+// ============================================================================
+// Cloud sync — Supabase via raw fetch (no SDK)
+// ----------------------------------------------------------------------------
+// Local JSON in localStorage is the source of truth in the UI. Sync is
+// fire-and-forget: never blocks render, never throws into the app. Strategy is
+// last-write-wins by meta.updated_at. NOTE: simultaneous edits on two devices
+// can lose one side's change. Acceptable for single-user.
+// ============================================================================
+
+function getSession() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+function setSession(s) { localStorage.setItem(SESSION_KEY, JSON.stringify(s)); }
+function clearSession() { localStorage.removeItem(SESSION_KEY); }
+
+function supaConfigured() {
+  return SUPABASE_URL && SUPABASE_ANON_KEY && !SUPABASE_ANON_KEY.startsWith('PASTE_');
+}
+
+// ---- Auth ----
+
+async function supaSignUp(email, password) {
+  if (!supaConfigured()) throw new Error('Cloud sync not configured (missing anon key).');
+  const r = await fetch(`${SUPABASE_URL}/auth/v1/signup`, {
+    method: 'POST',
+    headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password })
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error_description || data.msg || data.error || `Sign-up failed (${r.status})`);
+  if (data.access_token && data.user) {
+    setSession({
+      access_token: data.access_token,
+      refresh_token: data.refresh_token,
+      user_id: data.user.id,
+      email: data.user.email
+    });
+    return { confirmed: true };
+  }
+  // Supabase project may require email confirmation; no session is returned yet.
+  return { confirmed: false };
+}
+
+async function supaSignIn(email, password) {
+  if (!supaConfigured()) throw new Error('Cloud sync not configured (missing anon key).');
+  const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+    method: 'POST',
+    headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password })
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error_description || data.msg || data.error || `Sign-in failed (${r.status})`);
+  setSession({
+    access_token: data.access_token,
+    refresh_token: data.refresh_token,
+    user_id: data.user.id,
+    email: data.user.email
+  });
+}
+
+function supaSignOut() {
+  clearSession();
+  localStorage.removeItem(SYNCED_AT_KEY);
+  setSyncStatus('idle');
+  renderSettings();
+}
+
+async function supaRefreshToken() {
+  const session = getSession();
+  if (!session || !session.refresh_token) return false;
+  try {
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+      method: 'POST',
+      headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: session.refresh_token })
+    });
+    if (!r.ok) return false;
+    const data = await r.json();
+    if (!data.access_token) return false;
+    setSession({
+      access_token: data.access_token,
+      refresh_token: data.refresh_token || session.refresh_token,
+      user_id: session.user_id,
+      email: session.email
+    });
+    return true;
+  } catch { return false; }
+}
+
+// ---- REST wrapper with one-shot 401 refresh+retry ----
+
+async function supaFetch(path, opts = {}) {
+  const session = getSession();
+  if (!session) throw new Error('Not signed in');
+
+  const buildOpts = (token) => ({
+    ...opts,
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      ...(opts.headers || {})
+    }
+  });
+
+  let r = await fetch(`${SUPABASE_URL}/rest/v1${path}`, buildOpts(session.access_token));
+  if (r.status === 401) {
+    const refreshed = await supaRefreshToken();
+    if (!refreshed) {
+      clearSession();
+      renderSettings();
+      throw new Error('Session expired');
+    }
+    const fresh = getSession();
+    r = await fetch(`${SUPABASE_URL}/rest/v1${path}`, buildOpts(fresh.access_token));
+  }
+  if (!r.ok) {
+    const txt = await r.text().catch(() => '');
+    throw new Error(`Supabase ${opts.method || 'GET'} ${path} -> ${r.status} ${txt}`);
+  }
+  return r;
+}
+
+async function supaPull() {
+  const session = getSession();
+  if (!session) return null;
+  const r = await supaFetch(`/app_state?user_id=eq.${session.user_id}&select=data,updated_at`, { method: 'GET' });
+  const rows = await r.json();
+  return rows.length ? rows[0] : null;
+}
+
+async function supaPush(blob) {
+  const session = getSession();
+  if (!session) return;
+  await supaFetch(`/app_state`, {
+    method: 'POST',
+    headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify({
+      user_id: session.user_id,
+      data: blob,
+      updated_at: nowIso()
+    })
+  });
+}
+
+// ---- Sync orchestration ----
+
+let _syncTimer = null;
+let _pendingPush = false;
+let _syncStatus = 'idle'; // 'idle' | 'saving' | 'synced' | 'offline' | 'error'
+
+function setSyncStatus(s) {
+  _syncStatus = s;
+  renderSyncStatus();
+}
+
+function triggerSync() {
+  // Always called from saveState. Silent no-op when not signed in / not configured.
+  if (!getSession() || !supaConfigured()) return;
+  _pendingPush = true;
+  if (_syncTimer) clearTimeout(_syncTimer);
+  setSyncStatus('saving');
+  _syncTimer = setTimeout(async () => {
+    _syncTimer = null;
+    if (!navigator.onLine) { setSyncStatus('offline'); return; }
+    try {
+      await supaPush(state);
+      _pendingPush = false;
+      localStorage.setItem(SYNCED_AT_KEY, nowIso());
+      setSyncStatus('synced');
+    } catch (e) {
+      console.warn('Sync push failed:', e);
+      setSyncStatus(navigator.onLine ? 'error' : 'offline');
+    }
+  }, 1500);
+}
+
+async function initialSync() {
+  if (!getSession() || !supaConfigured()) return;
+  if (!navigator.onLine) { setSyncStatus('offline'); return; }
+  try {
+    setSyncStatus('saving');
+    const remote = await supaPull();
+    if (!remote) {
+      // No remote row yet — first device. Push local up.
+      await supaPush(state);
+    } else {
+      const remoteAt = remote.updated_at || '';
+      const localAt = (state.meta && state.meta.updated_at) || '';
+      if (remoteAt > localAt) {
+        // Remote is newer — adopt it. Run through ensureShape so schema migrations apply.
+        state = ensureShape(remote.data || {});
+        saveStateLocalOnly();
+        render();
+      } else if (localAt > remoteAt) {
+        await supaPush(state);
+      }
+      // equal -> no-op
+    }
+    localStorage.setItem(SYNCED_AT_KEY, nowIso());
+    setSyncStatus('synced');
+    // Flush any pending push that happened mid-sync
+    if (_pendingPush) triggerSync();
+  } catch (e) {
+    console.warn('Initial sync failed:', e);
+    setSyncStatus(navigator.onLine ? 'error' : 'offline');
+  }
+}
+
+// Retry pending sync when connection comes back.
+window.addEventListener('online', () => {
+  if (getSession() && _pendingPush) triggerSync();
+});
+
+// ---- UI render for the Account & Backup settings section ----
+
+function relativeSince(iso) {
+  if (!iso) return '';
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 0)        return 'just now';
+  if (ms < 60000)    return 'just now';
+  if (ms < 3600000)  return `${Math.floor(ms / 60000)}m ago`;
+  if (ms < 86400000) return `${Math.floor(ms / 3600000)}h ago`;
+  return `${Math.floor(ms / 86400000)}d ago`;
+}
+
+function renderAccountSection() {
+  const session = getSession();
+  const out = document.getElementById('account-signed-out');
+  const inn = document.getElementById('account-signed-in');
+  if (!out || !inn) return;
+  if (session) {
+    out.hidden = true; inn.hidden = false;
+    document.getElementById('account-email-display').textContent = session.email || '(signed in)';
+  } else {
+    out.hidden = false; inn.hidden = true;
+    document.getElementById('account-error').hidden = true;
+  }
+}
+
+function renderSyncStatus() {
+  const el = document.getElementById('sync-status');
+  if (!el) return;
+  const session = getSession();
+  if (!session) { el.textContent = 'Not signed in'; return; }
+  if (!supaConfigured()) { el.textContent = 'Sync not configured'; return; }
+  if (_syncStatus === 'saving')  { el.textContent = 'Saving…'; return; }
+  if (_syncStatus === 'offline') { el.textContent = 'Offline – will sync later'; return; }
+  if (_syncStatus === 'error')   { el.textContent = 'Sync error – will retry'; return; }
+  const at = localStorage.getItem(SYNCED_AT_KEY);
+  el.textContent = at ? `Synced · ${relativeSince(at)}` : 'Not yet synced';
+}
+
+// Periodically refresh the "Synced · Xm ago" string.
+setInterval(renderSyncStatus, 30 * 1000);
+
 // ---------------- wire-up ----------------
 
 document.getElementById('add-btn').addEventListener('click', openAddModal);
@@ -2013,6 +2328,61 @@ document.getElementById('import-file').addEventListener('change', e => {
 });
 document.getElementById('reset-btn').addEventListener('click', resetData);
 
+// Account & Backup (Supabase)
+(function wireAccountUi() {
+  const emailEl = document.getElementById('account-email');
+  const pwEl    = document.getElementById('account-password');
+  const errEl   = document.getElementById('account-error');
+
+  function showErr(msg) { errEl.textContent = msg; errEl.hidden = false; }
+  function hideErr() { errEl.hidden = true; }
+
+  document.getElementById('account-signin-btn').addEventListener('click', async () => {
+    hideErr();
+    const email = (emailEl.value || '').trim();
+    const pw    = pwEl.value || '';
+    if (!email || !pw) { showErr('Email and password required.'); return; }
+    try {
+      setSyncStatus('saving');
+      await supaSignIn(email, pw);
+      pwEl.value = '';
+      renderSettings();
+      await initialSync();
+    } catch (e) {
+      showErr(escapeHtml(e.message || 'Sign-in failed.'));
+      setSyncStatus('idle');
+    }
+  });
+
+  document.getElementById('account-signup-btn').addEventListener('click', async () => {
+    hideErr();
+    const email = (emailEl.value || '').trim();
+    const pw    = pwEl.value || '';
+    if (!email || !pw) { showErr('Email and password required.'); return; }
+    if (pw.length < 6) { showErr('Password must be at least 6 characters.'); return; }
+    try {
+      setSyncStatus('saving');
+      const { confirmed } = await supaSignUp(email, pw);
+      pwEl.value = '';
+      if (confirmed) {
+        renderSettings();
+        await initialSync();
+      } else {
+        showErr('Check your email to confirm, then sign in.');
+        setSyncStatus('idle');
+      }
+    } catch (e) {
+      showErr(escapeHtml(e.message || 'Sign-up failed.'));
+      setSyncStatus('idle');
+    }
+  });
+
+  document.getElementById('account-signout-btn').addEventListener('click', () => {
+    if (!confirm('Sign out? Local data stays on this device.')) return;
+    supaSignOut();
+  });
+})();
+
 // Item form: Someday + All-day toggles, priority selector
 document.getElementById('f-item-someday').addEventListener('change', applyItemVisibility);
 document.getElementById('f-item-allday').addEventListener('change', applyItemVisibility);
@@ -2057,6 +2427,12 @@ actionSheet.addEventListener('click', e => {
 
 initWheelPickers();
 render();
+
+// Local render finishes above — only AFTER that do we touch the network.
+// initialSync is fire-and-forget; failures never block the app.
+if (getSession() && supaConfigured()) {
+  initialSync();
+}
 
 // Poll once a minute so the morning popup fires even if the app was
 // opened before 7am and left open.
