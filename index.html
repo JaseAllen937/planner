@@ -1422,9 +1422,12 @@ function _itemRowHtml(it) {
   const done    = trackable && isCompletedToday(it.id);
   const skipped = trackable && !done && isSkippedToday(it.id);
   const stateClass = done ? ' done' : skipped ? ' skipped' : '';
+  // Additive: priority class so the left bar can color-code items via CSS only.
+  // Habits don't have a priority; they get styled by data-kind selector instead.
+  const prioClass = (it.kind === 'item' && it.priority) ? ` prio-${it.priority}` : '';
   const check = done ? '&check;' : skipped ? '&minus;' : '';
   return `
-    <div class="item-row${stateClass}" data-kind="${it.kind}" data-id="${it.id}">
+    <div class="item-row${stateClass}${prioClass}" data-kind="${it.kind}" data-id="${it.id}">
       <div class="item-time">${fmt12(it.time) || '—'}</div>
       <div class="item-body">
         <div class="item-title">${escapeHtml(it.title)}</div>
