@@ -35,6 +35,14 @@
     <div id="timeline"></div>
   </section>
 
+  <section class="tab-view" id="tab-upcoming">
+    <div class="upcoming-header">
+      <h2 class="upcoming-h">Upcoming</h2>
+      <button class="btn btn-primary" id="upcoming-add-btn">+ Add to-do</button>
+    </div>
+    <div id="upcoming-wrap"></div>
+  </section>
+
   <section class="tab-view" id="tab-calendar">
     <div class="calendar-header">
       <button class="calendar-nav-btn" id="cal-prev" aria-label="Previous month">&lsaquo;</button>
@@ -133,6 +141,7 @@
 
 <nav class="botnav">
   <button data-tab="today" class="active">Today</button>
+  <button data-tab="upcoming">Upcoming</button>
   <button data-tab="calendar">Calendar</button>
   <button data-tab="history">Stats</button>
   <button data-tab="settings">Settings</button>
@@ -1793,6 +1802,7 @@ function render() {
   renderBanner();
   renderWeeklySummary();
   renderTimeline();
+  renderUpcoming();
   renderDailySummary();
   renderInsights();
   renderHistory();
@@ -1967,6 +1977,160 @@ function openAddModalForDate(date) {
     if (dateEl) dateEl.value = date;
     document.getElementById('f-item-someday').checked = false;
     applyItemVisibility();
+  });
+}
+
+// ---------------- Upcoming tab ----------------
+
+// Bucket every state.items[] entry by how soon it's due.
+// Exclusions: completed to-dos (any date), past events, and skipped-on-date to-dos
+// (so a skipped to-do does NOT show as overdue).
+function groupUpcoming() {
+  const today = todayDate();
+  const tomorrow = addDays(today, 1);
+  const groups = { overdue: [], today: [], tomorrow: [], week: [], later: [], someday: [] };
+
+  for (const it of state.items) {
+    // Drop any to-do that's been completed (one-shot, so any completion = done).
+    if (it.trackCompletion && state.completions.some(c => c.ref_id === it.id)) continue;
+
+    // Someday — undated items go straight to that bucket regardless of kind.
+    if (!it.date) { groups.someday.push(it); continue; }
+
+    if (it.date < today) {
+      // Past: events drop off, to-dos go to Overdue unless skipped for that exact date.
+      if (!it.trackCompletion) continue;
+      if (findMissed(it.id, it.date)) continue;
+      groups.overdue.push(it);
+      continue;
+    }
+
+    if (it.date === today)    { groups.today.push(it);    continue; }
+    if (it.date === tomorrow) { groups.tomorrow.push(it); continue; }
+
+    const t0 = parseYmd(today);
+    const t1 = parseYmd(it.date);
+    const diffDays = Math.round((t1 - t0) / 86400000);
+    if (diffDays >= 2 && diffDays <= 6) groups.week.push(it);
+    else                                 groups.later.push(it);
+  }
+
+  // Sort each group: by date asc, then all-day before timed, then time asc, then priority high-first.
+  const prioOrder = { high: 0, medium: 1, normal: 2 };
+  const sortFn = (a, b) => {
+    const da = a.date || '9999-99-99', db = b.date || '9999-99-99';
+    if (da !== db) return da.localeCompare(db);
+    const aTimed = !!a.time, bTimed = !!b.time;
+    if (aTimed !== bTimed) return aTimed ? 1 : -1;
+    if (aTimed) {
+      const td = (a.time || '').localeCompare(b.time || '');
+      if (td !== 0) return td;
+    }
+    return (prioOrder[a.priority] ?? 2) - (prioOrder[b.priority] ?? 2);
+  };
+  for (const k in groups) groups[k].sort(sortFn);
+  return groups;
+}
+
+// Returns { text, cls } where cls is one of 'overdue' | 'soon' | 'later'.
+// Always guards against a null date.
+function relativeDateLabel(dateStr) {
+  if (!dateStr) return { text: 'Someday', cls: 'later' };
+  const today = todayDate();
+  if (dateStr === today) return { text: 'Today', cls: 'soon' };
+  const t0 = parseYmd(today);
+  const t1 = parseYmd(dateStr);
+  const diffDays = Math.round((t1 - t0) / 86400000);
+  if (diffDays === 1)  return { text: 'Tomorrow', cls: 'soon' };
+  if (diffDays === -1) return { text: '1 day overdue', cls: 'overdue' };
+  if (diffDays < 0)    return { text: `${-diffDays} days overdue`, cls: 'overdue' };
+  if (diffDays >= 2 && diffDays <= 6) return { text: `in ${diffDays} days`, cls: 'later' };
+  const fmt = t1.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  return { text: fmt, cls: 'later' };
+}
+
+function _upcomingRowHtml(it) {
+  const prio = it.priority || 'normal';
+  const trackable = !!it.trackCompletion;
+  const rel = relativeDateLabel(it.date);
+  const timeStr = it.time ? fmt12(it.time) : '';
+
+  const checkHtml = trackable
+    ? `<button type="button" class="upcoming-check" data-id="${it.id}" aria-label="Mark done"></button>`
+    : `<div class="upcoming-check-spacer" aria-hidden="true"></div>`;
+  const timeHtml = timeStr
+    ? `<span class="upcoming-time">${escapeHtml(timeStr)}</span>`
+    : '';
+  const classes = ['upcoming-row', `prio-${prio}`];
+  if (!trackable) classes.push('is-event');
+
+  return `
+    <div class="${classes.join(' ')}" data-kind="item" data-id="${it.id}">
+      ${checkHtml}
+      <div class="upcoming-row-body">
+        <div class="upcoming-title">${escapeHtml(it.title || '')}</div>
+        <div class="upcoming-meta">
+          <span class="relative-label rel-${rel.cls}">${escapeHtml(rel.text)}</span>
+          ${timeHtml}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderUpcoming() {
+  const wrap = document.getElementById('upcoming-wrap');
+  if (!wrap) return;
+
+  const groups = groupUpcoming();
+  const order  = ['overdue', 'today', 'tomorrow', 'week', 'later', 'someday'];
+  const labels = {
+    overdue:  'Overdue',
+    today:    'Today',
+    tomorrow: 'Tomorrow',
+    week:     'This Week',
+    later:    'Later',
+    someday:  'Someday'
+  };
+
+  const total = order.reduce((sum, k) => sum + groups[k].length, 0);
+  if (total === 0) {
+    wrap.innerHTML = `<div class="empty">Nothing upcoming.<br>Tap <strong>+ Add to-do</strong> to schedule something.</div>`;
+    return;
+  }
+
+  let html = '';
+  for (const key of order) {
+    const list = groups[key];
+    if (list.length === 0) continue;
+    html += `<div class="upcoming-group">
+      <div class="upcoming-group-header">${labels[key]}</div>
+      ${list.map(_upcomingRowHtml).join('')}
+    </div>`;
+  }
+  wrap.innerHTML = html;
+
+  // Row tap opens the action sheet (unless the tap landed on the check circle).
+  wrap.querySelectorAll('.upcoming-row').forEach(row => {
+    row.addEventListener('click', e => {
+      if (e.target.closest('.upcoming-check')) return;
+      openActionSheet('item', row.dataset.id);
+    });
+  });
+
+  // Check circle marks the item done inline — same writeCompletion/saveState/render path
+  // as handleActionDone, just without the action sheet in front of it.
+  wrap.querySelectorAll('.upcoming-check').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const id = btn.dataset.id;
+      const ref = state.items.find(i => i.id === id);
+      if (!ref) return;
+      if (isCompletedToday(id)) undoCompletion(id);
+      else                      writeCompletion(id, 'item', ref.time || null);
+      saveState();
+      render();
+    });
   });
 }
 
@@ -2282,6 +2446,10 @@ setInterval(renderSyncStatus, 30 * 1000);
 // ---------------- wire-up ----------------
 
 document.getElementById('add-btn').addEventListener('click', openAddModal);
+document.getElementById('upcoming-add-btn').addEventListener('click', () => {
+  // Reuse the existing add flow but default the type to To-do for this tab.
+  openAddModalForDate(todayDate());
+});
 
 document.querySelectorAll('.botnav button').forEach(b => {
   b.addEventListener('click', () => switchTab(b.dataset.tab));
