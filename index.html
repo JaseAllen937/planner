@@ -32,6 +32,8 @@
 <main>
   <section class="tab-view active" id="tab-today">
     <div id="banner-wrap"></div>
+    <div id="intention-card-wrap"></div>
+    <div id="focus-card-wrap"></div>
     <div id="timeline"></div>
   </section>
 
@@ -60,6 +62,7 @@
     <div id="weekly-summary-wrap"></div>
     <div id="daily-summary-wrap"></div>
     <div id="insights-wrap"></div>
+    <div id="focus-stats-wrap"></div>
     <div id="history-wrap"></div>
   </section>
 
@@ -324,6 +327,23 @@
   </div>
 </div>
 
+<div class="modal focus-overlay-mode" id="focus-overlay" role="dialog" aria-modal="true" aria-label="Focus session">
+  <div class="focus-overlay-panel">
+    <div class="focus-overlay-intention" id="focus-overlay-intention" hidden></div>
+    <button type="button" class="focus-tap-zone" id="focus-tap-zone" aria-label="Tap to log a focus lapse">
+      <div class="focus-count" id="focus-count">0</div>
+      <div class="focus-count-label">lapses</div>
+      <div class="focus-timer" id="focus-timer">0:00</div>
+      <div class="focus-tap-hint">Tap anywhere here when you notice your focus slipped</div>
+    </button>
+    <div class="focus-controls">
+      <button type="button" class="btn focus-control-btn" id="focus-undo-btn">Undo</button>
+      <button type="button" class="btn btn-primary focus-control-btn" id="focus-end-btn">End &amp; Save</button>
+      <button type="button" class="btn btn-danger focus-control-btn" id="focus-discard-btn">Discard</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
@@ -566,7 +586,7 @@ function loadState() {
   if (raw) {
     try {
       const parsed = JSON.parse(raw);
-      if (parsed && parsed.meta && (parsed.meta.version === 1 || parsed.meta.version === 2)) {
+      if (parsed && parsed.meta && (parsed.meta.version === 1 || parsed.meta.version === 2 || parsed.meta.version === 3)) {
         return ensureShape(parsed);
       }
     } catch (e) {
@@ -659,6 +679,19 @@ function ensureShape(s) {
   // Ensure items[] exists in any case (fresh v2 states without legacy data)
   s.items ||= [];
 
+  // v2 -> v3: Focus feature.
+  // Idempotent — runs only if meta.version < 3. Daily intention fields
+  // (intention, intentionDone) are added lazily on the relevant daily_state
+  // entry when first set, so they need no migration.
+  if ((s.meta.version || 1) < 3) {
+    if (!Array.isArray(s.focusSessions)) s.focusSessions = [];
+    if (typeof s.activeFocus === 'undefined') s.activeFocus = null;
+    s.meta.version = 3;
+  }
+  // Defensive defaults for fresh-v3 states (seedState already sets these).
+  if (!Array.isArray(s.focusSessions)) s.focusSessions = [];
+  if (typeof s.activeFocus === 'undefined') s.activeFocus = null;
+
   // Cloud-sync uses meta.updated_at as the conflict-resolution timestamp.
   // Backfill it for pre-sync states.
   if (!s.meta.updated_at) s.meta.updated_at = s.meta.created_at || nowIso();
@@ -669,7 +702,7 @@ function ensureShape(s) {
 function seedState() {
   const now = nowIso();
   return {
-    meta: { version: 2, created_at: now, updated_at: now, last_export_at: null },
+    meta: { version: 3, created_at: now, updated_at: now, last_export_at: null },
     habits: [
       {
         id: uuid(),
@@ -698,7 +731,9 @@ function seedState() {
     completions: [],
     missed: [],
     daily_state: [],
-    templates: []
+    templates: [],
+    focusSessions: [],
+    activeFocus: null
   };
 }
 
@@ -1323,6 +1358,309 @@ function submitMorningPopup() {
   render();
 }
 
+// ---------------- focus & daily intention ----------------
+//
+// Two pieces, intentionally independent:
+//   1) Daily intention — a single string + done flag, stored on today's
+//      daily_state entry (lazily added on first write).
+//   2) Focus sessions — tap-to-log lapses, tally + lapse rate over time.
+//      state.activeFocus holds the in-progress session so a reload resumes it.
+//
+// The session timer is display-only via setInterval; it must NEVER call
+// saveState on tick. Persistence happens only on session start, each lapse,
+// undo, end, discard, and any intention edit/toggle.
+
+const focusOverlay = document.getElementById('focus-overlay');
+let _focusTimerInterval = null;
+
+function getTodayIntention() {
+  const ds = state.daily_state.find(d => d.date === todayDate());
+  return {
+    text: (ds && typeof ds.intention === 'string') ? ds.intention : '',
+    done: !!(ds && ds.intentionDone)
+  };
+}
+
+function setTodayIntentionText(text) {
+  const ds = ensureDailyState(todayDate());
+  ds.intention = String(text || '');
+  if (!ds.intention) ds.intentionDone = false;
+  saveState();
+  render();
+}
+
+function toggleTodayIntentionDone() {
+  const ds = ensureDailyState(todayDate());
+  ds.intentionDone = !ds.intentionDone;
+  saveState();
+  render();
+}
+
+function renderIntentionCard() {
+  const wrap = document.getElementById('intention-card-wrap');
+  if (!wrap) return;
+  // Don't re-render while the user is actively typing — would clobber the input.
+  if (document.activeElement && document.activeElement.id === 'intention-input') return;
+
+  const { text, done } = getTodayIntention();
+  const doneClass = done && text ? ' done' : '';
+  const checkedClass = done && text ? ' checked' : '';
+  wrap.innerHTML = `
+    <div class="intention-card${doneClass}" id="intention-card">
+      <div class="intention-label">Today's focus</div>
+      <div class="intention-row">
+        <input type="text" class="intention-input" id="intention-input"
+               placeholder="Set today's focus" maxlength="240"
+               autocomplete="off" inputmode="text">
+        <button type="button" class="intention-check${checkedClass}" id="intention-check"
+                aria-label="Toggle intention done" aria-pressed="${done ? 'true' : 'false'}">
+          <span class="intention-check-dot">${done && text ? '&check;' : ''}</span>
+        </button>
+      </div>
+    </div>
+  `;
+
+  const input = document.getElementById('intention-input');
+  input.value = text;
+  input.addEventListener('blur', () => {
+    const next = input.value.trim();
+    if (next === text) return; // no-op
+    setTodayIntentionText(next);
+  });
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+  });
+
+  document.getElementById('intention-check').addEventListener('click', () => {
+    const cur = getTodayIntention();
+    if (!cur.text) return; // can't mark "done" with no intention set
+    toggleTodayIntentionDone();
+  });
+}
+
+// Compute today's focus stats from completed sessions.
+function todayFocusStats() {
+  const today = todayDate();
+  const sessions = state.focusSessions.filter(s => s.date === today);
+  let totalHours = 0;
+  let totalLapses = 0;
+  for (const s of sessions) {
+    const hours = (new Date(s.end).getTime() - new Date(s.start).getTime()) / 3600000;
+    if (hours > 0) totalHours += hours;
+    totalLapses += (s.lapses | 0);
+  }
+  const rate = totalHours > 0 ? totalLapses / totalHours : null;
+  return { count: sessions.length, totalHours, totalLapses, rate };
+}
+
+function renderFocusCard() {
+  const wrap = document.getElementById('focus-card-wrap');
+  if (!wrap) return;
+
+  const active = !!state.activeFocus;
+  const stats = todayFocusStats();
+  let summary = '';
+  if (stats.count > 0) {
+    const lapseStr = stats.rate == null ? '' :
+      ` · ~${Math.round(stats.rate)} lapses/hr`;
+    summary = `${stats.count} session${stats.count === 1 ? '' : 's'} · ${hoursToHuman(stats.totalHours)} focused${lapseStr}`;
+  } else if (active) {
+    summary = 'Focus session running…';
+  } else {
+    summary = 'Tap to start a deep-work block. Log each time you notice your focus slipped.';
+  }
+  const btnLabel = active ? 'Resume Focus Session' : 'Start Focus Session';
+
+  wrap.innerHTML = `
+    <div class="focus-card" id="focus-card">
+      <div class="focus-label">Focus</div>
+      <div class="focus-summary">${escapeHtml(summary)}</div>
+      <button type="button" class="btn btn-primary focus-start-btn" id="focus-start-btn">${escapeHtml(btnLabel)}</button>
+    </div>
+  `;
+  document.getElementById('focus-start-btn').addEventListener('click', () => {
+    if (state.activeFocus) openFocusOverlay();
+    else                   startFocusSession();
+  });
+}
+
+function startFocusSession() {
+  state.activeFocus = { start: nowIso(), lapses: 0 };
+  saveState();
+  openFocusOverlay();
+}
+
+function endFocusSession() {
+  if (!state.activeFocus) { closeFocusOverlay(); return; }
+  const af = state.activeFocus;
+  const end = nowIso();
+  state.focusSessions.push({
+    id: uuid(),
+    date: todayDate(),
+    start: af.start,
+    end,
+    lapses: af.lapses | 0
+  });
+  state.activeFocus = null;
+  saveState();
+  closeFocusOverlay();
+  toast('Focus session saved');
+  render();
+}
+
+function discardFocusSession() {
+  if (!state.activeFocus) { closeFocusOverlay(); return; }
+  if (!confirm('Discard this focus session? Nothing will be saved.')) return;
+  state.activeFocus = null;
+  saveState();
+  closeFocusOverlay();
+  toast('Session discarded');
+  render();
+}
+
+function incrementFocusLapse() {
+  if (!state.activeFocus) return;
+  state.activeFocus.lapses = (state.activeFocus.lapses | 0) + 1;
+  saveState();
+  refreshFocusOverlayDynamic();
+  pulseFocusTap();
+}
+
+function undoFocusLapse() {
+  if (!state.activeFocus) return;
+  state.activeFocus.lapses = Math.max(0, (state.activeFocus.lapses | 0) - 1);
+  saveState();
+  refreshFocusOverlayDynamic();
+}
+
+function pulseFocusTap() {
+  const zone = document.getElementById('focus-tap-zone');
+  if (!zone) return;
+  zone.classList.remove('pulse');
+  // force reflow so the animation can re-trigger
+  void zone.offsetWidth;
+  zone.classList.add('pulse');
+}
+
+function formatFocusTimer(ms) {
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  const pad = n => String(n).padStart(2, '0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
+// Updates only the count + timer DOM — never touches state, never calls saveState.
+function refreshFocusOverlayDynamic() {
+  if (!state.activeFocus) return;
+  const countEl = document.getElementById('focus-count');
+  const timerEl = document.getElementById('focus-timer');
+  if (countEl) countEl.textContent = String(state.activeFocus.lapses | 0);
+  if (timerEl) {
+    const elapsed = Date.now() - new Date(state.activeFocus.start).getTime();
+    timerEl.textContent = formatFocusTimer(elapsed);
+  }
+}
+
+function openFocusOverlay() {
+  if (!state.activeFocus) return;
+  // Render the (static) intention context line if today's intention is set.
+  const intentEl = document.getElementById('focus-overlay-intention');
+  const intent = getTodayIntention();
+  if (intent.text) {
+    intentEl.innerHTML = `Focusing on: <strong>${escapeHtml(intent.text)}</strong>`;
+    intentEl.hidden = false;
+  } else {
+    intentEl.innerHTML = '';
+    intentEl.hidden = true;
+  }
+  refreshFocusOverlayDynamic();
+  focusOverlay.classList.add('open');
+
+  if (_focusTimerInterval) clearInterval(_focusTimerInterval);
+  _focusTimerInterval = setInterval(refreshFocusOverlayDynamic, 1000);
+}
+
+function closeFocusOverlay() {
+  focusOverlay.classList.remove('open');
+  if (_focusTimerInterval) {
+    clearInterval(_focusTimerInterval);
+    _focusTimerInterval = null;
+  }
+}
+
+// ---- Stats tab — Focus section ----
+
+function renderFocusStats() {
+  const wrap = document.getElementById('focus-stats-wrap');
+  if (!wrap) return;
+  if (!state.focusSessions || state.focusSessions.length === 0) {
+    wrap.innerHTML = '';
+    return;
+  }
+
+  const today = todayDate();
+  const todaySessions = state.focusSessions
+    .filter(s => s.date === today)
+    .sort((a, b) => (a.start || '').localeCompare(b.start || ''));
+
+  // 14-day trend, daily aggregate (lapses / hours).
+  const trend = [];
+  for (let i = 13; i >= 0; i--) {
+    const d = addDays(today, -i);
+    const ses = state.focusSessions.filter(s => s.date === d);
+    if (ses.length === 0) continue;
+    let hours = 0, lapses = 0;
+    for (const s of ses) {
+      const h = (new Date(s.end).getTime() - new Date(s.start).getTime()) / 3600000;
+      if (h > 0) hours += h;
+      lapses += (s.lapses | 0);
+    }
+    if (hours <= 0) continue;
+    trend.push({ date: d, hours, lapses, rate: lapses / hours });
+  }
+
+  const parts = [];
+  parts.push(`<div class="summary-panel focus-stats-panel"><h3>Focus</h3>`);
+
+  if (todaySessions.length) {
+    parts.push(`<div class="summary-row"><span class="k">Today</span><span class="v">${todaySessions.length} session${todaySessions.length === 1 ? '' : 's'}</span></div>`);
+    for (const s of todaySessions) {
+      const startHm = new Date(s.start);
+      const hhmm = `${String(startHm.getHours()).padStart(2,'0')}:${String(startHm.getMinutes()).padStart(2,'0')}`;
+      const durH = (new Date(s.end).getTime() - new Date(s.start).getTime()) / 3600000;
+      const durStr = hoursToHuman(durH) || '0m';
+      parts.push(`<div class="focus-session-row">
+        <span class="focus-session-time">${escapeHtml(fmt12(hhmm))}</span>
+        <span class="focus-session-dur">${escapeHtml(durStr)}</span>
+        <span class="focus-session-lapses">${s.lapses | 0} lapse${s.lapses === 1 ? '' : 's'}</span>
+      </div>`);
+    }
+  }
+
+  if (trend.length) {
+    parts.push(`<div class="summary-row"><span class="k">Trend (last 14 days)</span><span class="v"></span></div>`);
+    // Scale bar widths against the day with the highest rate so visual is readable.
+    const maxRate = Math.max(...trend.map(t => t.rate), 1);
+    for (const t of trend) {
+      const pct = Math.round((t.rate / maxRate) * 100);
+      const dObj = parseYmd(t.date);
+      const dLabel = dObj.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+      const rateStr = t.rate < 1 ? t.rate.toFixed(1) : String(Math.round(t.rate));
+      parts.push(`<div class="focus-trend-row">
+        <div class="focus-trend-day">${escapeHtml(dLabel)}</div>
+        <div class="focus-trend-bar"><div class="focus-trend-fill" style="width:${pct}%"></div></div>
+        <div class="focus-trend-rate">${escapeHtml(rateStr)} /hr · ${escapeHtml(hoursToHuman(t.hours) || '0m')}</div>
+      </div>`);
+    }
+    parts.push(`<p class="focus-stats-note">A rising count early on usually means you're noticing more lapses — the rate tends to fall as your focus improves.</p>`);
+  }
+
+  parts.push(`</div>`);
+  wrap.innerHTML = parts.join('');
+}
+
 // ---------------- action sheet ----------------
 
 const actionSheet = document.getElementById('action-sheet');
@@ -1775,8 +2113,8 @@ function importData(file) {
   reader.onload = () => {
     try {
       const parsed = JSON.parse(reader.result);
-      if (!parsed || !parsed.meta || (parsed.meta.version !== 1 && parsed.meta.version !== 2)) {
-        toast('Invalid file: expected agendaai schema v1 or v2');
+      if (!parsed || !parsed.meta || (parsed.meta.version !== 1 && parsed.meta.version !== 2 && parsed.meta.version !== 3)) {
+        toast('Invalid file: expected agendaai schema v1, v2, or v3');
         return;
       }
       if (!confirm('Replace all current data with the imported file?')) return;
@@ -1829,11 +2167,14 @@ function switchTab(tab) {
 function render() {
   renderTopbar();
   renderBanner();
+  renderIntentionCard();
+  renderFocusCard();
   renderWeeklySummary();
   renderTimeline();
   renderUpcoming();
   renderDailySummary();
   renderInsights();
+  renderFocusStats();
   renderHistory();
   renderCalendar();
   renderSettings();
@@ -2772,8 +3113,28 @@ actionSheet.addEventListener('click', e => {
   if (e.target === actionSheet) closeActionSheet();
 });
 
+// Focus overlay
+document.getElementById('focus-tap-zone').addEventListener('click', incrementFocusLapse);
+document.getElementById('focus-undo-btn').addEventListener('click', e => {
+  e.stopPropagation();
+  undoFocusLapse();
+});
+document.getElementById('focus-end-btn').addEventListener('click', e => {
+  e.stopPropagation();
+  endFocusSession();
+});
+document.getElementById('focus-discard-btn').addEventListener('click', e => {
+  e.stopPropagation();
+  discardFocusSession();
+});
+
 initWheelPickers();
 render();
+
+// Resume an in-progress focus session if one was running when the app closed.
+if (state.activeFocus) {
+  openFocusOverlay();
+}
 
 // If we were opened from a notification click (./index.html?view=upcoming),
 // jump to the Upcoming tab once the UI is up.
