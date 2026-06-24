@@ -24,6 +24,10 @@
       <div class="date" id="topbar-date"></div>
     </div>
     <div class="topbar-actions">
+      <button type="button" class="off-track-chip" id="off-track-chip" aria-label="Add an off-track moment">
+        <span class="off-track-chip-label">off-track</span>
+        <span class="off-track-chip-count" id="off-track-chip-count">0</span>
+      </button>
       <button class="btn btn-primary" id="add-btn">+ Add</button>
     </div>
   </div>
@@ -1595,34 +1599,63 @@ function closeFocusOverlay() {
 function renderFocusStats() {
   const wrap = document.getElementById('focus-stats-wrap');
   if (!wrap) return;
-  if (!state.focusSessions || state.focusSessions.length === 0) {
+
+  const today = todayDate();
+  const todayOffCount = getTodayOffTrackCount();
+
+  // Off-track 14-day trend (same window the focus stats use). Skip zero days.
+  const offTrend = [];
+  for (let i = 13; i >= 0; i--) {
+    const d = addDays(today, -i);
+    const ds = state.daily_state.find(x => x.date === d);
+    const count = ds ? (ds.offTrackCount | 0) : 0;
+    if (count > 0) offTrend.push({ date: d, count });
+  }
+  const hasOffTrack = todayOffCount > 0 || offTrend.length > 0;
+  const hasFocus = state.focusSessions && state.focusSessions.length > 0;
+
+  if (!hasFocus && !hasOffTrack) {
     wrap.innerHTML = '';
     return;
   }
 
-  const today = todayDate();
-  const todaySessions = state.focusSessions
-    .filter(s => s.date === today)
-    .sort((a, b) => (a.start || '').localeCompare(b.start || ''));
+  const todaySessions = hasFocus
+    ? state.focusSessions
+        .filter(s => s.date === today)
+        .sort((a, b) => (a.start || '').localeCompare(b.start || ''))
+    : [];
 
   // 14-day trend, daily aggregate (lapses / hours).
   const trend = [];
-  for (let i = 13; i >= 0; i--) {
-    const d = addDays(today, -i);
-    const ses = state.focusSessions.filter(s => s.date === d);
-    if (ses.length === 0) continue;
-    let hours = 0, lapses = 0;
-    for (const s of ses) {
-      const h = (new Date(s.end).getTime() - new Date(s.start).getTime()) / 3600000;
-      if (h > 0) hours += h;
-      lapses += (s.lapses | 0);
+  if (hasFocus) {
+    for (let i = 13; i >= 0; i--) {
+      const d = addDays(today, -i);
+      const ses = state.focusSessions.filter(s => s.date === d);
+      if (ses.length === 0) continue;
+      let hours = 0, lapses = 0;
+      for (const s of ses) {
+        const h = (new Date(s.end).getTime() - new Date(s.start).getTime()) / 3600000;
+        if (h > 0) hours += h;
+        lapses += (s.lapses | 0);
+      }
+      if (hours <= 0) continue;
+      trend.push({ date: d, hours, lapses, rate: lapses / hours });
     }
-    if (hours <= 0) continue;
-    trend.push({ date: d, hours, lapses, rate: lapses / hours });
   }
 
   const parts = [];
   parts.push(`<div class="summary-panel focus-stats-panel"><h3>Focus</h3>`);
+
+  if (hasOffTrack) {
+    const dimAttr = todayOffCount === 0 ? ' disabled' : '';
+    parts.push(`<div class="summary-row off-track-today-row">
+      <span class="k">Off-track today</span>
+      <span class="v">
+        <strong class="off-track-today-num">${todayOffCount}</strong>
+        <button type="button" class="off-track-correct-btn" id="off-track-correct-btn"${dimAttr} aria-label="Subtract one off-track moment">−1</button>
+      </span>
+    </div>`);
+  }
 
   if (todaySessions.length) {
     parts.push(`<div class="summary-row"><span class="k">Today</span><span class="v">${todaySessions.length} session${todaySessions.length === 1 ? '' : 's'}</span></div>`);
@@ -1657,8 +1690,78 @@ function renderFocusStats() {
     parts.push(`<p class="focus-stats-note">A rising count early on usually means you're noticing more lapses — the rate tends to fall as your focus improves.</p>`);
   }
 
+  if (offTrend.length) {
+    parts.push(`<div class="summary-row"><span class="k">Off-track (last 14 days)</span><span class="v"></span></div>`);
+    for (const t of offTrend) {
+      const dObj = parseYmd(t.date);
+      const dLabel = dObj.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+      parts.push(`<div class="off-track-trend-row">
+        <span class="off-track-trend-day">${escapeHtml(dLabel)}</span>
+        <span class="off-track-trend-count">${t.count}</span>
+      </div>`);
+    }
+  }
+
   parts.push(`</div>`);
   wrap.innerHTML = parts.join('');
+
+  const correctBtn = document.getElementById('off-track-correct-btn');
+  if (correctBtn) correctBtn.addEventListener('click', decrementOffTrackCount);
+}
+
+// ---------------- off-track chip ----------------
+//
+// A global, always-visible counter in the top bar. One tap = +1; correction
+// via the small "−1" control in the Stats Focus section. Stored lazily on
+// today's daily_state entry as offTrackCount (int, default 0). Resets each
+// day automatically because it reads today's per-date entry.
+//
+// Intentionally INDEPENDENT of focus-session lapses — different concept,
+// different storage path, no shared logic.
+
+function getTodayOffTrackCount() {
+  const ds = state.daily_state.find(d => d.date === todayDate());
+  return (ds && typeof ds.offTrackCount === 'number') ? ds.offTrackCount : 0;
+}
+
+function setOffTrackCount(n) {
+  const ds = ensureDailyState(todayDate());
+  ds.offTrackCount = Math.max(0, n | 0);
+  saveState();
+}
+
+function incrementOffTrackCount() {
+  setOffTrackCount(getTodayOffTrackCount() + 1);
+  refreshOffTrackChip();
+  pulseOffTrackChip();
+}
+
+function decrementOffTrackCount() {
+  const cur = getTodayOffTrackCount();
+  if (cur <= 0) return;
+  setOffTrackCount(cur - 1);
+  refreshOffTrackChip();
+  render();
+}
+
+// Updates only the chip count + active-state class — never replaces the
+// button element, so pulse animations triggered on the chip persist.
+function refreshOffTrackChip() {
+  const countEl = document.getElementById('off-track-chip-count');
+  const chip    = document.getElementById('off-track-chip');
+  if (!countEl || !chip) return;
+  const n = getTodayOffTrackCount();
+  countEl.textContent = String(n);
+  chip.classList.toggle('has-count', n > 0);
+}
+
+function pulseOffTrackChip() {
+  const chip = document.getElementById('off-track-chip');
+  if (!chip) return;
+  chip.classList.remove('pulse');
+  // force reflow so the animation can re-trigger
+  void chip.offsetWidth;
+  chip.classList.add('pulse');
 }
 
 // ---------------- action sheet ----------------
@@ -1855,6 +1958,7 @@ function renderTopbar() {
   const d = new Date();
   const opts = { weekday: 'long', month: 'long', day: 'numeric' };
   document.getElementById('topbar-date').textContent = d.toLocaleDateString(undefined, opts);
+  refreshOffTrackChip();
 }
 
 function renderSettings() {
@@ -2961,6 +3065,9 @@ document.getElementById('upcoming-add-btn').addEventListener('click', () => {
   // Reuse the existing add flow but default the type to To-do for this tab.
   openAddModalForDate(todayDate());
 });
+
+// Off-track chip: one-tap +1 with a quick visual pulse.
+document.getElementById('off-track-chip').addEventListener('click', incrementOffTrackCount);
 
 document.getElementById('reminders-toggle-btn').addEventListener('click', () => {
   if (isRemindersOn()) disableReminders();
