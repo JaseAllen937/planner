@@ -38,6 +38,7 @@
     <div id="banner-wrap"></div>
     <div id="intention-card-wrap"></div>
     <div id="focus-card-wrap"></div>
+    <div id="sleep-card-wrap"></div>
     <div id="timeline"></div>
   </section>
 
@@ -66,6 +67,7 @@
     <div id="weekly-summary-wrap"></div>
     <div id="daily-summary-wrap"></div>
     <div id="focus-stats-wrap"></div>
+    <div id="sleep-stats-wrap"></div>
     <div id="insights-wrap"></div>
     <div id="history-wrap"></div>
   </section>
@@ -597,7 +599,7 @@ function loadState() {
   if (raw) {
     try {
       const parsed = JSON.parse(raw);
-      if (parsed && parsed.meta && (parsed.meta.version === 1 || parsed.meta.version === 2 || parsed.meta.version === 3)) {
+      if (parsed && parsed.meta && (parsed.meta.version === 1 || parsed.meta.version === 2 || parsed.meta.version === 3 || parsed.meta.version === 4)) {
         return ensureShape(parsed);
       }
     } catch (e) {
@@ -703,6 +705,16 @@ function ensureShape(s) {
   if (!Array.isArray(s.focusSessions)) s.focusSessions = [];
   if (typeof s.activeFocus === 'undefined') s.activeFocus = null;
 
+  // v3 -> v4: add meta.lastWipe marker (ISO timestamp of the most recent
+  // history wipe, or null). Streak/miss math floors its look-back at this date
+  // so a freshly-wiped slate doesn't count pre-wipe missed days. Idempotent.
+  if ((s.meta.version || 1) < 4) {
+    if (typeof s.meta.lastWipe === 'undefined') s.meta.lastWipe = null;
+    s.meta.version = 4;
+  }
+  // Defensive default for fresh-v4 states.
+  if (typeof s.meta.lastWipe === 'undefined') s.meta.lastWipe = null;
+
   // Cloud-sync uses meta.updated_at as the conflict-resolution timestamp.
   // Backfill it for pre-sync states.
   if (!s.meta.updated_at) s.meta.updated_at = s.meta.created_at || nowIso();
@@ -713,7 +725,7 @@ function ensureShape(s) {
 function seedState() {
   const now = nowIso();
   return {
-    meta: { version: 3, created_at: now, updated_at: now, last_export_at: null },
+    meta: { version: 4, created_at: now, updated_at: now, last_export_at: null, lastWipe: null },
     habits: [
       {
         id: uuid(),
@@ -859,10 +871,20 @@ function undoMissed(refId) {
 
 // ---------------- streak math ----------------
 
+// The earliest date streak/miss math is allowed to reach back to: the later of
+// the habit's start date and the most recent history wipe (meta.lastWipe).
+// Nothing before a wipe should count — a freshly-wiped slate must read 0.
+function streakFloorYmd(habit) {
+  let floor = habit && habit.created_at ? ymd(new Date(habit.created_at)) : null;
+  const wipe = state.meta && state.meta.lastWipe ? ymd(new Date(state.meta.lastWipe)) : null;
+  if (wipe && (!floor || wipe > floor)) floor = wipe;
+  return floor;
+}
+
 function currentStreak(habitId, endingDate) {
   const habit = state.habits.find(h => h.id === habitId);
   if (!habit) return 0;
-  const startYmd = habit.created_at ? ymd(new Date(habit.created_at)) : null;
+  const startYmd = streakFloorYmd(habit);
   let streak = 0;
   const d = parseYmd(endingDate);
   const today = todayDate();
@@ -895,7 +917,7 @@ function previousStreak(habitId, endingDate) {
 function missStreak(habitId, endingDate) {
   const habit = state.habits.find(h => h.id === habitId);
   if (!habit) return 0;
-  const startYmd = habit.created_at ? ymd(new Date(habit.created_at)) : null;
+  const startYmd = streakFloorYmd(habit);
   let streak = 0;
   const d = parseYmd(endingDate);
   const today = todayDate();
@@ -1260,16 +1282,35 @@ function computeInsights() {
   return cards;
 }
 
+// Open/closed state lives only in memory — collapsed by default each session.
+let insightsOpen = false;
+
 function renderInsights() {
   const wrap = document.getElementById('insights-wrap');
   const cards = computeInsights();
   if (cards.length === 0) { wrap.innerHTML = ''; return; }
-  wrap.innerHTML = cards.map(c => `
+
+  const openClass = insightsOpen ? ' open' : '';
+  const cardsHtml = cards.map(c => `
     <div class="insight-card ${c.tone}">
       <h4>${escapeHtml(c.title)}</h4>
       ${c.body ? `<p>${escapeHtml(c.body)}</p>` : ''}
     </div>
   `).join('');
+
+  wrap.innerHTML = `
+    <div class="insights-expander${openClass}">
+      <button type="button" class="insights-toggle" id="insights-toggle" aria-expanded="${insightsOpen ? 'true' : 'false'}">
+        <span class="insights-toggle-label">⚠︎ Insights (${cards.length})</span>
+        <span class="insights-chevron" aria-hidden="true">›</span>
+      </button>
+      <div class="insights-body"${insightsOpen ? '' : ' hidden'}>${cardsHtml}</div>
+    </div>`;
+
+  document.getElementById('insights-toggle').addEventListener('click', () => {
+    insightsOpen = !insightsOpen;
+    renderInsights();
+  });
 }
 
 // ---------------- morning popup (blocking) ----------------
@@ -1469,6 +1510,47 @@ function renderFocusCard() {
   document.getElementById('focus-start-btn').addEventListener('click', () => {
     if (state.activeFocus) openFocusOverlay();
     else                   startFocusSession();
+  });
+}
+
+// ---------------- sleep (bedtime) ----------------
+// The daily log already carries a `bedtime` field ("HH:MM" | null). This card
+// lets the user set/edit today's bedtime; the Stats Sleep section views it.
+
+function getTodayBedtime() {
+  const ds = state.daily_state.find(d => d.date === todayDate());
+  return (ds && ds.bedtime) || null;
+}
+
+function setTodayBedtime(hhmm) {
+  const ds = ensureDailyState(todayDate());
+  ds.bedtime = (hhmm && /^\d{2}:\d{2}$/.test(hhmm)) ? hhmm : null;
+  // Bedtime feeds the sleep-duration calc when paired with tomorrow's wake time.
+  computeAndStoreHoursSlept();
+  saveState();
+  render();
+}
+
+function renderSleepCard() {
+  const wrap = document.getElementById('sleep-card-wrap');
+  if (!wrap) return;
+  // Don't clobber the native picker while it's open/focused.
+  if (document.activeElement && document.activeElement.id === 'sleep-bedtime-input') return;
+
+  const bt = getTodayBedtime();
+  const display = bt ? fmt12(bt) : 'Not set';
+  wrap.innerHTML = `
+    <div class="sleep-card" id="sleep-card">
+      <div class="sleep-label">Sleep</div>
+      <div class="sleep-row">
+        <span class="sleep-text">Bedtime · <span class="sleep-value">${escapeHtml(display)}</span></span>
+        <input type="time" class="sleep-bedtime-input" id="sleep-bedtime-input"
+               value="${bt || ''}" aria-label="Set today's bedtime">
+      </div>
+    </div>
+  `;
+  document.getElementById('sleep-bedtime-input').addEventListener('change', e => {
+    setTodayBedtime(e.target.value || null);
   });
 }
 
@@ -1687,6 +1769,52 @@ function renderFocusStats() {
 
   const correctBtn = document.getElementById('off-track-correct-btn');
   if (correctBtn) correctBtn.addEventListener('click', decrementOffTrackCount);
+}
+
+// Compact 7-day bedtime view. Null-safe — renders nothing if no bedtimes set.
+function renderSleepStats() {
+  const wrap = document.getElementById('sleep-stats-wrap');
+  if (!wrap) return;
+  const today = todayDate();
+
+  const days = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = addDays(today, -i);
+    const ds = state.daily_state.find(x => x.date === d);
+    days.push({ date: d, bedtime: (ds && ds.bedtime) || null });
+  }
+  const set = days.filter(d => d.bedtime);
+  if (set.length === 0) { wrap.innerHTML = ''; return; }
+
+  // Average bedtime (only with >=2 entries). Treat 00:00–04:00 as "next day"
+  // so late nights average correctly — mirrors the insight bedtime math.
+  let avgStr = null;
+  if (set.length >= 2) {
+    const mins = set.map(d => {
+      let m = minsSinceMidnight(d.bedtime);
+      if (m < 4 * 60) m += 1440;
+      return m;
+    });
+    const avg = Math.round(mins.reduce((a, b) => a + b, 0) / mins.length) % 1440;
+    avgStr = fmt12(`${String(Math.floor(avg / 60)).padStart(2, '0')}:${String(avg % 60).padStart(2, '0')}`);
+  }
+
+  const parts = [];
+  parts.push(`<div class="summary-panel"><h3>Sleep</h3>`);
+  if (avgStr) {
+    parts.push(`<div class="summary-row"><span class="k">Avg bedtime (7-day)</span><span class="v">${escapeHtml(avgStr)}</span></div>`);
+  }
+  parts.push(`<div class="sleep-week">`);
+  for (const d of days) {
+    const dow = parseYmd(d.date).toLocaleDateString(undefined, { weekday: 'narrow' });
+    const label = d.bedtime ? fmt12(d.bedtime) : '—';
+    parts.push(`<div class="sleep-week-col">
+      <div class="sleep-week-val${d.bedtime ? '' : ' unset'}">${escapeHtml(label)}</div>
+      <div class="sleep-week-day">${escapeHtml(dow)}</div>
+    </div>`);
+  }
+  parts.push(`</div></div>`);
+  wrap.innerHTML = parts.join('');
 }
 
 // ---------------- off-track chip ----------------
@@ -2197,8 +2325,8 @@ function importData(file) {
   reader.onload = () => {
     try {
       const parsed = JSON.parse(reader.result);
-      if (!parsed || !parsed.meta || (parsed.meta.version !== 1 && parsed.meta.version !== 2 && parsed.meta.version !== 3)) {
-        toast('Invalid file: expected agendaai schema v1, v2, or v3');
+      if (!parsed || !parsed.meta || (parsed.meta.version !== 1 && parsed.meta.version !== 2 && parsed.meta.version !== 3 && parsed.meta.version !== 4)) {
+        toast('Invalid file: expected agendaai schema v1–v4');
         return;
       }
       if (!confirm('Replace all current data with the imported file?')) return;
@@ -2228,6 +2356,11 @@ function resetData() {
 // NOT resetData(): no re-seed. saveState() bumps meta.updated_at and pushes the
 // wiped blob to the cloud, so it becomes newest and propagates to other devices.
 function wipeHistory() {
+  // Offer a keep-a-copy download before anything is cleared. Reuses the
+  // standard Export path so the user gets the usual agendaai-<date>.json file.
+  if (confirm('Save a backup snapshot before wiping?')) {
+    exportData();
+  }
   if (!confirm('Wipe all completion history, focus sessions, and daily logs? Habits and tasks are kept. This cannot be undone.')) return;
   // One-shot on-device safety backup before clearing (overwrite any prior backup).
   try { localStorage.setItem('agendaai_prewipe_backup', JSON.stringify(state)); } catch {}
@@ -2236,6 +2369,9 @@ function wipeHistory() {
   state.focusSessions = [];
   state.daily_state = [];
   state.activeFocus = null;
+  // Mark the wipe so streak/miss math floors its look-back here (no pre-wipe
+  // "skipped N days" — a freshly-wiped slate reads 0).
+  state.meta.lastWipe = nowIso();
   saveState();
   render();
   toast('History wiped');
@@ -2270,13 +2406,15 @@ function render() {
   renderBanner();
   renderIntentionCard();
   renderFocusCard();
+  renderSleepCard();
   renderWeeklySummary();
   renderTimeline();
   renderUpcoming();
   renderDailySummary();
-  renderInsights();
   renderFocusStats();
-  // renderHistory() retired — the Stats tab no longer shows the 14-day day-by-day log.
+  renderSleepStats();
+  renderInsights();
+  renderAllTime();
   renderCalendar();
   renderSettings();
   maybeShowMorningPopup();
@@ -2605,15 +2743,113 @@ function renderUpcoming() {
   });
 }
 
-// Retired: the Stats tab no longer renders a 14-day day-by-day log. Kept as a
-// no-op so any stray caller just clears the (now unused) #history-wrap element.
-function renderHistory() {
-  const wrap = document.getElementById('history-wrap');
-  if (wrap) wrap.innerHTML = '';
+// ---------------- All-time history ----------------
+// A LIVE, read-only view of stored data at the bottom of the Stats tab.
+// Collapsed by default; in-memory toggle. Because it reads live data, a Wipe
+// clears it too — hence the save-snapshot option in wipeHistory().
+
+let allTimeOpen = false;
+
+// All-time totals computed live from current data (best-effort, null-safe).
+function computeAllTimeTotals() {
+  const today = todayDate();
+
+  const habitsCompleted = state.completions.filter(c => c.ref_type === 'habit').length;
+
+  let focusHours = 0;
+  for (const s of (state.focusSessions || [])) {
+    const h = (new Date(s.end).getTime() - new Date(s.start).getTime()) / 3600000;
+    if (h > 0) focusHours += h;
+  }
+
+  let offTrackTaps = 0;
+  for (const ds of state.daily_state) offTrackTaps += (ds.offTrackCount | 0);
+
+  // Longest run of consecutive completed scheduled days, for any habit. Walks
+  // forward from the streak floor (so pre-wipe history is excluded) to today.
+  let longestStreak = 0;
+  for (const h of state.habits) {
+    let start = streakFloorYmd(h) || today;
+    let d = parseYmd(start);
+    const end = parseYmd(today);
+    let run = 0, safety = 3650;
+    while (d <= end && safety-- > 0) {
+      const dStr = ymd(d);
+      const dCode = DAY_CODES[d.getDay()];
+      if (h.days.includes(dCode)) {
+        if (findCompletion(h.id, dStr)) { run += 1; if (run > longestStreak) longestStreak = run; }
+        else if (dStr !== today) { run = 0; } // today incomplete doesn't break the run
+      }
+      d.setDate(d.getDate() + 1);
+    }
+  }
+
+  // Date range covered across all stored history.
+  const dates = [];
+  state.completions.forEach(c => dates.push(c.date));
+  state.missed.forEach(m => dates.push(m.date));
+  state.daily_state.forEach(ds => dates.push(ds.date));
+  (state.focusSessions || []).forEach(s => { if (s.date) dates.push(s.date); });
+  dates.sort();
+
+  const empty = dates.length === 0;
+  let range = '—';
+  if (!empty) {
+    const fmt = d => parseYmd(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    const first = dates[0], last = dates[dates.length - 1];
+    range = first === last ? fmt(first) : `${fmt(first)} – ${fmt(last)}`;
+  }
+
+  return { empty, habitsCompleted, longestStreak, focusHours, offTrackTaps, range };
 }
 
-function renderHistoryLegacy() {
+function renderAllTime() {
   const wrap = document.getElementById('history-wrap');
+  if (!wrap) return;
+  const t = computeAllTimeTotals();
+  const openClass = allTimeOpen ? ' open' : '';
+
+  let bodyInner;
+  if (t.empty) {
+    bodyInner = `<div class="empty">No history yet.<br>Mark items done as you go.</div>`;
+  } else {
+    bodyInner = `
+      <div class="alltime-totals">
+        <div class="summary-row"><span class="k">Habits completed</span><span class="v">${t.habitsCompleted}</span></div>
+        <div class="summary-row"><span class="k">Longest streak</span><span class="v">${t.longestStreak}</span></div>
+        <div class="summary-row"><span class="k">Focus time</span><span class="v">${escapeHtml(hoursToHuman(t.focusHours) || '0m')}</span></div>
+        <div class="summary-row"><span class="k">Off-track taps</span><span class="v">${t.offTrackTaps}</span></div>
+        <div class="summary-row"><span class="k">Range</span><span class="v">${escapeHtml(t.range)}</span></div>
+      </div>
+      <div class="alltime-history-list" id="alltime-history-list"></div>`;
+  }
+
+  wrap.innerHTML = `
+    <div class="summary-panel alltime-panel${openClass}">
+      <button type="button" class="alltime-toggle" id="alltime-toggle" aria-expanded="${allTimeOpen ? 'true' : 'false'}">
+        <span class="alltime-title">All-time history</span>
+        <span class="alltime-chevron" aria-hidden="true">›</span>
+      </button>
+      <div class="alltime-body"${allTimeOpen ? '' : ' hidden'}>
+        <p class="alltime-caption">Live view of stored history. Wiping clears this — use "Save snapshot" when wiping to keep a copy.</p>
+        ${bodyInner}
+      </div>
+    </div>`;
+
+  document.getElementById('alltime-toggle').addEventListener('click', () => {
+    allTimeOpen = !allTimeOpen;
+    renderAllTime();
+  });
+
+  // Fill the day-by-day list from live data when expanded.
+  if (allTimeOpen && !t.empty) renderHistoryLegacy();
+}
+
+// Day-by-day list — now the expanded content inside the All-time section.
+// Renders into #alltime-history-list (created by renderAllTime when open).
+function renderHistoryLegacy() {
+  const wrap = document.getElementById('alltime-history-list');
+  if (!wrap) return;
   const today = todayDate();
 
   const datesWithData = new Set();
