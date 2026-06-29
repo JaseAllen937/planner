@@ -565,6 +565,55 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 }
 .streak-row .count.broken { background: var(--danger-dim); color: var(--danger); }
 
+/* ---------- Current-streak board (This Week card) ---------- */
+
+.streak-board {
+  display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 2px;
+}
+.streak-chip {
+  display: flex; flex-direction: column; align-items: center;
+  min-width: 64px; padding: 10px 12px;
+  background: var(--accent-soft); border-radius: var(--r-card);
+}
+.streak-num {
+  font-size: 26px; font-weight: 800; color: var(--accent);
+  font-family: var(--font-mono);
+  font-feature-settings: var(--num); letter-spacing: -0.03em; line-height: 1;
+}
+.streak-name {
+  margin-top: 4px; font-size: 11px; color: var(--text-secondary);
+  text-align: center; max-width: 88px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.streak-empty {
+  padding: 8px 0 2px; font-size: 13px; color: var(--text-secondary);
+}
+
+/* ---------- Off-track 7-day mini-trend (Focus card) ---------- */
+
+.offtrack-mini {
+  display: flex; gap: 6px; align-items: flex-end;
+  padding: 6px 0 2px;
+}
+.offtrack-mini-col {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px;
+}
+.offtrack-mini-track {
+  width: 100%; height: 44px; display: flex; align-items: flex-end;
+  background: var(--surface-inset); border-radius: 5px; overflow: hidden;
+}
+.offtrack-mini-fill {
+  width: 100%; min-height: 2px; background: var(--accent);
+  border-radius: 5px 5px 0 0; transition: height 0.3s;
+}
+.offtrack-mini-val {
+  font-size: 11px; font-weight: 600; color: var(--text-secondary);
+  font-family: var(--font-mono); font-feature-settings: var(--num);
+}
+.offtrack-mini-day {
+  font-size: 10px; color: var(--text-tertiary); text-transform: uppercase;
+}
+
 /* ---------- Insight cards ---------- */
 
 .insight-card {
