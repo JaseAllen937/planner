@@ -39,6 +39,7 @@
     <div id="intention-card-wrap"></div>
     <div id="focus-card-wrap"></div>
     <div id="sleep-card-wrap"></div>
+    <div id="vault-card-wrap"></div>
     <div id="timeline"></div>
   </section>
 
@@ -357,6 +358,23 @@
   </div>
 </div>
 
+<!-- The Vault — full-screen finances overlay (modelled on the Focus overlay) -->
+<div class="modal vault-overlay-mode" id="vault-overlay" role="dialog" aria-modal="true" aria-label="The Vault">
+  <div class="vault-overlay-panel">
+    <div class="vault-header">
+      <h2 class="vault-title">The Vault</h2>
+      <button type="button" class="btn vault-close-btn" id="vault-close-btn" aria-label="Close the Vault">Done</button>
+    </div>
+    <div class="vault-body" id="vault-body"></div>
+  </div>
+</div>
+
+<!-- Vault bottom-sheet — reused for quick-add / edit transaction / add-edit goal.
+     Sits after the overlay in the DOM so it stacks above it. -->
+<div class="modal vault-sheet-mode" id="vault-sheet" role="dialog" aria-modal="true">
+  <div class="modal-panel" id="vault-sheet-panel"></div>
+</div>
+
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
@@ -446,6 +464,12 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
   ));
+}
+
+// Money formatter — $#,##0.00. Null/NaN-safe (treats junk as 0).
+function fmtMoney(n) {
+  const v = (typeof n === 'number' && isFinite(n)) ? n : 0;
+  return '$' + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function parseYmd(s) {
@@ -599,7 +623,7 @@ function loadState() {
   if (raw) {
     try {
       const parsed = JSON.parse(raw);
-      if (parsed && parsed.meta && (parsed.meta.version === 1 || parsed.meta.version === 2 || parsed.meta.version === 3 || parsed.meta.version === 4)) {
+      if (parsed && parsed.meta && (parsed.meta.version >= 1 && parsed.meta.version <= 5)) {
         return ensureShape(parsed);
       }
     } catch (e) {
@@ -715,6 +739,19 @@ function ensureShape(s) {
   // Defensive default for fresh-v4 states.
   if (typeof s.meta.lastWipe === 'undefined') s.meta.lastWipe = null;
 
+  // v4 -> v5: The Vault — personal finances module (manual entry only).
+  // Transactions are the single source of truth; all summaries and goal
+  // progress derive from them. Idempotent; works on load AND on import of
+  // older exports. Categories are plain strings so budgets can layer on later.
+  if ((s.meta.version || 1) < 5) {
+    if (!s.vault) s.vault = { transactions: [], goals: [] };
+    s.meta.version = 5;
+  }
+  // Defensive defaults for fresh-v5 states.
+  if (!s.vault || typeof s.vault !== 'object') s.vault = { transactions: [], goals: [] };
+  if (!Array.isArray(s.vault.transactions)) s.vault.transactions = [];
+  if (!Array.isArray(s.vault.goals)) s.vault.goals = [];
+
   // Cloud-sync uses meta.updated_at as the conflict-resolution timestamp.
   // Backfill it for pre-sync states.
   if (!s.meta.updated_at) s.meta.updated_at = s.meta.created_at || nowIso();
@@ -725,7 +762,7 @@ function ensureShape(s) {
 function seedState() {
   const now = nowIso();
   return {
-    meta: { version: 4, created_at: now, updated_at: now, last_export_at: null, lastWipe: null },
+    meta: { version: 5, created_at: now, updated_at: now, last_export_at: null, lastWipe: null },
     habits: [
       {
         id: uuid(),
@@ -756,7 +793,8 @@ function seedState() {
     daily_state: [],
     templates: [],
     focusSessions: [],
-    activeFocus: null
+    activeFocus: null,
+    vault: { transactions: [], goals: [] }
   };
 }
 
@@ -2325,8 +2363,8 @@ function importData(file) {
   reader.onload = () => {
     try {
       const parsed = JSON.parse(reader.result);
-      if (!parsed || !parsed.meta || (parsed.meta.version !== 1 && parsed.meta.version !== 2 && parsed.meta.version !== 3 && parsed.meta.version !== 4)) {
-        toast('Invalid file: expected agendaai schema v1–v4');
+      if (!parsed || !parsed.meta || !(parsed.meta.version >= 1 && parsed.meta.version <= 5)) {
+        toast('Invalid file: expected agendaai schema v1–v5');
         return;
       }
       if (!confirm('Replace all current data with the imported file?')) return;
@@ -2407,6 +2445,8 @@ function render() {
   renderIntentionCard();
   renderFocusCard();
   renderSleepCard();
+  renderVaultCard();
+  if (vaultOverlay && vaultOverlay.classList.contains('open')) renderVault();
   renderWeeklySummary();
   renderTimeline();
   renderUpcoming();
@@ -2896,6 +2936,521 @@ function renderHistoryLegacy() {
       </div>
     `;
   }).join('');
+}
+
+// ============================================================================
+// The Vault — personal finances (manual entry). v1 foundation.
+// ----------------------------------------------------------------------------
+// Transactions are the SINGLE SOURCE OF TRUTH; every summary and goal progress
+// figure is derived from them. Rides the existing synced state blob (saveState
+// pushes it). Built as an extensible base — budgets/limits/portfolio can layer
+// on later without a rebuild. CRITICAL MATH: savings is money you already have,
+// earmarked to goals — it is NOT income and does NOT reduce NET.
+// ============================================================================
+
+let vaultShowAllTxns = false;
+let vaultForm = null; // transient sheet state
+
+function vaultData() {
+  if (!state.vault || typeof state.vault !== 'object') state.vault = { transactions: [], goals: [] };
+  if (!Array.isArray(state.vault.transactions)) state.vault.transactions = [];
+  if (!Array.isArray(state.vault.goals)) state.vault.goals = [];
+  return state.vault;
+}
+
+function currentMonthKey() { return todayDate().slice(0, 7); } // 'YYYY-MM'
+
+function sumByType(txns, type) {
+  return txns.filter(t => t.type === type)
+    .reduce((a, t) => a + (Number(t.amount) || 0), 0);
+}
+function goalSaved(goalId) {
+  return vaultData().transactions
+    .filter(t => t.type === 'savings' && t.goalId === goalId)
+    .reduce((a, t) => a + (Number(t.amount) || 0), 0);
+}
+function totalSaved() {
+  return vaultData().transactions
+    .filter(t => t.type === 'savings')
+    .reduce((a, t) => a + (Number(t.amount) || 0), 0);
+}
+function goalNameFor(goalId) {
+  if (!goalId) return null;
+  const g = vaultData().goals.find(x => x.id === goalId);
+  return g ? g.name : null;
+}
+
+// ---- Today entry card ----
+
+function renderVaultCard() {
+  const wrap = document.getElementById('vault-card-wrap');
+  if (!wrap) return;
+  wrap.innerHTML = `
+    <button type="button" class="vault-entry-card" id="vault-entry-card" aria-label="Open The Vault">
+      <span class="vault-entry-icon" aria-hidden="true">🏦</span>
+      <span class="vault-entry-text">
+        <span class="vault-entry-title">The Vault</span>
+        <span class="vault-entry-sub">Money in, out &amp; saved</span>
+      </span>
+      <span class="vault-entry-chev" aria-hidden="true">›</span>
+    </button>`;
+  document.getElementById('vault-entry-card').addEventListener('click', openVault);
+}
+
+// ---- Open / close full-screen overlay ----
+
+const vaultOverlay = document.getElementById('vault-overlay');
+const vaultSheet   = document.getElementById('vault-sheet');
+
+function openVault() {
+  vaultShowAllTxns = false;
+  renderVault();
+  vaultOverlay.classList.add('open');
+}
+function closeVault() {
+  vaultOverlay.classList.remove('open');
+  closeVaultSheet();
+}
+function openVaultSheet()  { vaultSheet.classList.add('open'); }
+function closeVaultSheet() { vaultSheet.classList.remove('open'); vaultForm = null; }
+
+// ---- Main view render ----
+
+function renderVault() {
+  const body = document.getElementById('vault-body');
+  if (!body) return;
+  const v = vaultData();
+  const mk = currentMonthKey();
+  const monthLabel = parseYmd(todayDate()).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  const monthTxns = v.transactions.filter(t => (t.date || '').slice(0, 7) === mk);
+
+  const income = sumByType(monthTxns, 'income');
+  const spending = sumByType(monthTxns, 'spending');
+  const saved = sumByType(monthTxns, 'savings');
+  const net = income - spending; // savings deliberately excluded
+
+  const parts = [];
+
+  // Prominent quick-add at the top — minimise taps.
+  parts.push(`<button type="button" class="btn btn-primary vault-add-btn" data-act="quick-add">+ Add transaction</button>`);
+
+  // 1) THIS MONTH summary
+  const maxIO = Math.max(income, spending, 1);
+  parts.push(`
+    <div class="vault-section">
+      <div class="vault-section-head">
+        <span class="vault-section-title">This month</span>
+        <span class="vault-month">${escapeHtml(monthLabel)}</span>
+      </div>
+      <div class="vault-net ${net >= 0 ? 'pos' : 'neg'}">
+        <span class="vault-net-label">Net</span>
+        <span class="vault-net-val">${escapeHtml(fmtMoney(net))}</span>
+      </div>
+      <div class="vault-io">
+        <div class="vault-io-row">
+          <span class="vault-io-k"><span class="vault-dot in"></span>Income</span>
+          <span class="vault-io-v">${escapeHtml(fmtMoney(income))}</span>
+        </div>
+        <div class="vault-io-bar"><div class="vault-io-fill in" style="width:${(income / maxIO * 100).toFixed(1)}%"></div></div>
+        <div class="vault-io-row">
+          <span class="vault-io-k"><span class="vault-dot out"></span>Spending</span>
+          <span class="vault-io-v">${escapeHtml(fmtMoney(spending))}</span>
+        </div>
+        <div class="vault-io-bar"><div class="vault-io-fill out" style="width:${(spending / maxIO * 100).toFixed(1)}%"></div></div>
+      </div>
+      <div class="vault-saved-row">
+        <span class="vault-io-k"><span class="vault-dot save"></span>Saved this month</span>
+        <span class="vault-io-v">${escapeHtml(fmtMoney(saved))}</span>
+      </div>
+      <p class="vault-note-line">Saved money is set aside to goals — it doesn't reduce your net.</p>
+    </div>`);
+
+  // 2) SAVINGS GOALS
+  parts.push(`
+    <div class="vault-section">
+      <div class="vault-section-head">
+        <span class="vault-section-title">Savings goals</span>
+        <button type="button" class="vault-mini-btn" data-act="add-goal">+ Add goal</button>
+      </div>
+      <div class="vault-total-saved"><span>Total saved</span><strong>${escapeHtml(fmtMoney(totalSaved()))}</strong></div>`);
+  if (v.goals.length === 0) {
+    parts.push(`<div class="vault-empty">No goals yet. Add one to save toward something specific.</div>`);
+  } else {
+    for (const g of v.goals) {
+      const gs = goalSaved(g.id);
+      const hasTarget = Number(g.target) > 0;
+      const pct = hasTarget ? Math.min(100, gs / g.target * 100) : 0;
+      const pctLabel = hasTarget ? `${Math.round(gs / g.target * 100)}% funded` : 'No target set';
+      parts.push(`
+        <div class="vault-goal-card">
+          <div class="vault-goal-top">
+            <span class="vault-goal-name">${escapeHtml(g.name)}</span>
+            <span class="vault-goal-amt">${escapeHtml(fmtMoney(gs))}${hasTarget ? ' / ' + escapeHtml(fmtMoney(g.target)) : ''}</span>
+          </div>
+          ${hasTarget ? `<div class="vault-goal-bar"><div class="vault-goal-fill" style="width:${pct.toFixed(1)}%"></div></div>` : ''}
+          <div class="vault-goal-foot">
+            <span class="vault-goal-pct">${escapeHtml(pctLabel)}</span>
+            <span class="vault-goal-actions">
+              <button type="button" class="vault-mini-btn" data-act="add-deposit" data-goal="${g.id}">Add deposit</button>
+              <button type="button" class="vault-mini-btn" data-act="edit-goal" data-goal="${g.id}">Edit</button>
+            </span>
+          </div>
+        </div>`);
+    }
+  }
+  parts.push(`</div>`);
+
+  // 3) TRANSACTIONS (this month, newest first)
+  parts.push(`
+    <div class="vault-section">
+      <div class="vault-section-head">
+        <span class="vault-section-title">Transactions</span>
+        <span class="vault-month">${escapeHtml(monthLabel)}</span>
+      </div>`);
+  const sorted = monthTxns.slice().sort((a, b) =>
+    (b.date || '').localeCompare(a.date || '') || String(b.id).localeCompare(String(a.id)));
+  if (sorted.length === 0) {
+    parts.push(`<div class="vault-empty">No transactions this month yet.</div>`);
+  } else {
+    const CAP = 8;
+    const shown = vaultShowAllTxns ? sorted : sorted.slice(0, CAP);
+    for (const t of shown) parts.push(vaultTxnRow(t));
+    if (sorted.length > CAP) {
+      parts.push(`<button type="button" class="vault-showall-btn" data-act="show-all">${vaultShowAllTxns ? 'Show less' : `Show all (${sorted.length})`}</button>`);
+    }
+  }
+  parts.push(`</div>`);
+
+  // 4) EXPORT
+  parts.push(`
+    <div class="vault-section">
+      <div class="vault-section-head"><span class="vault-section-title">Export for analysis</span></div>
+      <div class="vault-export-row">
+        <button type="button" class="btn vault-export-btn" data-act="export-json">Export JSON</button>
+        <button type="button" class="btn vault-export-btn" data-act="export-csv">Export CSV</button>
+      </div>
+      <p class="vault-note-line">A flat list of every transaction with goal names resolved — not the app backup.</p>
+    </div>`);
+
+  body.innerHTML = parts.join('');
+}
+
+function vaultTxnRow(t) {
+  const meta = {
+    income:   { cls: 'in',   sign: '+', label: 'in' },
+    spending: { cls: 'out',  sign: '−', label: 'out' },
+    savings:  { cls: 'save', sign: '',  label: 'saved' }
+  }[t.type] || { cls: '', sign: '', label: '' };
+  let sub = t.category || '';
+  if (t.type === 'savings') sub = goalNameFor(t.goalId) || 'General savings';
+  const dStr = parseYmd(t.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const noteHtml = t.note ? `<span class="vault-txn-note">${escapeHtml(t.note)}</span>` : '';
+  return `
+    <div class="vault-txn" data-act="edit-txn" data-txn="${t.id}">
+      <span class="vault-txn-tag ${meta.cls}">${meta.label}</span>
+      <span class="vault-txn-mid">
+        <span class="vault-txn-cat">${escapeHtml(sub)}${noteHtml}</span>
+        <span class="vault-txn-date">${escapeHtml(dStr)}</span>
+      </span>
+      <span class="vault-txn-amt ${meta.cls}">${meta.sign}${escapeHtml(fmtMoney(Number(t.amount) || 0))}</span>
+      <button type="button" class="vault-txn-del" data-act="del-txn" data-txn="${t.id}" aria-label="Delete transaction">✕</button>
+    </div>`;
+}
+
+// ---- Delegated actions on the vault body ----
+
+function onVaultBodyClick(e) {
+  const el = e.target.closest('[data-act]');
+  if (!el) return;
+  const act = el.dataset.act;
+  if      (act === 'quick-add')   openTxnSheet();
+  else if (act === 'add-goal')    openGoalSheet();
+  else if (act === 'add-deposit') openTxnSheet({ type: 'savings', goalId: el.dataset.goal || '' });
+  else if (act === 'edit-goal')   { const g = vaultData().goals.find(x => x.id === el.dataset.goal); if (g) openGoalSheet(g); }
+  else if (act === 'edit-txn')    { const t = vaultData().transactions.find(x => x.id === el.dataset.txn); if (t) openTxnSheet({ editing: t }); }
+  else if (act === 'del-txn')     quickDeleteTxn(el.dataset.txn);
+  else if (act === 'show-all')    { vaultShowAllTxns = !vaultShowAllTxns; renderVault(); }
+  else if (act === 'export-json') exportVaultJSON();
+  else if (act === 'export-csv')  exportVaultCSV();
+}
+
+function quickDeleteTxn(id) {
+  if (!confirm('Delete this transaction?')) return;
+  vaultData().transactions = vaultData().transactions.filter(t => t.id !== id);
+  saveState();
+  render();
+  renderVault();
+  toast('Transaction deleted');
+}
+
+// ---- Transaction sheet (add / edit / deposit) ----
+
+function openTxnSheet(opts = {}) {
+  const editing = opts.editing || null;
+  vaultForm = editing
+    ? { mode: 'txn', editingId: editing.id, type: editing.type,
+        amount: String(editing.amount), category: editing.category || '',
+        note: editing.note || '', date: editing.date || todayDate(),
+        goalId: editing.goalId || '' }
+    : { mode: 'txn', editingId: null, type: opts.type || 'spending',
+        amount: '', category: '', note: '', date: todayDate(),
+        goalId: opts.goalId || '' };
+  buildTxnSheet();
+  openVaultSheet();
+  setTimeout(() => { const a = document.getElementById('vault-amount'); if (a) a.focus(); }, 50);
+}
+
+// Pull current input values into vaultForm so a type-toggle rebuild keeps them.
+function syncTxnInputs() {
+  const get = id => { const el = document.getElementById(id); return el ? el.value : undefined; };
+  const amt = get('vault-amount'); if (amt !== undefined) vaultForm.amount = amt;
+  const note = get('vault-note');  if (note !== undefined) vaultForm.note = note;
+  const date = get('vault-date');  if (date !== undefined) vaultForm.date = date;
+  const cat = get('vault-category'); if (cat !== undefined) vaultForm.category = cat;
+  const goal = get('vault-goal');  if (goal !== undefined) vaultForm.goalId = goal;
+}
+
+function buildTxnSheet() {
+  const panel = document.getElementById('vault-sheet-panel');
+  const f = vaultForm;
+  const editing = !!f.editingId;
+  const typeBtn = (t, label) => `<button type="button" data-vtype="${t}" class="${f.type === t ? 'active' : ''}">${label}</button>`;
+
+  let dynamic = '';
+  if (f.type === 'spending') {
+    const cats = ['Food', 'Transport', 'Bills', 'Shopping', 'Entertainment', 'Health', 'Other'];
+    dynamic = `
+      <div class="field">
+        <label>Category</label>
+        <div class="vault-chips" id="vault-cat-chips">
+          ${cats.map(c => `<button type="button" class="vault-chip" data-cat="${escapeHtml(c)}">${escapeHtml(c)}</button>`).join('')}
+        </div>
+        <input type="text" id="vault-category" placeholder="Custom category" autocomplete="off" value="${escapeHtml(f.category)}">
+      </div>`;
+  } else if (f.type === 'income') {
+    dynamic = `
+      <div class="field">
+        <label for="vault-category">Category</label>
+        <input type="text" id="vault-category" placeholder="Income" autocomplete="off" value="${escapeHtml(f.category || 'Income')}">
+      </div>`;
+  } else { // savings
+    const goals = vaultData().goals;
+    dynamic = `
+      <div class="field">
+        <label for="vault-goal">Goal</label>
+        <select id="vault-goal">
+          <option value=""${!f.goalId ? ' selected' : ''}>General savings</option>
+          ${goals.map(g => `<option value="${g.id}"${f.goalId === g.id ? ' selected' : ''}>${escapeHtml(g.name)}</option>`).join('')}
+        </select>
+      </div>`;
+  }
+
+  panel.innerHTML = `
+    <h2>${editing ? 'Edit transaction' : 'Add transaction'}</h2>
+    <div class="type-tabs vault-type-tabs" id="vault-type-tabs">
+      ${typeBtn('spending', 'Spending')}
+      ${typeBtn('income', 'Income')}
+      ${typeBtn('savings', 'Savings')}
+    </div>
+    <div class="field">
+      <label for="vault-amount">Amount</label>
+      <input type="text" id="vault-amount" inputmode="decimal" placeholder="0.00" autocomplete="off" value="${escapeHtml(f.amount)}">
+    </div>
+    ${dynamic}
+    <div class="field">
+      <label for="vault-note">Note</label>
+      <input type="text" id="vault-note" placeholder="Optional" autocomplete="off" value="${escapeHtml(f.note)}">
+    </div>
+    <div class="field">
+      <label for="vault-date">Date</label>
+      <input type="date" id="vault-date" value="${escapeHtml(f.date)}">
+    </div>
+    <div id="vault-form-error" class="error-msg" hidden></div>
+    <div class="form-actions">
+      ${editing ? '<button type="button" class="btn btn-danger" id="vault-txn-delete">Delete</button>' : ''}
+      <div class="spacer"></div>
+      <button type="button" class="btn btn-ghost" id="vault-sheet-cancel">Cancel</button>
+      <button type="button" class="btn btn-primary" id="vault-txn-save">Save</button>
+    </div>`;
+
+  panel.querySelectorAll('#vault-type-tabs button').forEach(b => {
+    b.addEventListener('click', () => { syncTxnInputs(); f.type = b.dataset.vtype; buildTxnSheet(); });
+  });
+  panel.querySelectorAll('#vault-cat-chips .vault-chip').forEach(b => {
+    b.addEventListener('click', () => { const inp = document.getElementById('vault-category'); if (inp) inp.value = b.dataset.cat; });
+  });
+  document.getElementById('vault-sheet-cancel').addEventListener('click', closeVaultSheet);
+  document.getElementById('vault-txn-save').addEventListener('click', saveTxnForm);
+  const del = document.getElementById('vault-txn-delete');
+  if (del) del.addEventListener('click', deleteTxnForm);
+}
+
+function saveTxnForm() {
+  syncTxnInputs();
+  const f = vaultForm;
+  const errEl = document.getElementById('vault-form-error');
+  const amount = Math.round(parseFloat(f.amount) * 100) / 100;
+  if (!isFinite(amount) || amount <= 0) {
+    errEl.textContent = 'Enter an amount greater than 0.';
+    errEl.hidden = false;
+    return;
+  }
+  const date = f.date || todayDate();
+  let category = '', goalId = null;
+  if (f.type === 'savings') {
+    category = 'Savings';
+    goalId = f.goalId || null;
+  } else if (f.type === 'income') {
+    category = (f.category || '').trim() || 'Income';
+  } else {
+    category = (f.category || '').trim() || 'Other';
+  }
+  const note = (f.note || '').trim();
+
+  if (f.editingId) {
+    const t = vaultData().transactions.find(x => x.id === f.editingId);
+    if (t) Object.assign(t, { date, type: f.type, amount, category, note, goalId });
+  } else {
+    vaultData().transactions.push({ id: uuid(), date, type: f.type, amount, category, note, goalId });
+  }
+  saveState();
+  render();
+  renderVault();
+  closeVaultSheet();
+  toast(f.editingId ? 'Transaction updated' : 'Transaction added');
+}
+
+function deleteTxnForm() {
+  if (!vaultForm || !vaultForm.editingId) return;
+  if (!confirm('Delete this transaction?')) return;
+  vaultData().transactions = vaultData().transactions.filter(t => t.id !== vaultForm.editingId);
+  saveState();
+  render();
+  renderVault();
+  closeVaultSheet();
+  toast('Transaction deleted');
+}
+
+// ---- Goal sheet (add / edit) ----
+
+function openGoalSheet(editing) {
+  vaultForm = editing
+    ? { mode: 'goal', editingId: editing.id, name: editing.name, target: String(editing.target) }
+    : { mode: 'goal', editingId: null, name: '', target: '' };
+  buildGoalSheet();
+  openVaultSheet();
+  setTimeout(() => { const n = document.getElementById('vault-goal-name'); if (n) n.focus(); }, 50);
+}
+
+function buildGoalSheet() {
+  const panel = document.getElementById('vault-sheet-panel');
+  const f = vaultForm;
+  const editing = !!f.editingId;
+  panel.innerHTML = `
+    <h2>${editing ? 'Edit goal' : 'Add goal'}</h2>
+    <div class="field">
+      <label for="vault-goal-name">Name</label>
+      <input type="text" id="vault-goal-name" placeholder="e.g. Emergency fund" autocomplete="off" value="${escapeHtml(f.name)}">
+    </div>
+    <div class="field">
+      <label for="vault-goal-target">Target amount</label>
+      <input type="text" id="vault-goal-target" inputmode="decimal" placeholder="0.00 (optional)" autocomplete="off" value="${escapeHtml(f.target)}">
+    </div>
+    <div id="vault-form-error" class="error-msg" hidden></div>
+    <div class="form-actions">
+      ${editing ? '<button type="button" class="btn btn-danger" id="vault-goal-delete">Delete</button>' : ''}
+      <div class="spacer"></div>
+      <button type="button" class="btn btn-ghost" id="vault-sheet-cancel">Cancel</button>
+      <button type="button" class="btn btn-primary" id="vault-goal-save">Save</button>
+    </div>`;
+  document.getElementById('vault-sheet-cancel').addEventListener('click', closeVaultSheet);
+  document.getElementById('vault-goal-save').addEventListener('click', saveGoalForm);
+  const del = document.getElementById('vault-goal-delete');
+  if (del) del.addEventListener('click', deleteGoalForm);
+}
+
+function saveGoalForm() {
+  const errEl = document.getElementById('vault-form-error');
+  const name = (document.getElementById('vault-goal-name').value || '').trim();
+  const targetRaw = parseFloat(document.getElementById('vault-goal-target').value);
+  const target = (isFinite(targetRaw) && targetRaw > 0) ? Math.round(targetRaw * 100) / 100 : 0;
+  if (!name) { errEl.textContent = 'Give the goal a name.'; errEl.hidden = false; return; }
+  if (vaultForm.editingId) {
+    const g = vaultData().goals.find(x => x.id === vaultForm.editingId);
+    if (g) Object.assign(g, { name, target });
+  } else {
+    vaultData().goals.push({ id: uuid(), name, target, createdAt: nowIso() });
+  }
+  saveState();
+  render();
+  renderVault();
+  closeVaultSheet();
+  toast(vaultForm.editingId ? 'Goal updated' : 'Goal added');
+}
+
+function deleteGoalForm() {
+  if (!vaultForm || !vaultForm.editingId) return;
+  if (!confirm('Delete this goal? Its deposits are kept and moved to General savings.')) return;
+  const gid = vaultForm.editingId;
+  // Deleting a goal must NOT destroy its transactions — null their goalId.
+  vaultData().transactions.forEach(t => { if (t.goalId === gid) t.goalId = null; });
+  vaultData().goals = vaultData().goals.filter(g => g.id !== gid);
+  saveState();
+  render();
+  renderVault();
+  closeVaultSheet();
+  toast('Goal deleted');
+}
+
+// ---- Export (flat transaction file, NOT the app-state blob) ----
+
+function vaultFlatTransactions() {
+  return vaultData().transactions
+    .slice()
+    .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
+    .map(t => ({
+      date: t.date,
+      type: t.type,
+      amount: Number(t.amount) || 0,
+      category: t.category || '',
+      note: t.note || '',
+      goal: t.type === 'savings' ? goalNameFor(t.goalId) : null
+    }));
+}
+
+function vaultDownload(content, mime, filename) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function exportVaultJSON() {
+  const flat = vaultFlatTransactions();
+  vaultDownload(JSON.stringify(flat, null, 2), 'application/json', `vault-${todayDate()}.json`);
+  toast('Exported vault JSON');
+}
+
+// Wrap every field in double quotes, double any internal quotes.
+function csvEscape(value) {
+  const s = (value === null || value === undefined) ? '' : String(value);
+  return '"' + s.replace(/"/g, '""') + '"';
+}
+
+function exportVaultCSV() {
+  const flat = vaultFlatTransactions();
+  const header = ['date', 'type', 'amount', 'category', 'note', 'goal'];
+  const lines = [header.map(csvEscape).join(',')];
+  for (const t of flat) {
+    lines.push([t.date, t.type, t.amount, t.category, t.note, t.goal].map(csvEscape).join(','));
+  }
+  vaultDownload(lines.join('\r\n'), 'text/csv', `vault-${todayDate()}.csv`);
+  toast('Exported vault CSV');
 }
 
 // ============================================================================
@@ -3475,6 +4030,14 @@ document.getElementById('focus-end-btn').addEventListener('click', e => {
 document.getElementById('focus-discard-btn').addEventListener('click', e => {
   e.stopPropagation();
   discardFocusSession();
+});
+
+// ---- The Vault wiring ----
+document.getElementById('vault-close-btn').addEventListener('click', closeVault);
+document.getElementById('vault-body').addEventListener('click', onVaultBodyClick);
+// Tap the dimmed backdrop (outside the panel) to dismiss the sheet.
+vaultSheet.addEventListener('click', e => {
+  if (e.target === vaultSheet) closeVaultSheet();
 });
 
 initWheelPickers();

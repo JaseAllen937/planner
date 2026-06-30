@@ -1504,3 +1504,235 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
   font-weight: 700;
   text-align: right;
 }
+
+/* ============================================================================
+   The Vault — personal finances
+   ========================================================================== */
+
+/* ---- Today entry card ---- */
+.vault-entry-card {
+  width: 100%;
+  display: flex; align-items: center; gap: 14px;
+  background: var(--card); border: 1px solid var(--separator);
+  border-radius: var(--r-card); padding: 16px;
+  box-shadow: var(--shadow-card); cursor: pointer;
+  margin-bottom: 12px; min-height: 64px;
+  text-align: left;
+}
+.vault-entry-card:hover { background: var(--surface-inset); }
+.vault-entry-icon {
+  font-size: 26px; line-height: 1;
+  width: 44px; height: 44px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--accent-soft); border-radius: var(--r-pill);
+}
+.vault-entry-text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.vault-entry-title { font-size: 16px; font-weight: 700; color: var(--text-primary); }
+.vault-entry-sub { font-size: 13px; color: var(--text-secondary); }
+.vault-entry-chev { color: var(--text-tertiary); font-size: 22px; line-height: 1; flex-shrink: 0; }
+
+/* ---- Full-screen overlay (modelled on the Focus overlay) ---- */
+.modal.vault-overlay-mode {
+  background: var(--bg);
+  align-items: stretch; justify-content: stretch;
+  padding: 0;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+}
+.vault-overlay-panel {
+  position: relative;
+  width: 100%; height: 100vh; height: 100dvh;
+  background: var(--bg);
+  max-width: 720px; margin: 0 auto;
+  display: flex; flex-direction: column;
+  padding:
+    calc(16px + env(safe-area-inset-top, 0))
+    16px
+    calc(8px + env(safe-area-inset-bottom, 0));
+}
+.vault-header {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 4px 2px 12px;
+  border-bottom: 1px solid var(--separator);
+  flex-shrink: 0;
+}
+.vault-title { margin: 0; font-size: 22px; font-weight: 800; letter-spacing: -0.02em; color: var(--text-primary); }
+.vault-close-btn { min-height: 44px; padding: 8px 16px; font-weight: 600; }
+.vault-body { flex: 1; overflow-y: auto; padding: 14px 2px calc(24px + env(safe-area-inset-bottom, 0)); }
+
+/* ---- Sheet sits above the overlay ---- */
+.modal.vault-sheet-mode { z-index: 120; }
+
+.vault-add-btn { width: 100%; min-height: 50px; font-size: 16px; margin-bottom: 16px; }
+
+/* ---- Sections ---- */
+.vault-section {
+  background: var(--card); border: 1px solid var(--separator);
+  border-radius: var(--r-card); padding: 16px;
+  box-shadow: var(--shadow-card); margin-bottom: 14px;
+}
+.vault-section-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; margin-bottom: 12px;
+}
+.vault-section-title {
+  font-size: 11px; color: var(--text-tertiary);
+  text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600;
+  font-family: var(--font-mono);
+}
+.vault-month { font-size: 12px; color: var(--text-secondary); font-family: var(--font-mono); }
+
+/* ---- This month summary ---- */
+.vault-net {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 10px; margin-bottom: 14px;
+}
+.vault-net-label {
+  font-size: 12px; color: var(--text-secondary);
+  text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;
+}
+.vault-net-val {
+  font-size: 34px; font-weight: 800;
+  font-family: var(--font-mono); font-feature-settings: var(--num);
+  letter-spacing: -0.03em; line-height: 1;
+}
+.vault-net.pos .vault-net-val { color: var(--ok); }
+.vault-net.neg .vault-net-val { color: var(--danger); }
+
+.vault-io-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; font-size: 14px; margin-top: 8px;
+}
+.vault-io-k { color: var(--text-secondary); display: inline-flex; align-items: center; gap: 8px; }
+.vault-io-v {
+  color: var(--text-primary); font-family: var(--font-mono);
+  font-feature-settings: var(--num); font-weight: 600;
+}
+.vault-io-bar {
+  height: 6px; background: var(--surface-inset); border-radius: 3px;
+  overflow: hidden; margin: 5px 0 2px;
+}
+.vault-io-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
+.vault-io-fill.in  { background: var(--ok); }
+.vault-io-fill.out { background: var(--danger); }
+.vault-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+.vault-dot.in   { background: var(--ok); }
+.vault-dot.out  { background: var(--danger); }
+.vault-dot.save { background: var(--accent); }
+.vault-saved-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; font-size: 14px; margin-top: 14px;
+  padding-top: 12px; border-top: 1px solid var(--separator);
+}
+.vault-note-line { margin: 10px 0 0; font-size: 12px; color: var(--text-tertiary); line-height: 1.45; }
+
+/* ---- Goals ---- */
+.vault-mini-btn {
+  background: var(--accent-soft); color: var(--accent);
+  border: none; border-radius: var(--r-pill);
+  padding: 8px 12px; font-size: 13px; font-weight: 600;
+  cursor: pointer; min-height: 36px;
+}
+.vault-mini-btn:hover { background: var(--accent); color: #fff; }
+.vault-total-saved {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 10px; margin-bottom: 12px;
+}
+.vault-total-saved span { font-size: 13px; color: var(--text-secondary); }
+.vault-total-saved strong {
+  font-size: 22px; font-weight: 800; color: var(--accent);
+  font-family: var(--font-mono); font-feature-settings: var(--num);
+  letter-spacing: -0.02em;
+}
+.vault-goal-card {
+  background: var(--surface-inset); border-radius: var(--r-card);
+  padding: 13px 14px; margin-top: 10px;
+}
+.vault-goal-top {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 10px; margin-bottom: 9px;
+}
+.vault-goal-name { font-size: 15px; font-weight: 600; color: var(--text-primary); }
+.vault-goal-amt {
+  font-size: 13px; color: var(--text-secondary);
+  font-family: var(--font-mono); font-feature-settings: var(--num);
+  white-space: nowrap;
+}
+.vault-goal-bar {
+  height: 8px; background: var(--card); border-radius: 4px;
+  overflow: hidden; margin-bottom: 9px;
+}
+.vault-goal-fill { height: 100%; background: var(--accent); border-radius: 4px; transition: width 0.3s; }
+.vault-goal-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; flex-wrap: wrap;
+}
+.vault-goal-pct { font-size: 12px; color: var(--text-secondary); font-family: var(--font-mono); }
+.vault-goal-actions { display: flex; gap: 6px; }
+
+/* ---- Transactions ---- */
+.vault-txn {
+  display: flex; align-items: center; gap: 11px;
+  padding: 11px 0; min-height: 44px;
+  border-top: 1px solid var(--separator);
+  cursor: pointer;
+}
+.vault-txn:first-of-type { border-top: none; }
+.vault-txn-tag {
+  flex-shrink: 0; font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 4px 8px; border-radius: var(--r-pill);
+  font-family: var(--font-mono); min-width: 48px; text-align: center;
+}
+.vault-txn-tag.in   { background: rgba(52, 199, 89, 0.14); color: var(--ok); }
+.vault-txn-tag.out  { background: var(--danger-dim); color: var(--danger); }
+.vault-txn-tag.save { background: var(--accent-soft); color: var(--accent); }
+.vault-txn-mid { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.vault-txn-cat {
+  font-size: 14px; color: var(--text-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.vault-txn-note { color: var(--text-tertiary); font-weight: 400; }
+.vault-txn-note::before { content: '· '; }
+.vault-txn-date { font-size: 12px; color: var(--text-tertiary); font-family: var(--font-mono); }
+.vault-txn-amt {
+  flex-shrink: 0; font-size: 15px; font-weight: 700;
+  font-family: var(--font-mono); font-feature-settings: var(--num);
+}
+.vault-txn-amt.in   { color: var(--ok); }
+.vault-txn-amt.out  { color: var(--danger); }
+.vault-txn-amt.save { color: var(--accent); }
+.vault-txn-del {
+  flex-shrink: 0; width: 44px; height: 44px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: none; cursor: pointer;
+  color: var(--text-tertiary); font-size: 15px; border-radius: var(--r-pill);
+}
+.vault-txn-del:hover { background: var(--danger-dim); color: var(--danger); }
+.vault-showall-btn {
+  width: 100%; margin-top: 12px; min-height: 44px;
+  background: var(--surface-inset); color: var(--accent);
+  border: none; border-radius: var(--r-pill);
+  font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.vault-showall-btn:hover { background: var(--accent-soft); }
+
+/* ---- Export ---- */
+.vault-export-row { display: flex; gap: 10px; }
+.vault-export-btn { flex: 1; min-height: 46px; font-weight: 600; }
+
+/* ---- Empty states ---- */
+.vault-empty {
+  padding: 14px 0; font-size: 13px; color: var(--text-secondary);
+  line-height: 1.5; text-align: center;
+}
+
+/* ---- Sheet bits ---- */
+.vault-type-tabs { margin-bottom: 16px; }
+.vault-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.vault-chip {
+  background: var(--surface-inset); border: 1px solid transparent;
+  color: var(--text-secondary); border-radius: var(--r-pill);
+  padding: 8px 13px; font-size: 13px; font-weight: 500;
+  cursor: pointer; min-height: 38px;
+}
+.vault-chip:hover { color: var(--text-primary); border-color: var(--accent); }
