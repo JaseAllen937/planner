@@ -241,9 +241,10 @@
   <div class="modal-panel">
     <h2 id="form-title">Add item</h2>
 
+    <!-- Habit tab removed: new habits are now checkbox blocks inside Spaces.
+         The habit data model + edit path stay intact but are no longer creatable here. -->
     <div class="type-tabs" id="type-tabs">
-      <button type="button" data-type="habit" class="active">Habit</button>
-      <button type="button" data-type="todo">To-do</button>
+      <button type="button" data-type="todo" class="active">To-do</button>
       <button type="button" data-type="event">Event</button>
     </div>
 
@@ -833,6 +834,11 @@ function ensureShape(s) {
     }
   }
 
+  // Data cleanup (NOT a migration — no version bump): drop the legacy seeded
+  // sample habits. Idempotent; tombstones each removed sample so the removal
+  // propagates to other synced devices. Real (non-sample) habits are untouched.
+  removeSampleHabits(s);
+
   // Cloud-sync uses meta.updated_at as the conflict-resolution timestamp.
   // Backfill it for pre-sync states.
   if (!s.meta.updated_at) s.meta.updated_at = s.meta.created_at || nowIso();
@@ -840,34 +846,25 @@ function ensureShape(s) {
   return s;
 }
 
+// Remove legacy sample habits (sample === true) and tombstone each so the
+// removal syncs. Operates on the passed state object (used inside ensureShape,
+// before it becomes the global `state`), writing tombstones in the same
+// "habits:<id>" format as tombstone(). Idempotent + only affects sample habits.
+function removeSampleHabits(s) {
+  if (!Array.isArray(s.habits)) return;
+  const samples = s.habits.filter(h => h && h.sample === true);
+  if (samples.length === 0) return; // idempotent no-op once cleared
+  if (!s.meta.tombstones || typeof s.meta.tombstones !== 'object') s.meta.tombstones = {};
+  for (const h of samples) if (h.id) s.meta.tombstones['habits:' + h.id] = nowIso();
+  s.habits = s.habits.filter(h => !(h && h.sample === true));
+}
+
 function seedState() {
   const now = nowIso();
   return {
     meta: { version: 8, created_at: now, updated_at: now, last_export_at: null, lastWipe: null, tombstones: {} },
-    habits: [
-      {
-        id: uuid(),
-        title: 'Morning workout',
-        time: '06:30',
-        days: ALL_DAYS.slice(),
-        duration: 0.75,
-        notes: 'Sample habit — edit or delete me',
-        created_at: now,
-        archived: false,
-        sample: true
-      },
-      {
-        id: uuid(),
-        title: 'Read',
-        time: '21:00',
-        days: ALL_DAYS.slice(),
-        duration: 0.5,
-        notes: 'Sample habit',
-        created_at: now,
-        archived: false,
-        sample: true
-      }
-    ],
+    // No sample habits — habits are now created only as checkbox blocks in Spaces.
+    habits: [],
     items: [],
     completions: [],
     missed: [],
@@ -2195,7 +2192,7 @@ function renderSettings() {
 // ---------------- form modal ----------------
 
 const modal = document.getElementById('form-modal');
-let currentType = 'habit';      // 'habit' | 'todo' | 'event' (UI/form tab)
+let currentType = 'todo';       // 'todo' | 'event' (UI/form tab; 'habit' is edit-only, no longer creatable)
 let editingKind = null;         // null | 'habit' | 'item' (data array)
 let editingType = null;         // null | 'habit' | 'todo' | 'event' (locks the form tab while editing)
 let editingId = null;
@@ -2224,7 +2221,7 @@ function openAddModal() {
   modal.classList.add('open');
 
   requestAnimationFrame(() => {
-    setType('habit');
+    setType('todo');
     document.getElementById('f-title').focus();
   });
 }
