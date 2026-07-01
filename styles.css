@@ -1955,3 +1955,32 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 .space-cycle-marker-del:hover { background: var(--danger-dim); color: var(--danger); }
 
 .space-hint { font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
+
+/* Type picker wraps once it holds 5 types */
+.type-tabs-wrap { flex-wrap: wrap; }
+
+/* ---- Goal block ---- */
+.space-block-goal { flex-direction: column; align-items: stretch; gap: 10px; }
+.space-goal-bar {
+  width: 100%; height: 8px; background: var(--surface-inset);
+  border-radius: 4px; overflow: hidden;
+}
+.space-goal-fill {
+  height: 100%; background: var(--accent);
+  border-radius: 4px; transition: width 0.3s;
+}
+.space-block-goal.goal-done .space-goal-fill { background: var(--ok); }
+.space-goal-check {
+  color: var(--ok); font-size: 12px; font-weight: 700;
+  margin-left: 4px;
+}
+.space-goal-note {
+  font-size: 13px; color: var(--text-secondary); line-height: 1.4;
+}
+
+/* ---- Notes block ---- */
+.space-block-notes { flex-direction: column; align-items: stretch; gap: 8px; }
+.space-notes-text {
+  font-size: 14px; color: var(--text-primary); line-height: 1.5;
+  white-space: pre-wrap; word-break: break-word;
+}

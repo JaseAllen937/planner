@@ -824,6 +824,12 @@ function ensureShape(s) {
       if (typeof b.count !== 'number' || !isFinite(b.count) || b.count < 0) b.count = 0;
       if (!Array.isArray(b.markers)) b.markers = [];
       if (!Array.isArray(b.history)) b.history = [];
+    } else if (b.type === 'goal') {
+      // No migration — just field hygiene for user-created goal blocks.
+      if (typeof b.target !== 'number' || !isFinite(b.target)) b.target = 0;
+      if (typeof b.current !== 'number' || !isFinite(b.current) || b.current < 0) b.current = 0;
+    } else if (b.type === 'notes') {
+      if (typeof b.text !== 'string') b.text = '';
     }
   }
 
@@ -3844,7 +3850,55 @@ function renderBlockRow(b, index, total) {
   if (b.type === 'checkbox') return renderCheckboxRow(b, index, total);
   if (b.type === 'counter')  return renderCounterRow(b, index, total);
   if (b.type === 'cycle')    return renderCycleRow(b, index, total);
-  return ''; // future block types (goal, notes) render here
+  if (b.type === 'goal')     return renderGoalRow(b, index, total);
+  if (b.type === 'notes')    return renderNotesRow(b, index, total);
+  return '';
+}
+
+// GOAL block — progress toward a target. Not part of the "all done today" set.
+function renderGoalRow(b, index, total) {
+  const target  = (typeof b.target === 'number' && isFinite(b.target)) ? b.target : 0;
+  const current = (typeof b.current === 'number' && isFinite(b.current) && b.current >= 0) ? b.current : 0;
+  const hasTarget = target > 0;                       // guard: no divide-by-zero
+  const unit = b.unit ? ' ' + escapeHtml(b.unit) : '';
+  const pct = hasTarget ? Math.min(1, current / target) : 0;
+  const pctLabel = hasTarget ? Math.round(pct * 100) + '%' : '';
+  const done = hasTarget && current >= target;
+  const readout = hasTarget
+    ? `${escapeHtml(fmtNum(current))} of ${escapeHtml(fmtNum(target))}${unit}${' · ' + pctLabel}`
+    : `${escapeHtml(fmtNum(current))}${unit}`;
+  const noteHtml = b.note ? `<div class="space-goal-note">${escapeHtml(b.note)}</div>` : '';
+  return `
+    <div class="space-block space-block-goal${done ? ' goal-done' : ''}">
+      <div class="space-block-top">
+        <div class="space-block-mid">
+          <div class="space-block-label">${escapeHtml(b.label)}${done ? ' <span class="space-goal-check">✓ Done</span>' : ''}</div>
+          <div class="space-block-sub">${readout}</div>
+        </div>
+        <button type="button" class="btn space-log-btn" data-act="add-goal-progress" data-block="${b.id}">+ Progress</button>
+        ${blockActionsHtml(b, index, total)}
+      </div>
+      ${hasTarget ? `<div class="space-goal-bar"><div class="space-goal-fill" style="width:${Math.round(pct * 100)}%"></div></div>` : ''}
+      ${noteHtml}
+    </div>`;
+}
+
+// NOTES block — free text. Escaped first; newlines preserved via CSS pre-wrap.
+function renderNotesRow(b, index, total) {
+  const text = typeof b.text === 'string' ? b.text : '';
+  const body = text.trim()
+    ? `<div class="space-notes-text">${escapeHtml(text)}</div>`
+    : `<div class="space-block-empty">No notes yet</div>`;
+  return `
+    <div class="space-block space-block-notes">
+      <div class="space-block-top">
+        <div class="space-block-mid">
+          <div class="space-block-label">${escapeHtml(b.label)}</div>
+        </div>
+        ${blockActionsHtml(b, index, total)}
+      </div>
+      ${body}
+    </div>`;
 }
 
 // Compact reusable mini-bar trend (off-track style) from an array of numbers.
@@ -3965,6 +4019,7 @@ function onSpaceBodyClick(e) {
   else if (act === 'block-up')     moveBlock(bid, -1);
   else if (act === 'block-down')   moveBlock(bid, 1);
   else if (act === 'log-counter')  openCounterLogSheet(bid);
+  else if (act === 'add-goal-progress') openGoalProgressSheet(bid);
   else if (act === 'cycle-inc')    cycleIncrement(bid);
   else if (act === 'cycle-dec')    cycleDecrement(bid);
   else if (act === 'add-marker')   openMarkerSheet(bid, null);
@@ -4108,12 +4163,17 @@ function openBlockSheet(editing) {
       label: editing.label || '', unit: editing.unit || '',
       recKind: rec.kind || 'daily',
       recDays: Array.isArray(rec.days) ? rec.days.slice() : [],
-      recN: rec.n ? String(rec.n) : '3'
+      recN: rec.n ? String(rec.n) : '3',
+      target: (typeof editing.target === 'number' && isFinite(editing.target)) ? String(editing.target) : '',
+      current: (typeof editing.current === 'number' && isFinite(editing.current)) ? String(editing.current) : '',
+      note: editing.note || '',
+      text: typeof editing.text === 'string' ? editing.text : ''
     };
   } else {
     spaceForm = {
       mode: 'block', editingId: null, blockType: 'checkbox',
-      label: '', unit: '', recKind: 'daily', recDays: [], recN: '3'
+      label: '', unit: '', recKind: 'daily', recDays: [], recN: '3',
+      target: '', current: '', note: '', text: ''
     };
   }
   buildBlockSheet();
@@ -4131,10 +4191,12 @@ function buildBlockSheet() {
   const typePicker = editing ? '' : `
     <div class="field">
       <label>Type</label>
-      <div class="type-tabs" id="block-type-tabs">
+      <div class="type-tabs type-tabs-wrap" id="block-type-tabs">
         ${typeBtn('checkbox', 'Checkbox')}
         ${typeBtn('counter', 'Counter')}
         ${typeBtn('cycle', 'Cycle')}
+        ${typeBtn('goal', 'Goal')}
+        ${typeBtn('notes', 'Notes')}
       </div>
     </div>`;
 
@@ -4163,6 +4225,32 @@ function buildBlockSheet() {
       <div class="field">
         <label for="block-unit-input">Unit (optional)</label>
         <input type="text" id="block-unit-input" placeholder="e.g. mi, lb, min" autocomplete="off" maxlength="12" value="${escapeHtml(f.unit)}">
+      </div>`;
+  } else if (f.blockType === 'goal') {
+    const currentField = editing ? `
+      <div class="field">
+        <label for="goal-current-input">Current</label>
+        <input type="text" id="goal-current-input" inputmode="decimal" placeholder="0" autocomplete="off" value="${escapeHtml(f.current)}">
+      </div>` : '';
+    typeFields = `
+      <div class="field">
+        <label for="goal-target-input">Target</label>
+        <input type="text" id="goal-target-input" inputmode="decimal" placeholder="e.g. 10" autocomplete="off" value="${escapeHtml(f.target)}">
+      </div>
+      <div class="field">
+        <label for="block-unit-input">Unit (optional)</label>
+        <input type="text" id="block-unit-input" placeholder="e.g. books, mi" autocomplete="off" maxlength="16" value="${escapeHtml(f.unit)}">
+      </div>
+      <div class="field">
+        <label for="goal-note-input">Note (optional)</label>
+        <input type="text" id="goal-note-input" placeholder="Optional" autocomplete="off" maxlength="200" value="${escapeHtml(f.note)}">
+      </div>
+      ${currentField}`;
+  } else if (f.blockType === 'notes') {
+    typeFields = `
+      <div class="field">
+        <label for="notes-text-input">Text</label>
+        <textarea id="notes-text-input" placeholder="Write anything…" rows="5">${escapeHtml(f.text)}</textarea>
       </div>`;
   } else { // cycle
     typeFields = `<div class="field"><div class="space-hint">Markers (every N → note) are added inside the block after you create it.</div></div>`;
@@ -4213,6 +4301,10 @@ function syncBlockInputs() {
   const lab = document.getElementById('block-label-input'); if (lab) f.label = lab.value;
   const unit = document.getElementById('block-unit-input'); if (unit) f.unit = unit.value;
   const n = document.getElementById('rec-n-input'); if (n) f.recN = n.value;
+  const tg = document.getElementById('goal-target-input'); if (tg) f.target = tg.value;
+  const cu = document.getElementById('goal-current-input'); if (cu) f.current = cu.value;
+  const gn = document.getElementById('goal-note-input'); if (gn) f.note = gn.value;
+  const tx = document.getElementById('notes-text-input'); if (tx) f.text = tx.value;
 }
 
 // Build the recurrence object from the form state.
@@ -4234,6 +4326,24 @@ function buildRecurrenceFromForm(f, existingBlock) {
   return { kind: 'daily' };
 }
 
+// Validate + normalize goal numeric fields. Returns null (and shows the error)
+// when target isn't a positive number. current is floored at 0.
+function parseGoalFields(f, errEl) {
+  const target = parseFloat(f.target);
+  if (!isFinite(target) || target <= 0) {
+    if (errEl) { errEl.textContent = 'Target must be a number greater than 0.'; errEl.hidden = false; }
+    return null;
+  }
+  let current = parseFloat(f.current);
+  if (!isFinite(current) || current < 0) current = 0;
+  return {
+    target: Math.round(target * 100) / 100,
+    current: Math.round(current * 100) / 100,
+    unit: (f.unit || '').trim(),
+    note: (f.note || '').trim()
+  };
+}
+
 function saveBlockForm() {
   syncBlockInputs();
   const f = spaceForm;
@@ -4246,7 +4356,13 @@ function saveBlockForm() {
     if (!b) { closeSpaceSheet(); return; }
     if (b.type === 'checkbox')      Object.assign(b, { label, recurrence: buildRecurrenceFromForm(f, b) });
     else if (b.type === 'counter')  Object.assign(b, { label, unit: (f.unit || '').trim() });
-    else                            Object.assign(b, { label });
+    else if (b.type === 'goal') {
+      const g = parseGoalFields(f, errEl);
+      if (!g) return; // invalid target — error already shown
+      Object.assign(b, { label, target: g.target, current: g.current, unit: g.unit, note: g.note });
+    }
+    else if (b.type === 'notes')    Object.assign(b, { label, text: f.text || '' });
+    else                            Object.assign(b, { label }); // cycle
   } else {
     if (!spaceViewId) return;
     const siblings = blocksForSpace(spaceViewId);
@@ -4257,6 +4373,12 @@ function saveBlockForm() {
       block = Object.assign(base, { type: 'counter', unit: (f.unit || '').trim(), entries: [] });
     } else if (f.blockType === 'cycle') {
       block = Object.assign(base, { type: 'cycle', count: 0, markers: [], history: [] });
+    } else if (f.blockType === 'goal') {
+      const g = parseGoalFields(f, errEl);
+      if (!g) return; // invalid target — error already shown
+      block = Object.assign(base, { type: 'goal', target: g.target, current: g.current, unit: g.unit, note: g.note });
+    } else if (f.blockType === 'notes') {
+      block = Object.assign(base, { type: 'notes', text: f.text || '' });
     } else {
       block = Object.assign(base, { type: 'checkbox', recurrence: buildRecurrenceFromForm(f, null), checks: {} });
     }
@@ -4311,6 +4433,47 @@ function saveCounterLog() {
   if (spaceOverlay.classList.contains('open')) renderSpaceView();
   closeSpaceSheet();
   toast('Logged');
+}
+
+// ---- Goal block: add progress (delta applied to current, floored at 0) ----
+
+function openGoalProgressSheet(blockId) {
+  const b = findBlock(blockId);
+  if (!b || b.type !== 'goal') return;
+  spaceForm = { mode: 'goal-progress', blockId };
+  const panel = document.getElementById('space-sheet-panel');
+  const unit = b.unit ? ` (${escapeHtml(b.unit)})` : '';
+  panel.innerHTML = `
+    <h2>Add progress · ${escapeHtml(b.label)}</h2>
+    <div class="field">
+      <label for="goal-progress-input">Amount to add${unit}</label>
+      <input type="text" id="goal-progress-input" inputmode="decimal" placeholder="0" autocomplete="off">
+    </div>
+    <div id="space-form-error" class="error-msg" hidden></div>
+    <div class="form-actions">
+      <div class="spacer"></div>
+      <button type="button" class="btn btn-ghost" id="space-sheet-cancel">Cancel</button>
+      <button type="button" class="btn btn-primary" id="goal-progress-save-btn">Add</button>
+    </div>`;
+  document.getElementById('space-sheet-cancel').addEventListener('click', closeSpaceSheet);
+  document.getElementById('goal-progress-save-btn').addEventListener('click', saveGoalProgress);
+  openSpaceSheetOverlay();
+  setTimeout(() => { const n = document.getElementById('goal-progress-input'); if (n) n.focus(); }, 50);
+}
+
+function saveGoalProgress() {
+  const b = findBlock(spaceForm && spaceForm.blockId);
+  if (!b || b.type !== 'goal') { closeSpaceSheet(); return; }
+  const errEl = document.getElementById('space-form-error');
+  const delta = parseFloat(document.getElementById('goal-progress-input').value);
+  if (!isFinite(delta)) { errEl.textContent = 'Enter a number.'; errEl.hidden = false; return; }
+  const cur = (typeof b.current === 'number' && isFinite(b.current)) ? b.current : 0;
+  b.current = Math.max(0, Math.round((cur + delta) * 100) / 100); // floor at 0
+  saveState();
+  render();
+  if (spaceOverlay.classList.contains('open')) renderSpaceView();
+  closeSpaceSheet();
+  toast('Progress added');
 }
 
 // ---- Cycle block: increment / undo + marker management ----
