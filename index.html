@@ -3734,13 +3734,20 @@ function renderSpacesHub() {
   const wrap = document.getElementById('spaces-hub-wrap');
   if (!wrap) return;
   const spaces = spacesSorted();
-  const tiles = spaces.map(s => {
+  const rows = spaces.map(s => {
     const complete = isSpaceComplete(s.id);
+    // Right-aligned status: unchecked due checkboxes today.
+    const due = spaceDueCheckboxes(s.id);
+    const left = due.filter(b => !isBlockCheckedToday(b)).length;
+    let statusText, statusClass;
+    if (left === 0 && due.length >= 1)      { statusText = 'All done';    statusClass = 'done'; }
+    else if (left === 0 && due.length === 0){ statusText = 'Nothing due'; statusClass = 'neutral'; }
+    else                                    { statusText = `${left} task${left === 1 ? '' : 's'} left`; statusClass = ''; }
     return `
-    <button type="button" class="space-tile${complete ? ' complete' : ''}" data-space-open="${s.id}" aria-label="Open ${escapeHtml(s.name)}${complete ? ' (all done)' : ''}">
-      ${complete ? '<span class="space-tile-done" aria-hidden="true">✓</span>' : ''}
-      <span class="space-tile-icon" aria-hidden="true">${escapeHtml(s.icon || '📁')}</span>
-      <span class="space-tile-name">${escapeHtml(s.name)}</span>
+    <button type="button" class="space-row${complete ? ' complete' : ''}" data-space-open="${s.id}" aria-label="Open ${escapeHtml(s.name)}${complete ? ' (all done)' : ''}">
+      <span class="space-row-icon" aria-hidden="true">${escapeHtml(s.icon || '📁')}</span>
+      <span class="space-row-name">${escapeHtml(s.name)}</span>
+      <span class="space-row-status ${statusClass}">${complete ? '✓ ' : ''}${escapeHtml(statusText)}</span>
     </button>`;
   }).join('');
 
@@ -3766,11 +3773,11 @@ function renderSpacesHub() {
       </div>
       ${spaces.length ? master : ''}
       ${empty}
-      <div class="space-grid">
-        ${tiles}
-        <button type="button" class="space-tile space-tile-new" id="space-new-tile" aria-label="Create a new Space">
-          <span class="space-tile-icon" aria-hidden="true">＋</span>
-          <span class="space-tile-name">New Space</span>
+      <div class="space-list">
+        ${rows}
+        <button type="button" class="space-row space-row-new" id="space-new-tile" aria-label="Create a new Space">
+          <span class="space-row-icon" aria-hidden="true">＋</span>
+          <span class="space-row-name">New Space</span>
         </button>
       </div>
     </div>`;
