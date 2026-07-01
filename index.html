@@ -40,6 +40,7 @@
     <div id="focus-card-wrap"></div>
     <div id="sleep-card-wrap"></div>
     <div id="vault-card-wrap"></div>
+    <div id="spaces-hub-wrap"></div>
     <div id="timeline"></div>
   </section>
 
@@ -375,6 +376,26 @@
   <div class="modal-panel" id="vault-sheet-panel"></div>
 </div>
 
+<!-- Spaces — full-screen Space view (modelled on the Vault overlay) -->
+<div class="modal space-overlay-mode" id="space-overlay" role="dialog" aria-modal="true" aria-label="Space">
+  <div class="space-overlay-panel">
+    <div class="space-header">
+      <h2 class="space-title" id="space-title">Space</h2>
+      <div class="space-header-actions">
+        <button type="button" class="btn space-edit-btn" id="space-edit-btn" aria-label="Edit this Space">Edit</button>
+        <button type="button" class="btn space-close-btn" id="space-close-btn" aria-label="Close Space">Done</button>
+      </div>
+    </div>
+    <div class="space-body" id="space-body"></div>
+  </div>
+</div>
+
+<!-- Spaces bottom-sheet — reused for new/edit space and add/edit block.
+     Sits after the overlay in the DOM so it stacks above it. -->
+<div class="modal space-sheet-mode" id="space-sheet" role="dialog" aria-modal="true">
+  <div class="modal-panel" id="space-sheet-panel"></div>
+</div>
+
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
@@ -623,7 +644,7 @@ function loadState() {
   if (raw) {
     try {
       const parsed = JSON.parse(raw);
-      if (parsed && parsed.meta && (parsed.meta.version >= 1 && parsed.meta.version <= 5)) {
+      if (parsed && parsed.meta && (parsed.meta.version >= 1 && parsed.meta.version <= 6)) {
         return ensureShape(parsed);
       }
     } catch (e) {
@@ -752,6 +773,20 @@ function ensureShape(s) {
   if (!Array.isArray(s.vault.transactions)) s.vault.transactions = [];
   if (!Array.isArray(s.vault.goals)) s.vault.goals = [];
 
+  // v5 -> v6: Spaces — a user-built platform of Spaces + flat blocks.
+  // spaces[] and blocks[] are FLAT top-level arrays; blocks reference their
+  // space by spaceId (so moving a block = reassign spaceId) and carry an
+  // explicit integer `order` (so reordering = renumber). Idempotent; runs on
+  // load AND on import of older exports.
+  if ((s.meta.version || 1) < 6) {
+    if (!Array.isArray(s.spaces)) s.spaces = [];
+    if (!Array.isArray(s.blocks)) s.blocks = [];
+    s.meta.version = 6;
+  }
+  // Defensive defaults for fresh-v6 states.
+  if (!Array.isArray(s.spaces)) s.spaces = [];
+  if (!Array.isArray(s.blocks)) s.blocks = [];
+
   // Cloud-sync uses meta.updated_at as the conflict-resolution timestamp.
   // Backfill it for pre-sync states.
   if (!s.meta.updated_at) s.meta.updated_at = s.meta.created_at || nowIso();
@@ -762,7 +797,7 @@ function ensureShape(s) {
 function seedState() {
   const now = nowIso();
   return {
-    meta: { version: 5, created_at: now, updated_at: now, last_export_at: null, lastWipe: null },
+    meta: { version: 6, created_at: now, updated_at: now, last_export_at: null, lastWipe: null },
     habits: [
       {
         id: uuid(),
@@ -794,7 +829,9 @@ function seedState() {
     templates: [],
     focusSessions: [],
     activeFocus: null,
-    vault: { transactions: [], goals: [] }
+    vault: { transactions: [], goals: [] },
+    spaces: [],
+    blocks: []
   };
 }
 
@@ -2363,8 +2400,8 @@ function importData(file) {
   reader.onload = () => {
     try {
       const parsed = JSON.parse(reader.result);
-      if (!parsed || !parsed.meta || !(parsed.meta.version >= 1 && parsed.meta.version <= 5)) {
-        toast('Invalid file: expected agendaai schema v1–v5');
+      if (!parsed || !parsed.meta || !(parsed.meta.version >= 1 && parsed.meta.version <= 6)) {
+        toast('Invalid file: expected agendaai schema v1–v6');
         return;
       }
       if (!confirm('Replace all current data with the imported file?')) return;
@@ -2447,6 +2484,8 @@ function render() {
   renderSleepCard();
   renderVaultCard();
   if (vaultOverlay && vaultOverlay.classList.contains('open')) renderVault();
+  renderSpacesHub();
+  if (spaceOverlay && spaceOverlay.classList.contains('open')) renderSpaceView();
   renderWeeklySummary();
   renderTimeline();
   renderUpcoming();
@@ -3454,6 +3493,381 @@ function exportVaultCSV() {
 }
 
 // ============================================================================
+// Spaces — user-built platform. STEP 1: Space container + Space view + the
+// first block type (checkbox).
+// ----------------------------------------------------------------------------
+// Data model is FLAT and reference-based so it extends cleanly:
+//   state.spaces[] = { id, name, icon, order, createdAt }
+//   state.blocks[] = { id, spaceId, type, order, createdAt, ...typeFields }
+// Blocks reference their space by spaceId (move = reassign spaceId) and carry
+// an explicit integer `order` within their space (reorder = renumber 0..n-1).
+// Checkbox block adds: { label, recurrence:'daily'|'weekly'|'none', checks:{} }.
+// Later block types (counter, cycle, goal, notes) are just more entries in
+// state.blocks with the same envelope + their own fields — no schema rework.
+// ============================================================================
+
+let spaceViewId = null;   // id of the Space currently open in the overlay
+let spaceForm = null;     // transient sheet state
+
+function spacesData()  { if (!Array.isArray(state.spaces)) state.spaces = []; return state.spaces; }
+function blocksData()  { if (!Array.isArray(state.blocks)) state.blocks = []; return state.blocks; }
+
+function spacesSorted() {
+  return spacesData().slice().sort((a, b) => (a.order | 0) - (b.order | 0));
+}
+function blocksForSpace(spaceId) {
+  return blocksData()
+    .filter(b => b.spaceId === spaceId)
+    .sort((a, b) => (a.order | 0) - (b.order | 0));
+}
+function findSpace(id) { return spacesData().find(s => s.id === id) || null; }
+function findBlock(id) { return blocksData().find(b => b.id === id) || null; }
+
+// Renumber a list of items' `order` to a contiguous 0..n-1 (list already in
+// the desired order). Used after every add/delete/reorder so gaps/dupes never
+// accumulate.
+function renumberOrder(list) { list.forEach((item, i) => { item.order = i; }); }
+
+const SPACE_ICONS = ['📁', '🏠', '💪', '📚', '💼', '🎯', '🧘', '🍳', '🎨', '💰', '🌱', '⭐'];
+
+// ---- Today hub ----
+
+function renderSpacesHub() {
+  const wrap = document.getElementById('spaces-hub-wrap');
+  if (!wrap) return;
+  const spaces = spacesSorted();
+  const tiles = spaces.map(s => `
+    <button type="button" class="space-tile" data-space-open="${s.id}" aria-label="Open ${escapeHtml(s.name)}">
+      <span class="space-tile-icon" aria-hidden="true">${escapeHtml(s.icon || '📁')}</span>
+      <span class="space-tile-name">${escapeHtml(s.name)}</span>
+    </button>`).join('');
+
+  const empty = spaces.length === 0
+    ? `<div class="spaces-empty">Create your first Space to group your own checklists and trackers.</div>`
+    : '';
+
+  wrap.innerHTML = `
+    <div class="vault-section spaces-hub">
+      <div class="vault-section-head">
+        <span class="vault-section-title">Spaces</span>
+      </div>
+      ${empty}
+      <div class="space-grid">
+        ${tiles}
+        <button type="button" class="space-tile space-tile-new" id="space-new-tile" aria-label="Create a new Space">
+          <span class="space-tile-icon" aria-hidden="true">＋</span>
+          <span class="space-tile-name">New Space</span>
+        </button>
+      </div>
+    </div>`;
+
+  wrap.querySelectorAll('[data-space-open]').forEach(btn => {
+    btn.addEventListener('click', () => openSpace(btn.dataset.spaceOpen));
+  });
+  document.getElementById('space-new-tile').addEventListener('click', () => openSpaceSheet());
+}
+
+// ---- Open / close full-screen Space view ----
+
+const spaceOverlay = document.getElementById('space-overlay');
+const spaceSheet   = document.getElementById('space-sheet');
+
+function openSpace(id) {
+  if (!findSpace(id)) return;
+  spaceViewId = id;
+  renderSpaceView();
+  spaceOverlay.classList.add('open');
+}
+function closeSpace() {
+  spaceOverlay.classList.remove('open');
+  closeSpaceSheet();
+  spaceViewId = null;
+}
+function openSpaceSheetOverlay()  { spaceSheet.classList.add('open'); }
+function closeSpaceSheet() { spaceSheet.classList.remove('open'); spaceForm = null; }
+
+// ---- Space view render ----
+
+function renderSpaceView() {
+  const body = document.getElementById('space-body');
+  const titleEl = document.getElementById('space-title');
+  if (!body || !titleEl) return;
+  const space = findSpace(spaceViewId);
+  if (!space) { closeSpace(); return; }
+
+  titleEl.innerHTML = `<span class="space-title-icon" aria-hidden="true">${escapeHtml(space.icon || '📁')}</span> ${escapeHtml(space.name)}`;
+
+  const blocks = blocksForSpace(space.id);
+  const parts = [];
+
+  parts.push(`<button type="button" class="btn btn-primary vault-add-btn" data-act="add-block">+ Add item</button>`);
+
+  if (blocks.length === 0) {
+    parts.push(`<div class="vault-section"><div class="vault-empty">Add your first item to this Space.</div></div>`);
+  } else {
+    parts.push(`<div class="vault-section">`);
+    blocks.forEach((b, i) => parts.push(renderBlockRow(b, i, blocks.length)));
+    parts.push(`</div>`);
+  }
+
+  body.innerHTML = parts.join('');
+}
+
+function renderBlockRow(b, index, total) {
+  if (b.type === 'checkbox') return renderCheckboxRow(b, index, total);
+  return ''; // future block types render here
+}
+
+function renderCheckboxRow(b, index, total) {
+  const checked = !!(b.checks && b.checks[todayDate()]);
+  const recLabel = { daily: 'Daily', weekly: 'Weekly', none: 'One-off' }[b.recurrence] || 'Daily';
+  const upDis = index === 0 ? ' disabled' : '';
+  const downDis = index === total - 1 ? ' disabled' : '';
+  return `
+    <div class="space-block${checked ? ' checked' : ''}">
+      <button type="button" class="space-tick${checked ? ' on' : ''}" data-act="toggle-block" data-block="${b.id}"
+              aria-pressed="${checked ? 'true' : 'false'}" aria-label="Toggle ${escapeHtml(b.label)}">
+        <span class="space-tick-mark" aria-hidden="true">${checked ? '&check;' : ''}</span>
+      </button>
+      <div class="space-block-mid">
+        <div class="space-block-label">${escapeHtml(b.label)}</div>
+        <div class="space-block-sub">${escapeHtml(recLabel)}</div>
+      </div>
+      <div class="space-block-actions">
+        <button type="button" class="space-arrow" data-act="block-up" data-block="${b.id}"${upDis} aria-label="Move up">▲</button>
+        <button type="button" class="space-arrow" data-act="block-down" data-block="${b.id}"${downDis} aria-label="Move down">▼</button>
+        <button type="button" class="space-arrow" data-act="edit-block" data-block="${b.id}" aria-label="Edit item">✎</button>
+      </div>
+    </div>`;
+}
+
+// ---- Delegated actions inside the Space view ----
+
+function onSpaceBodyClick(e) {
+  const el = e.target.closest('[data-act]');
+  if (!el) return;
+  const act = el.dataset.act;
+  const bid = el.dataset.block;
+  if      (act === 'add-block')    openBlockSheet();
+  else if (act === 'toggle-block') toggleBlockToday(bid);
+  else if (act === 'edit-block')   { const b = findBlock(bid); if (b) openBlockSheet(b); }
+  else if (act === 'block-up')     moveBlock(bid, -1);
+  else if (act === 'block-down')   moveBlock(bid, 1);
+}
+
+function toggleBlockToday(blockId) {
+  const b = findBlock(blockId);
+  if (!b) return;
+  if (!b.checks || typeof b.checks !== 'object') b.checks = {};
+  const key = todayDate();
+  if (b.checks[key]) delete b.checks[key];
+  else b.checks[key] = true;
+  saveState();
+  render();
+}
+
+function moveBlock(blockId, delta) {
+  const b = findBlock(blockId);
+  if (!b) return;
+  const list = blocksForSpace(b.spaceId);
+  const i = list.findIndex(x => x.id === blockId);
+  const j = i + delta;
+  if (i < 0 || j < 0 || j >= list.length) return;
+  // Swap positions, then renumber 0..n-1 to stay contiguous.
+  const tmp = list[i]; list[i] = list[j]; list[j] = tmp;
+  renumberOrder(list);
+  saveState();
+  render();
+}
+
+// ---- Space create / edit / delete ----
+
+function openSpaceSheet(editing) {
+  spaceForm = editing
+    ? { mode: 'space', editingId: editing.id, name: editing.name, icon: editing.icon || '📁' }
+    : { mode: 'space', editingId: null, name: '', icon: SPACE_ICONS[0] };
+  buildSpaceSheet();
+  openSpaceSheetOverlay();
+  setTimeout(() => { const n = document.getElementById('space-name-input'); if (n) n.focus(); }, 50);
+}
+
+function buildSpaceSheet() {
+  const panel = document.getElementById('space-sheet-panel');
+  const f = spaceForm;
+  const editing = !!f.editingId;
+  const iconChips = SPACE_ICONS.map(ic =>
+    `<button type="button" class="space-icon-chip${f.icon === ic ? ' active' : ''}" data-icon="${ic}">${ic}</button>`
+  ).join('');
+  panel.innerHTML = `
+    <h2>${editing ? 'Edit Space' : 'New Space'}</h2>
+    <div class="field">
+      <label for="space-name-input">Name</label>
+      <input type="text" id="space-name-input" placeholder="e.g. Fitness" autocomplete="off" maxlength="60" value="${escapeHtml(f.name)}">
+    </div>
+    <div class="field">
+      <label>Icon</label>
+      <div class="space-icon-picker" id="space-icon-picker">${iconChips}</div>
+    </div>
+    <div id="space-form-error" class="error-msg" hidden></div>
+    <div class="form-actions">
+      ${editing ? '<button type="button" class="btn btn-danger" id="space-delete-btn">Delete</button>' : ''}
+      <div class="spacer"></div>
+      <button type="button" class="btn btn-ghost" id="space-sheet-cancel">Cancel</button>
+      <button type="button" class="btn btn-primary" id="space-save-btn">Save</button>
+    </div>`;
+
+  panel.querySelectorAll('#space-icon-picker .space-icon-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      f.icon = chip.dataset.icon;
+      panel.querySelectorAll('.space-icon-chip').forEach(c => c.classList.toggle('active', c === chip));
+    });
+  });
+  document.getElementById('space-sheet-cancel').addEventListener('click', closeSpaceSheet);
+  document.getElementById('space-save-btn').addEventListener('click', saveSpaceForm);
+  const del = document.getElementById('space-delete-btn');
+  if (del) del.addEventListener('click', deleteSpaceFromSheet);
+}
+
+function saveSpaceForm() {
+  const f = spaceForm;
+  const errEl = document.getElementById('space-form-error');
+  const name = (document.getElementById('space-name-input').value || '').trim();
+  const icon = f.icon || '📁';
+  if (!name) { errEl.textContent = 'Give the Space a name.'; errEl.hidden = false; return; }
+
+  if (f.editingId) {
+    const s = findSpace(f.editingId);
+    if (s) Object.assign(s, { name, icon });
+  } else {
+    const maxOrder = spacesData().reduce((m, s) => Math.max(m, s.order | 0), -1);
+    spacesData().push({ id: uuid(), name, icon, order: maxOrder + 1, createdAt: nowIso() });
+  }
+  saveState();
+  render();
+  if (spaceOverlay.classList.contains('open')) renderSpaceView();
+  closeSpaceSheet();
+  toast(f.editingId ? 'Space updated' : 'Space created');
+}
+
+function deleteSpaceFromSheet() {
+  if (!spaceForm || !spaceForm.editingId) return;
+  deleteSpace(spaceForm.editingId, true);
+}
+
+// Deleting a Space cascades to its blocks. `fromSheet` closes the sheet + view.
+function deleteSpace(spaceId, fromSheet) {
+  const space = findSpace(spaceId);
+  if (!space) return;
+  const n = blocksForSpace(spaceId).length;
+  if (!confirm(`Delete this space and its ${n} item${n === 1 ? '' : 's'}?`)) return;
+  state.blocks = blocksData().filter(b => b.spaceId !== spaceId);
+  state.spaces = spacesData().filter(s => s.id !== spaceId);
+  renumberOrder(spacesSorted()); // keep space order contiguous
+  saveState();
+  if (fromSheet) closeSpaceSheet();
+  if (spaceViewId === spaceId) closeSpace();
+  render();
+  toast('Space deleted');
+}
+
+// ---- Block create / edit / delete (checkbox) ----
+
+function openBlockSheet(editing) {
+  spaceForm = editing
+    ? { mode: 'block', editingId: editing.id, label: editing.label, recurrence: editing.recurrence || 'daily' }
+    : { mode: 'block', editingId: null, label: '', recurrence: 'daily' };
+  buildBlockSheet();
+  openSpaceSheetOverlay();
+  setTimeout(() => { const n = document.getElementById('block-label-input'); if (n) n.focus(); }, 50);
+}
+
+function buildBlockSheet() {
+  const panel = document.getElementById('space-sheet-panel');
+  const f = spaceForm;
+  const editing = !!f.editingId;
+  const recBtn = (r, label) => `<button type="button" data-rec="${r}" class="${f.recurrence === r ? 'active' : ''}">${label}</button>`;
+  panel.innerHTML = `
+    <h2>${editing ? 'Edit item' : 'Add item'}</h2>
+    <div class="field">
+      <label for="block-label-input">Label</label>
+      <input type="text" id="block-label-input" placeholder="e.g. Take vitamins" autocomplete="off" maxlength="120" value="${escapeHtml(f.label)}">
+    </div>
+    <div class="field">
+      <label>Recurrence</label>
+      <div class="type-tabs space-rec-tabs" id="block-rec-tabs">
+        ${recBtn('daily', 'Daily')}
+        ${recBtn('weekly', 'Weekly')}
+        ${recBtn('none', 'One-off')}
+      </div>
+    </div>
+    <div id="space-form-error" class="error-msg" hidden></div>
+    <div class="form-actions">
+      ${editing ? '<button type="button" class="btn btn-danger" id="block-delete-btn">Delete</button>' : ''}
+      <div class="spacer"></div>
+      <button type="button" class="btn btn-ghost" id="space-sheet-cancel">Cancel</button>
+      <button type="button" class="btn btn-primary" id="block-save-btn">Save</button>
+    </div>`;
+
+  panel.querySelectorAll('#block-rec-tabs button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      f.recurrence = btn.dataset.rec;
+      panel.querySelectorAll('#block-rec-tabs button').forEach(b => b.classList.toggle('active', b === btn));
+    });
+  });
+  document.getElementById('space-sheet-cancel').addEventListener('click', closeSpaceSheet);
+  document.getElementById('block-save-btn').addEventListener('click', saveBlockForm);
+  const del = document.getElementById('block-delete-btn');
+  if (del) del.addEventListener('click', deleteBlockFromSheet);
+}
+
+function saveBlockForm() {
+  const f = spaceForm;
+  const errEl = document.getElementById('space-form-error');
+  const label = (document.getElementById('block-label-input').value || '').trim();
+  const recurrence = ['daily', 'weekly', 'none'].includes(f.recurrence) ? f.recurrence : 'daily';
+  if (!label) { errEl.textContent = 'Give the item a label.'; errEl.hidden = false; return; }
+
+  if (f.editingId) {
+    const b = findBlock(f.editingId);
+    if (b) Object.assign(b, { label, recurrence });
+  } else {
+    if (!spaceViewId) return;
+    const siblings = blocksForSpace(spaceViewId);
+    const maxOrder = siblings.reduce((m, b) => Math.max(m, b.order | 0), -1);
+    blocksData().push({
+      id: uuid(),
+      spaceId: spaceViewId,
+      type: 'checkbox',
+      order: maxOrder + 1,
+      createdAt: nowIso(),
+      label,
+      recurrence,
+      checks: {}
+    });
+  }
+  saveState();
+  render();
+  if (spaceOverlay.classList.contains('open')) renderSpaceView();
+  closeSpaceSheet();
+  toast(f.editingId ? 'Item updated' : 'Item added');
+}
+
+function deleteBlockFromSheet() {
+  if (!spaceForm || !spaceForm.editingId) return;
+  const b = findBlock(spaceForm.editingId);
+  if (!b) return;
+  if (!confirm('Delete this item?')) return;
+  const spaceId = b.spaceId;
+  state.blocks = blocksData().filter(x => x.id !== b.id);
+  renumberOrder(blocksForSpace(spaceId)); // keep sibling order contiguous
+  saveState();
+  render();
+  if (spaceOverlay.classList.contains('open')) renderSpaceView();
+  closeSpaceSheet();
+  toast('Item deleted');
+}
+
+// ============================================================================
 // Cloud sync — Supabase via raw fetch (no SDK)
 // ----------------------------------------------------------------------------
 // Local JSON in localStorage is the source of truth in the UI. Sync is
@@ -4038,6 +4452,17 @@ document.getElementById('vault-body').addEventListener('click', onVaultBodyClick
 // Tap the dimmed backdrop (outside the panel) to dismiss the sheet.
 vaultSheet.addEventListener('click', e => {
   if (e.target === vaultSheet) closeVaultSheet();
+});
+
+// ---- Spaces wiring ----
+document.getElementById('space-close-btn').addEventListener('click', closeSpace);
+document.getElementById('space-edit-btn').addEventListener('click', () => {
+  const s = findSpace(spaceViewId);
+  if (s) openSpaceSheet(s);
+});
+document.getElementById('space-body').addEventListener('click', onSpaceBodyClick);
+spaceSheet.addEventListener('click', e => {
+  if (e.target === spaceSheet) closeSpaceSheet();
 });
 
 initWheelPickers();
