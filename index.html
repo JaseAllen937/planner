@@ -644,7 +644,7 @@ function loadState() {
   if (raw) {
     try {
       const parsed = JSON.parse(raw);
-      if (parsed && parsed.meta && (parsed.meta.version >= 1 && parsed.meta.version <= 6)) {
+      if (parsed && parsed.meta && (parsed.meta.version >= 1 && parsed.meta.version <= 7)) {
         return ensureShape(parsed);
       }
     } catch (e) {
@@ -787,6 +787,19 @@ function ensureShape(s) {
   if (!Array.isArray(s.spaces)) s.spaces = [];
   if (!Array.isArray(s.blocks)) s.blocks = [];
 
+  // v6 -> v7: tombstone store for the conservative field-level sync merge.
+  // meta.tombstones is a flat map { "<collection>:<id>": "<ISO deleted-at>" }
+  // so a delete on one device isn't resurrected by an older blob on another.
+  // Idempotent; runs on load AND on import of older exports.
+  if ((s.meta.version || 1) < 7) {
+    if (!s.meta.tombstones || typeof s.meta.tombstones !== 'object') s.meta.tombstones = {};
+    s.meta.version = 7;
+  }
+  // Defensive post-guard for fresh-v7 states.
+  if (!s.meta.tombstones || typeof s.meta.tombstones !== 'object') s.meta.tombstones = {};
+  // Hygiene: drop tombstones older than 90 days so the map can't grow forever.
+  pruneTombstones(s.meta.tombstones);
+
   // Cloud-sync uses meta.updated_at as the conflict-resolution timestamp.
   // Backfill it for pre-sync states.
   if (!s.meta.updated_at) s.meta.updated_at = s.meta.created_at || nowIso();
@@ -797,7 +810,7 @@ function ensureShape(s) {
 function seedState() {
   const now = nowIso();
   return {
-    meta: { version: 6, created_at: now, updated_at: now, last_export_at: null, lastWipe: null },
+    meta: { version: 7, created_at: now, updated_at: now, last_export_at: null, lastWipe: null, tombstones: {} },
     habits: [
       {
         id: uuid(),
@@ -896,6 +909,7 @@ function isSkippedToday(refId)   { return !!findMissed(refId, todayDate()); }
 
 function writeCompletion(refId, refType, plannedTime) {
   // remove any existing miss for today, since done overrides
+  tombstoneAll('missed', state.missed.filter(m => m.ref_id === refId && m.date === todayDate()));
   state.missed = state.missed.filter(m => !(m.ref_id === refId && m.date === todayDate()));
 
   const now = new Date();
@@ -920,12 +934,14 @@ function writeCompletion(refId, refType, plannedTime) {
 }
 
 function undoCompletion(refId) {
+  tombstoneAll('completions', state.completions.filter(c => c.ref_id === refId && c.date === todayDate()));
   state.completions = state.completions.filter(
     c => !(c.ref_id === refId && c.date === todayDate())
   );
 }
 
 function writeMissed(refId, refType) {
+  tombstoneAll('completions', state.completions.filter(c => c.ref_id === refId && c.date === todayDate()));
   state.completions = state.completions.filter(
     c => !(c.ref_id === refId && c.date === todayDate())
   );
@@ -939,6 +955,7 @@ function writeMissed(refId, refType) {
 }
 
 function undoMissed(refId) {
+  tombstoneAll('missed', state.missed.filter(m => m.ref_id === refId && m.date === todayDate()));
   state.missed = state.missed.filter(
     m => !(m.ref_id === refId && m.date === todayDate())
   );
@@ -2369,8 +2386,8 @@ function saveForm() {
 function deleteCurrent() {
   if (!editingKind || !editingId) return;
   if (!confirm('Delete this item?')) return;
-  if (editingKind === 'habit')     state.habits = state.habits.filter(x => x.id !== editingId);
-  else if (editingKind === 'item') state.items  = state.items.filter(x => x.id !== editingId);
+  if (editingKind === 'habit')     { tombstone('habits', editingId); state.habits = state.habits.filter(x => x.id !== editingId); }
+  else if (editingKind === 'item') { tombstone('items', editingId);  state.items  = state.items.filter(x => x.id !== editingId); }
   saveState();
   closeModal();
   render();
@@ -2400,8 +2417,8 @@ function importData(file) {
   reader.onload = () => {
     try {
       const parsed = JSON.parse(reader.result);
-      if (!parsed || !parsed.meta || !(parsed.meta.version >= 1 && parsed.meta.version <= 6)) {
-        toast('Invalid file: expected agendaai schema v1–v6');
+      if (!parsed || !parsed.meta || !(parsed.meta.version >= 1 && parsed.meta.version <= 7)) {
+        toast('Invalid file: expected agendaai schema v1–v7');
         return;
       }
       if (!confirm('Replace all current data with the imported file?')) return;
@@ -2439,6 +2456,12 @@ function wipeHistory() {
   if (!confirm('Wipe all completion history, focus sessions, and daily logs? Habits and tasks are kept. This cannot be undone.')) return;
   // One-shot on-device safety backup before clearing (overwrite any prior backup).
   try { localStorage.setItem('agendaai_prewipe_backup', JSON.stringify(state)); } catch {}
+  // Tombstone every wiped record/day so the wipe propagates via merge instead
+  // of an older device's blob resurrecting the cleared history.
+  tombstoneAll('completions', state.completions);
+  tombstoneAll('missed', state.missed);
+  tombstoneAll('focusSessions', state.focusSessions);
+  for (const d of state.daily_state) if (d && d.date) tombstone('daily_state', d.date);
   state.completions = [];
   state.missed = [];
   state.focusSessions = [];
@@ -3215,6 +3238,7 @@ function onVaultBodyClick(e) {
 
 function quickDeleteTxn(id) {
   if (!confirm('Delete this transaction?')) return;
+  tombstone('vault.transactions', id);
   vaultData().transactions = vaultData().transactions.filter(t => t.id !== id);
   saveState();
   render();
@@ -3362,6 +3386,7 @@ function saveTxnForm() {
 function deleteTxnForm() {
   if (!vaultForm || !vaultForm.editingId) return;
   if (!confirm('Delete this transaction?')) return;
+  tombstone('vault.transactions', vaultForm.editingId);
   vaultData().transactions = vaultData().transactions.filter(t => t.id !== vaultForm.editingId);
   saveState();
   render();
@@ -3431,6 +3456,7 @@ function deleteGoalForm() {
   if (!vaultForm || !vaultForm.editingId) return;
   if (!confirm('Delete this goal? Its deposits are kept and moved to General savings.')) return;
   const gid = vaultForm.editingId;
+  tombstone('vault.goals', gid);
   // Deleting a goal must NOT destroy its transactions — null their goalId.
   vaultData().transactions.forEach(t => { if (t.goalId === gid) t.goalId = null; });
   vaultData().goals = vaultData().goals.filter(g => g.id !== gid);
@@ -3760,6 +3786,9 @@ function deleteSpace(spaceId, fromSheet) {
   if (!space) return;
   const n = blocksForSpace(spaceId).length;
   if (!confirm(`Delete this space and its ${n} item${n === 1 ? '' : 's'}?`)) return;
+  // Tombstone the space AND cascade-tombstone each of its child blocks.
+  tombstoneAll('blocks', blocksData().filter(b => b.spaceId === spaceId));
+  tombstone('spaces', spaceId);
   state.blocks = blocksData().filter(b => b.spaceId !== spaceId);
   state.spaces = spacesData().filter(s => s.id !== spaceId);
   renumberOrder(spacesSorted()); // keep space order contiguous
@@ -3858,6 +3887,7 @@ function deleteBlockFromSheet() {
   if (!b) return;
   if (!confirm('Delete this item?')) return;
   const spaceId = b.spaceId;
+  tombstone('blocks', b.id);
   state.blocks = blocksData().filter(x => x.id !== b.id);
   renumberOrder(blocksForSpace(spaceId)); // keep sibling order contiguous
   saveState();
@@ -3868,12 +3898,183 @@ function deleteBlockFromSheet() {
 }
 
 // ============================================================================
+// Sync reconciliation — conservative field-level merge + tombstones.
+// ----------------------------------------------------------------------------
+// Two devices combine their changes instead of one whole-blob copy clobbering
+// the other. Records are matched by stable `id`; the newer blob's version of a
+// shared record wins (no field-level merge within a single record). Deletes are
+// recorded as tombstones so a delete on one device isn't resurrected by an
+// older blob on another. daily_state is date-keyed and merged field-wise.
+// This section changes only WHAT gets reconciled — never the network/auth code.
+// ============================================================================
+
+// ---- Tombstone bookkeeping ----
+
+function ensureTombstones() {
+  if (!state.meta.tombstones || typeof state.meta.tombstones !== 'object') state.meta.tombstones = {};
+  return state.meta.tombstones;
+}
+
+// Record a delete: tombstones["<collection>:<id>"] = now. Call at every delete
+// site (just before saveState). No-op on missing id.
+function tombstone(collection, id) {
+  if (id == null || id === '') return;
+  ensureTombstones()[collection + ':' + id] = nowIso();
+}
+function tombstoneAll(collection, records) {
+  for (const r of (records || [])) if (r && r.id != null) tombstone(collection, r.id);
+}
+
+// Drop tombstones older than 90 days so the map can't grow unbounded. Safe: a
+// device that hasn't synced in 90 days is out of scope for this reconciliation.
+function pruneTombstones(map) {
+  if (!map || typeof map !== 'object') return;
+  const cutoff = Date.now() - 90 * 24 * 60 * 60 * 1000;
+  for (const k of Object.keys(map)) {
+    const t = new Date(map[k]).getTime();
+    if (!isFinite(t) || t < cutoff) delete map[k];
+  }
+}
+
+// ---- Merge ----
+
+// Every id-bearing array, with its tombstone-collection key and get/set.
+const MERGE_COLLECTIONS = [
+  { key: 'items',              get: s => s.items,        set: (s, v) => { s.items = v; } },
+  { key: 'habits',             get: s => s.habits,       set: (s, v) => { s.habits = v; } },
+  { key: 'completions',        get: s => s.completions,  set: (s, v) => { s.completions = v; } },
+  { key: 'missed',             get: s => s.missed,       set: (s, v) => { s.missed = v; } },
+  { key: 'focusSessions',      get: s => s.focusSessions, set: (s, v) => { s.focusSessions = v; } },
+  { key: 'blocks',             get: s => s.blocks,       set: (s, v) => { s.blocks = v; } },
+  { key: 'spaces',             get: s => s.spaces,       set: (s, v) => { s.spaces = v; } },
+  { key: 'vault.transactions', get: s => s.vault && s.vault.transactions,
+    set: (s, v) => { if (!s.vault || typeof s.vault !== 'object') s.vault = { transactions: [], goals: [] }; s.vault.transactions = v; } },
+  { key: 'vault.goals',        get: s => s.vault && s.vault.goals,
+    set: (s, v) => { if (!s.vault || typeof s.vault !== 'object') s.vault = { transactions: [], goals: [] }; s.vault.goals = v; } }
+];
+
+function blobUpdatedAt(s) {
+  return new Date((s && s.meta && s.meta.updated_at) || 0).getTime();
+}
+function asArray(a) { return Array.isArray(a) ? a : []; }
+
+// A record's creation time, tolerant of the codebase's different field names.
+function recordCreatedAt(r) {
+  const c = r && (r.createdAt || r.created_at || r.completed_at || r.start);
+  const t = c ? new Date(c).getTime() : NaN;
+  return isFinite(t) ? t : null;
+}
+
+// A record is dropped if a tombstone exists dated AFTER the record was created
+// (so a delete beats a stale re-add, but a genuine re-create after a delete —
+// which gets a fresh id/createdAt — survives). No createdAt -> tombstone wins.
+function isTombstoned(tomb, collection, rec) {
+  const ts = tomb[collection + ':' + rec.id];
+  if (!ts) return false;
+  const tsAt = new Date(ts).getTime();
+  const createdAt = recordCreatedAt(rec);
+  if (createdAt == null) return true;
+  return tsAt > createdAt;
+}
+
+// Union two tombstone maps, keeping the later timestamp on collisions.
+function unionTombstones(a, b) {
+  const out = {};
+  const add = m => {
+    if (!m || typeof m !== 'object') return;
+    for (const k of Object.keys(m)) {
+      if (!out[k] || new Date(m[k]).getTime() > new Date(out[k]).getTime()) out[k] = m[k];
+    }
+  };
+  add(a); add(b);
+  return out;
+}
+
+// Field-wise merge of one date's daily_state entry. Newer blob wins per field;
+// offTrackCount takes the MAX; a null/undefined on the newer side falls back to
+// the older side's non-null value.
+function mergeDayEntry(local, remote, remoteIsNewer) {
+  if (!local) return remote;
+  if (!remote) return local;
+  const newer = remoteIsNewer ? remote : local;
+  const older = remoteIsNewer ? local : remote;
+  const merged = Object.assign({}, older, newer);
+  for (const k of Object.keys(older)) {
+    if ((merged[k] === null || merged[k] === undefined) && older[k] != null) merged[k] = older[k];
+  }
+  merged.offTrackCount = Math.max(local.offTrackCount | 0, remote.offTrackCount | 0);
+  return merged;
+}
+
+function mergeDailyState(localState, remoteState, remoteIsNewer, tomb) {
+  const localArr = asArray(localState.daily_state);
+  const remoteArr = asArray(remoteState.daily_state);
+  const dates = new Set();
+  localArr.forEach(d => { if (d && d.date) dates.add(d.date); });
+  remoteArr.forEach(d => { if (d && d.date) dates.add(d.date); });
+  const out = [];
+  for (const date of dates) {
+    if (tomb['daily_state:' + date]) continue; // day tombstoned -> drop
+    const l = localArr.find(d => d.date === date) || null;
+    const r = remoteArr.find(d => d.date === date) || null;
+    out.push(mergeDayEntry(l, r, remoteIsNewer));
+  }
+  return out;
+}
+
+// Conservative merge of two full state blobs. Returns a merged blob (run through
+// ensureShape). Neither input is mutated.
+function mergeStates(localState, remoteState) {
+  const localAt = blobUpdatedAt(localState);
+  const remoteAt = blobUpdatedAt(remoteState);
+  const remoteIsNewer = remoteAt > localAt;
+  const newer = remoteIsNewer ? remoteState : localState;
+
+  // Base merged blob on the newer side so scalars/singletons come from it.
+  const merged = JSON.parse(JSON.stringify(newer));
+
+  // 1. Tombstones: union, later timestamp wins.
+  const tomb = unionTombstones(
+    localState.meta && localState.meta.tombstones,
+    remoteState.meta && remoteState.meta.tombstones
+  );
+  if (!merged.meta) merged.meta = {};
+  merged.meta.tombstones = tomb;
+
+  // 2. id-bearing arrays: union by id, newer-record-wins, drop tombstoned.
+  for (const col of MERGE_COLLECTIONS) {
+    const localArr = asArray(col.get(localState));
+    const remoteArr = asArray(col.get(remoteState));
+    const olderArr = remoteIsNewer ? localArr : remoteArr;
+    const newerArr = remoteIsNewer ? remoteArr : localArr;
+    const byId = new Map();
+    for (const r of olderArr) if (r && r.id != null) byId.set(r.id, r); // seed older
+    for (const r of newerArr) if (r && r.id != null) byId.set(r.id, r); // newer overwrites
+    const outArr = [];
+    for (const rec of byId.values()) {
+      if (isTombstoned(tomb, col.key, rec)) continue;
+      outArr.push(rec);
+    }
+    col.set(merged, outArr);
+  }
+
+  // 3. daily_state (date-keyed): union by date, field-wise merge.
+  merged.daily_state = mergeDailyState(localState, remoteState, remoteIsNewer, tomb);
+
+  // 4. meta.updated_at = MAX of the two.
+  merged.meta.updated_at = new Date(Math.max(localAt, remoteAt)).toISOString();
+
+  // 5. Normalise through the schema pipeline.
+  return ensureShape(merged);
+}
+
+// ============================================================================
 // Cloud sync — Supabase via raw fetch (no SDK)
 // ----------------------------------------------------------------------------
 // Local JSON in localStorage is the source of truth in the UI. Sync is
-// fire-and-forget: never blocks render, never throws into the app. Strategy is
-// last-write-wins by meta.updated_at. NOTE: simultaneous edits on two devices
-// can lose one side's change. Acceptable for single-user.
+// fire-and-forget: never blocks render, never throws into the app. On a shared
+// remote it now MERGES (field-level + tombstones) instead of last-write-wins,
+// so two devices combine changes. NOTE: within a single record, newer-wins.
 // ============================================================================
 
 function getSession() {
@@ -4057,18 +4258,16 @@ async function initialSync() {
       // No remote row yet — first device. Push local up.
       await supaPush(state);
     } else {
+      // Both a local and a remote blob exist — MERGE instead of whole-blob
+      // replace, so neither device's changes are lost. ensureShape (inside
+      // mergeStates) applies schema migrations to the remote side too.
       const remoteData = remote.data || {};
-      const remoteAt = new Date((remoteData.meta && remoteData.meta.updated_at) || remote.updated_at || 0).getTime();
-      const localAt  = new Date((state.meta && state.meta.updated_at) || 0).getTime();
-      if (remoteAt > localAt) {
-        // Remote is newer — adopt it. Run through ensureShape so schema migrations apply.
-        state = ensureShape(remoteData);
-        saveStateLocalOnly();
-        render();
-      } else if (localAt > remoteAt) {
-        await supaPush(state);
-      }
-      // equal -> no-op
+      const merged = mergeStates(state, remoteData);
+      state = merged;
+      saveStateLocalOnly();
+      render();
+      // Push the merged truth up once so the cloud converges to it.
+      await supaPush(state);
     }
     localStorage.setItem(SYNCED_AT_KEY, nowIso());
     setSyncStatus('synced');
