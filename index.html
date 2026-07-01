@@ -1282,13 +1282,6 @@ function renderWeeklySummary() {
   const habitsDone = state.completions
     .filter(c => c.ref_type === 'habit' && weekDatesUpToToday.includes(c.date)).length;
 
-  // Current streaks for active habits — the live motivator, shown prominently.
-  const streaks = state.habits
-    .filter(h => !h.archived)
-    .map(h => ({ title: h.title, streak: currentStreak(h.id, today) }))
-    .filter(s => s.streak > 0)
-    .sort((a, b) => b.streak - a.streak);
-
   const parts = [];
   parts.push(`
     <div class="summary-panel">
@@ -1300,19 +1293,12 @@ function renderWeeklySummary() {
       <div class="pct-bar"><div class="fill" style="width:${overall}%"></div></div>
   `);
 
-  parts.push(`<div class="summary-row"><span class="k">Current streaks</span><span class="v"></span></div>`);
-  if (streaks.length) {
-    parts.push(`<div class="streak-board">`);
-    for (const s of streaks.slice(0, 6)) {
-      parts.push(`<div class="streak-chip">
-        <span class="streak-num">${s.streak}</span>
-        <span class="streak-name">${escapeHtml(s.title)}</span>
-      </div>`);
-    }
-    parts.push(`</div>`);
-  } else {
-    parts.push(`<div class="streak-empty">No active streaks — complete a habit today to start one. 🔥</div>`);
-  }
+  // ---- Streak overview seam ----
+  // The Stats current-streaks board was removed; streaks now live per-block as
+  // the 🔥 badge in Spaces. Intentionally render nothing here. A future
+  // cross-Space streak overview can slot back in at this seam.
+  // (Legacy habit streak fns currentStreak/missStreak/streakFloorYmd are left
+  //  untouched and simply no longer rendered in Stats.)
 
   parts.push(`</div>`);
   wrap.innerHTML = parts.join('');
@@ -3654,6 +3640,59 @@ function isBlockCheckedToday(b, dateStr) {
   return !!(b && b.checks && b.checks[dateStr]);
 }
 
+// ---- Snapchat-style consecutive-completion streak (checkbox blocks) ----
+//
+// Counts back over the block's DUE dates only: not-due dates are skipped (they
+// neither add nor break). An unchecked TODAY does not break the run (the day
+// isn't over) — but any earlier due day that was missed does. Fresh block-only
+// logic; deliberately does NOT touch the legacy habit streak fns.
+function blockStreak(block, today) {
+  today = today || todayDate();
+  if (!block || block.type !== 'checkbox') return 0;
+  const rec = (block.recurrence && typeof block.recurrence === 'object') ? block.recurrence : { kind: 'daily' };
+  const checks = (block.checks && typeof block.checks === 'object') ? block.checks : {};
+  if (rec.kind === 'once') return 0;                 // a one-off has no streak
+  if (rec.kind === 'weekly') return weeklyBlockStreak(block, today);
+
+  let count = 0;
+  let d = today;
+  for (let i = 0; i < 400; i++) {
+    // isDueToday is schedule-based (independent of checks) for daily/weekdays/everyN.
+    if (isDueToday(block, d)) {
+      if (checks[d]) {
+        count++;
+      } else if (d === today) {
+        // today not yet done — don't add, don't break; keep counting prior days
+      } else {
+        break; // a past due day was missed → streak ends here
+      }
+    }
+    d = addDays(d, -1);
+  }
+  return count;
+}
+
+// Weekly kind: consecutive satisfied weeks (any check within the Sun-start week).
+// The current, still-open week doesn't break the run if not yet satisfied.
+function weeklyBlockStreak(block, today) {
+  const checks = (block.checks && typeof block.checks === 'object') ? block.checks : {};
+  const satisfiedInWeek = ws => weekDates(ws).some(d => checks[d]);
+  const thisWeekStart = startOfWeek(today);
+  let count = 0;
+  let ws = thisWeekStart;
+  for (let i = 0; i < 400; i++) {
+    if (satisfiedInWeek(ws)) {
+      count++;
+    } else if (ws === thisWeekStart) {
+      // current week not yet satisfied — don't break, the week isn't over
+    } else {
+      break;
+    }
+    ws = addDays(ws, -7);
+  }
+  return count;
+}
+
 // Checkbox blocks in a space that are due on dateStr.
 function spaceDueCheckboxes(spaceId, dateStr) {
   dateStr = dateStr || todayDate();
@@ -3834,6 +3873,11 @@ function renderCheckboxRow(b, index, total) {
   const due = isDueToday(b);
   const checked = !!(b.checks && b.checks[todayDate()]);
   const recLabel = recurrenceLabel(b.recurrence);
+  // Snapchat-style streak badge — only once it's meaningful (>=3), recomputed each render.
+  const streak = blockStreak(b);
+  const streakBadge = streak >= 3
+    ? ` <span class="space-streak" title="${streak}-day streak" aria-label="${streak} day streak">🔥<span class="space-streak-num">${streak}</span></span>`
+    : '';
   return `
     <div class="space-block${checked ? ' checked' : ''}${due ? '' : ' not-due'}">
       <button type="button" class="space-tick${checked ? ' on' : ''}" data-act="toggle-block" data-block="${b.id}"
@@ -3841,7 +3885,7 @@ function renderCheckboxRow(b, index, total) {
         <span class="space-tick-mark" aria-hidden="true">${checked ? '&check;' : ''}</span>
       </button>
       <div class="space-block-mid">
-        <div class="space-block-label">${escapeHtml(b.label)}</div>
+        <div class="space-block-label">${escapeHtml(b.label)}${streakBadge}</div>
         <div class="space-block-sub">${escapeHtml(recLabel)}${due ? '' : ' · not due today'}</div>
       </div>
       ${blockActionsHtml(b, index, total)}

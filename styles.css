@@ -1907,9 +1907,29 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 .space-counter-trend { width: 100%; }
 
 /* Cycle */
+/* Cycle running total — a distinct accent PILL (reads as accumulation, not a
+   consistency streak/fire). */
 .space-cycle-count {
-  color: var(--accent); font-family: var(--font-mono);
-  font-feature-settings: var(--num); font-weight: 800;
+  display: inline-block;
+  margin-left: 4px;
+  padding: 2px 9px;
+  background: var(--accent); color: #fff;
+  border-radius: var(--r-pill);
+  font-family: var(--font-mono); font-feature-settings: var(--num);
+  font-weight: 800; font-size: 13px; letter-spacing: -0.01em;
+  vertical-align: middle;
+}
+
+/* Snapchat-style consecutive-completion streak badge on checkbox rows. */
+.space-streak {
+  display: inline-flex; align-items: center; gap: 2px;
+  margin-left: 6px; vertical-align: middle;
+  font-size: 12px; line-height: 1;
+}
+.space-streak-num {
+  color: var(--prio-medium, var(--accent));
+  font-family: var(--font-mono); font-feature-settings: var(--num);
+  font-weight: 800; font-size: 12px;
 }
 .space-cycle-ticks { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .space-cycle-inc { min-width: 52px; min-height: 44px; font-size: 16px; font-weight: 800; }
