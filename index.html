@@ -379,7 +379,7 @@
 <!-- Spaces — full-screen Space view (modelled on the Vault overlay) -->
 <div class="modal space-overlay-mode" id="space-overlay" role="dialog" aria-modal="true" aria-label="Space">
   <div class="space-overlay-panel">
-    <div class="space-header">
+    <div class="space-header" id="space-header">
       <h2 class="space-title" id="space-title">Space</h2>
       <div class="space-header-actions">
         <button type="button" class="btn space-edit-btn" id="space-edit-btn" aria-label="Edit this Space">Edit</button>
@@ -644,7 +644,7 @@ function loadState() {
   if (raw) {
     try {
       const parsed = JSON.parse(raw);
-      if (parsed && parsed.meta && (parsed.meta.version >= 1 && parsed.meta.version <= 7)) {
+      if (parsed && parsed.meta && (parsed.meta.version >= 1 && parsed.meta.version <= 8)) {
         return ensureShape(parsed);
       }
     } catch (e) {
@@ -800,6 +800,33 @@ function ensureShape(s) {
   // Hygiene: drop tombstones older than 90 days so the map can't grow forever.
   pruneTombstones(s.meta.tombstones);
 
+  // v7 -> v8: Spaces STEP 2 — flexible recurrence + counter/cycle block types.
+  // Normalise checkbox recurrence from legacy string -> object. Idempotent:
+  // skips blocks whose recurrence is already an object. Runs on load AND import.
+  if ((s.meta.version || 1) < 8) {
+    for (const b of s.blocks) {
+      if (b && b.type === 'checkbox' && typeof b.recurrence === 'string') {
+        b.recurrence = recurrenceFromLegacy(b.recurrence);
+      }
+    }
+    s.meta.version = 8;
+  }
+  // Defensive post-guards for all block types (fresh-v8 + malformed data).
+  for (const b of s.blocks) {
+    if (!b || typeof b !== 'object') continue;
+    if (b.type === 'checkbox') {
+      if (typeof b.recurrence === 'string') b.recurrence = recurrenceFromLegacy(b.recurrence);
+      if (!b.recurrence || typeof b.recurrence !== 'object') b.recurrence = { kind: 'daily' };
+      if (!b.checks || typeof b.checks !== 'object') b.checks = {};
+    } else if (b.type === 'counter') {
+      if (!Array.isArray(b.entries)) b.entries = [];
+    } else if (b.type === 'cycle') {
+      if (typeof b.count !== 'number' || !isFinite(b.count) || b.count < 0) b.count = 0;
+      if (!Array.isArray(b.markers)) b.markers = [];
+      if (!Array.isArray(b.history)) b.history = [];
+    }
+  }
+
   // Cloud-sync uses meta.updated_at as the conflict-resolution timestamp.
   // Backfill it for pre-sync states.
   if (!s.meta.updated_at) s.meta.updated_at = s.meta.created_at || nowIso();
@@ -810,7 +837,7 @@ function ensureShape(s) {
 function seedState() {
   const now = nowIso();
   return {
-    meta: { version: 7, created_at: now, updated_at: now, last_export_at: null, lastWipe: null, tombstones: {} },
+    meta: { version: 8, created_at: now, updated_at: now, last_export_at: null, lastWipe: null, tombstones: {} },
     habits: [
       {
         id: uuid(),
@@ -2417,8 +2444,8 @@ function importData(file) {
   reader.onload = () => {
     try {
       const parsed = JSON.parse(reader.result);
-      if (!parsed || !parsed.meta || !(parsed.meta.version >= 1 && parsed.meta.version <= 7)) {
-        toast('Invalid file: expected agendaai schema v1–v7');
+      if (!parsed || !parsed.meta || !(parsed.meta.version >= 1 && parsed.meta.version <= 8)) {
+        toast('Invalid file: expected agendaai schema v1–v8');
         return;
       }
       if (!confirm('Replace all current data with the imported file?')) return;
@@ -3556,27 +3583,146 @@ function renumberOrder(list) { list.forEach((item, i) => { item.order = i; }); }
 
 const SPACE_ICONS = ['📁', '🏠', '💪', '📚', '💼', '🎯', '🧘', '🍳', '🎨', '💰', '🌱', '⭐'];
 
+// ---- Recurrence model (checkbox blocks) ----
+
+// Legacy v7 string recurrence -> v8 object.
+function recurrenceFromLegacy(str) {
+  if (str === 'weekly') return { kind: 'weekly' };
+  if (str === 'none')   return { kind: 'once' };
+  return { kind: 'daily' };
+}
+
+// Whole-day difference toYmd - fromYmd (can be negative).
+function daysBetween(fromYmd, toYmd) {
+  const a = parseYmd(fromYmd).getTime();
+  const b = parseYmd(toYmd).getTime();
+  return Math.round((b - a) / 86400000);
+}
+
+const DAY_CODE_LABEL = { M: 'M', T: 'Tu', W: 'W', R: 'Th', F: 'F', S: 'Sa', U: 'Su' };
+
+function recurrenceLabel(rec) {
+  if (!rec || typeof rec !== 'object') return 'Daily';
+  switch (rec.kind) {
+    case 'daily':    return 'Daily';
+    case 'weekdays': return (Array.isArray(rec.days) && rec.days.length)
+                       ? rec.days.map(c => DAY_CODE_LABEL[c] || c).join(' ') : 'Weekdays';
+    case 'everyN':   return `Every ${Math.max(1, rec.n | 0)} days`;
+    case 'weekly':   return 'Weekly';
+    case 'once':     return 'One-off';
+    default:         return 'Daily';
+  }
+}
+
+// Is a checkbox block "due" on dateStr? For daily/weekdays/everyN this is purely
+// the schedule matching that date (independent of checked state). For weekly it
+// means not yet satisfied this week; for once, not yet satisfied ever.
+function isDueToday(block, dateStr) {
+  dateStr = dateStr || todayDate();
+  if (!block || block.type !== 'checkbox') return false;
+  const rec = (block.recurrence && typeof block.recurrence === 'object') ? block.recurrence : { kind: 'daily' };
+  const checks = (block.checks && typeof block.checks === 'object') ? block.checks : {};
+  switch (rec.kind) {
+    case 'daily':
+      return true;
+    case 'weekdays': {
+      const code = DAY_CODES[parseYmd(dateStr).getDay()];
+      return Array.isArray(rec.days) && rec.days.includes(code);
+    }
+    case 'everyN': {
+      const n = Math.max(1, rec.n | 0);
+      const anchor = rec.anchor || (block.createdAt ? block.createdAt.slice(0, 10) : dateStr);
+      const diff = daysBetween(anchor, dateStr);
+      return diff >= 0 && (diff % n === 0);
+    }
+    case 'weekly': {
+      // Satisfied if checked any day within dateStr's week (existing Sun-start week).
+      const days = weekDates(startOfWeek(dateStr));
+      return !days.some(d => checks[d]);
+    }
+    case 'once':
+      return Object.keys(checks).length === 0;
+    default:
+      return true;
+  }
+}
+
+// ---- "All done today" done-state ----
+
+function isBlockCheckedToday(b, dateStr) {
+  dateStr = dateStr || todayDate();
+  return !!(b && b.checks && b.checks[dateStr]);
+}
+
+// Checkbox blocks in a space that are due on dateStr.
+function spaceDueCheckboxes(spaceId, dateStr) {
+  dateStr = dateStr || todayDate();
+  return blocksForSpace(spaceId).filter(b => b.type === 'checkbox' && isDueToday(b, dateStr));
+}
+
+// A space is complete today when it has >=1 due checkbox and every due checkbox
+// is checked for today. (Checking a weekly/once item makes it no longer due, so
+// it drops out of the due set rather than blocking completion.)
+function isSpaceComplete(spaceId, dateStr) {
+  dateStr = dateStr || todayDate();
+  const due = spaceDueCheckboxes(spaceId, dateStr);
+  return due.length >= 1 && due.every(b => isBlockCheckedToday(b, dateStr));
+}
+
+// Master roll-up across all spaces that have due items today.
+function masterDoneState(dateStr) {
+  dateStr = dateStr || todayDate();
+  let dueSpaces = 0, doneSpaces = 0, remainingItems = 0;
+  for (const s of spacesData()) {
+    const due = spaceDueCheckboxes(s.id, dateStr);
+    if (due.length === 0) continue;
+    dueSpaces++;
+    const unchecked = due.filter(b => !isBlockCheckedToday(b, dateStr)).length;
+    remainingItems += unchecked;
+    if (unchecked === 0) doneSpaces++;
+  }
+  if (dueSpaces === 0) return { kind: 'none' };
+  if (doneSpaces === dueSpaces) return { kind: 'all', dueSpaces };
+  return { kind: 'progress', doneSpaces, dueSpaces, remainingItems };
+}
+
 // ---- Today hub ----
 
 function renderSpacesHub() {
   const wrap = document.getElementById('spaces-hub-wrap');
   if (!wrap) return;
   const spaces = spacesSorted();
-  const tiles = spaces.map(s => `
-    <button type="button" class="space-tile" data-space-open="${s.id}" aria-label="Open ${escapeHtml(s.name)}">
+  const tiles = spaces.map(s => {
+    const complete = isSpaceComplete(s.id);
+    return `
+    <button type="button" class="space-tile${complete ? ' complete' : ''}" data-space-open="${s.id}" aria-label="Open ${escapeHtml(s.name)}${complete ? ' (all done)' : ''}">
+      ${complete ? '<span class="space-tile-done" aria-hidden="true">✓</span>' : ''}
       <span class="space-tile-icon" aria-hidden="true">${escapeHtml(s.icon || '📁')}</span>
       <span class="space-tile-name">${escapeHtml(s.name)}</span>
-    </button>`).join('');
+    </button>`;
+  }).join('');
 
   const empty = spaces.length === 0
     ? `<div class="spaces-empty">Create your first Space to group your own checklists and trackers.</div>`
     : '';
+
+  // Master "all done today" signal — recomputed every render.
+  const ms = masterDoneState();
+  let master = '';
+  if (ms.kind === 'all') {
+    master = `<div class="spaces-master done">✓ All done for today</div>`;
+  } else if (ms.kind === 'progress') {
+    master = `<div class="spaces-master">${ms.doneSpaces} of ${ms.dueSpaces} spaces done · ${ms.remainingItems} item${ms.remainingItems === 1 ? '' : 's'} left</div>`;
+  } else {
+    master = `<div class="spaces-master neutral">Nothing due today</div>`;
+  }
 
   wrap.innerHTML = `
     <div class="vault-section spaces-hub">
       <div class="vault-section-head">
         <span class="vault-section-title">Spaces</span>
       </div>
+      ${spaces.length ? master : ''}
       ${empty}
       <div class="space-grid">
         ${tiles}
@@ -3617,14 +3763,19 @@ function closeSpaceSheet() { spaceSheet.classList.remove('open'); spaceForm = nu
 function renderSpaceView() {
   const body = document.getElementById('space-body');
   const titleEl = document.getElementById('space-title');
+  const headerEl = document.getElementById('space-header');
   if (!body || !titleEl) return;
   const space = findSpace(spaceViewId);
   if (!space) { closeSpace(); return; }
 
+  const complete = isSpaceComplete(space.id);
   titleEl.innerHTML = `<span class="space-title-icon" aria-hidden="true">${escapeHtml(space.icon || '📁')}</span> ${escapeHtml(space.name)}`;
+  if (headerEl) headerEl.classList.toggle('complete', complete);
 
   const blocks = blocksForSpace(space.id);
   const parts = [];
+
+  if (complete) parts.push(`<div class="space-done-banner">✓ All done for today</div>`);
 
   parts.push(`<button type="button" class="btn btn-primary vault-add-btn" data-act="add-block">+ Add item</button>`);
 
@@ -3639,30 +3790,119 @@ function renderSpaceView() {
   body.innerHTML = parts.join('');
 }
 
-function renderBlockRow(b, index, total) {
-  if (b.type === 'checkbox') return renderCheckboxRow(b, index, total);
-  return ''; // future block types render here
-}
-
-function renderCheckboxRow(b, index, total) {
-  const checked = !!(b.checks && b.checks[todayDate()]);
-  const recLabel = { daily: 'Daily', weekly: 'Weekly', none: 'One-off' }[b.recurrence] || 'Daily';
+function blockActionsHtml(b, index, total) {
   const upDis = index === 0 ? ' disabled' : '';
   const downDis = index === total - 1 ? ' disabled' : '';
   return `
-    <div class="space-block${checked ? ' checked' : ''}">
+    <div class="space-block-actions">
+      <button type="button" class="space-arrow" data-act="block-up" data-block="${b.id}"${upDis} aria-label="Move up">▲</button>
+      <button type="button" class="space-arrow" data-act="block-down" data-block="${b.id}"${downDis} aria-label="Move down">▼</button>
+      <button type="button" class="space-arrow" data-act="edit-block" data-block="${b.id}" aria-label="Edit item">✎</button>
+    </div>`;
+}
+
+function renderBlockRow(b, index, total) {
+  if (b.type === 'checkbox') return renderCheckboxRow(b, index, total);
+  if (b.type === 'counter')  return renderCounterRow(b, index, total);
+  if (b.type === 'cycle')    return renderCycleRow(b, index, total);
+  return ''; // future block types (goal, notes) render here
+}
+
+// Compact reusable mini-bar trend (off-track style) from an array of numbers.
+function miniTrendHtml(values, labels) {
+  const max = Math.max(1, ...values.map(v => Math.abs(v)));
+  let cols = '';
+  for (let i = 0; i < values.length; i++) {
+    const h = Math.round((Math.abs(values[i]) / max) * 100);
+    const lab = labels && labels[i] != null ? escapeHtml(String(labels[i])) : '';
+    cols += `<div class="offtrack-mini-col">
+      <div class="offtrack-mini-track"><div class="offtrack-mini-fill" style="height:${h}%"></div></div>
+      <div class="offtrack-mini-val">${escapeHtml(fmtNum(values[i]))}</div>
+      <div class="offtrack-mini-day">${lab}</div>
+    </div>`;
+  }
+  return `<div class="offtrack-mini">${cols}</div>`;
+}
+
+// Trim trailing zeros for a clean numeric display.
+function fmtNum(n) {
+  if (typeof n !== 'number' || !isFinite(n)) return '0';
+  return String(Math.round(n * 100) / 100);
+}
+
+function renderCheckboxRow(b, index, total) {
+  const due = isDueToday(b);
+  const checked = !!(b.checks && b.checks[todayDate()]);
+  const recLabel = recurrenceLabel(b.recurrence);
+  return `
+    <div class="space-block${checked ? ' checked' : ''}${due ? '' : ' not-due'}">
       <button type="button" class="space-tick${checked ? ' on' : ''}" data-act="toggle-block" data-block="${b.id}"
               aria-pressed="${checked ? 'true' : 'false'}" aria-label="Toggle ${escapeHtml(b.label)}">
         <span class="space-tick-mark" aria-hidden="true">${checked ? '&check;' : ''}</span>
       </button>
       <div class="space-block-mid">
         <div class="space-block-label">${escapeHtml(b.label)}</div>
-        <div class="space-block-sub">${escapeHtml(recLabel)}</div>
+        <div class="space-block-sub">${escapeHtml(recLabel)}${due ? '' : ' · not due today'}</div>
       </div>
-      <div class="space-block-actions">
-        <button type="button" class="space-arrow" data-act="block-up" data-block="${b.id}"${upDis} aria-label="Move up">▲</button>
-        <button type="button" class="space-arrow" data-act="block-down" data-block="${b.id}"${downDis} aria-label="Move down">▼</button>
-        <button type="button" class="space-arrow" data-act="edit-block" data-block="${b.id}" aria-label="Edit item">✎</button>
+      ${blockActionsHtml(b, index, total)}
+    </div>`;
+}
+
+function renderCounterRow(b, index, total) {
+  const entries = Array.isArray(b.entries) ? b.entries.slice().sort((a, c) => a.date.localeCompare(c.date)) : [];
+  const last = entries.length ? entries[entries.length - 1] : null;
+  const unit = b.unit ? ' ' + escapeHtml(b.unit) : '';
+  const recent = entries.slice(-7);
+  const trend = recent.length
+    ? miniTrendHtml(recent.map(e => Number(e.value) || 0), recent.map(e => parseYmd(e.date).toLocaleDateString(undefined, { weekday: 'narrow' })))
+    : `<div class="space-block-empty">No data yet</div>`;
+  return `
+    <div class="space-block space-block-counter">
+      <div class="space-block-top">
+        <div class="space-block-mid">
+          <div class="space-block-label">${escapeHtml(b.label)}</div>
+          <div class="space-block-sub">${last ? escapeHtml(fmtNum(Number(last.value) || 0)) + unit : 'Counter'}</div>
+        </div>
+        <button type="button" class="btn space-log-btn" data-act="log-counter" data-block="${b.id}">+ Log</button>
+        ${blockActionsHtml(b, index, total)}
+      </div>
+      <div class="space-counter-trend">${trend}</div>
+    </div>`;
+}
+
+function renderCycleRow(b, index, total) {
+  const count = b.count | 0;
+  const markers = Array.isArray(b.markers) ? b.markers : [];
+  // Markers that fire at the current count (all whose n divides count, count>0).
+  const dueNotes = markers
+    .filter(m => (m.n | 0) >= 1 && count > 0 && count % (m.n | 0) === 0)
+    .map(m => m.note ? escapeHtml(m.note) : `every ${m.n | 0}`);
+  const dueHtml = dueNotes.length
+    ? `<div class="space-cycle-due">⚠ ${dueNotes.join(' + ')}</div>` : '';
+  const markerList = markers.length
+    ? markers.map(m => `
+        <div class="space-cycle-marker" data-act="edit-marker" data-block="${b.id}" data-marker="${m.id}">
+          <span class="space-cycle-marker-txt">every ${m.n | 0} → ${m.note ? escapeHtml(m.note) : '(no note)'}</span>
+          <button type="button" class="space-cycle-marker-del" data-act="del-marker" data-block="${b.id}" data-marker="${m.id}" aria-label="Remove marker">✕</button>
+        </div>`).join('')
+    : `<div class="space-block-empty">No markers yet</div>`;
+  return `
+    <div class="space-block space-block-cycle">
+      <div class="space-block-top">
+        <div class="space-block-mid">
+          <div class="space-block-label">${escapeHtml(b.label)} <span class="space-cycle-count">#${count}</span></div>
+          <div class="space-block-sub">Running count</div>
+        </div>
+        <div class="space-cycle-ticks">
+          <button type="button" class="space-arrow" data-act="cycle-dec" data-block="${b.id}"${count <= 0 ? ' disabled' : ''} aria-label="Undo one">−1</button>
+          <button type="button" class="btn btn-primary space-cycle-inc" data-act="cycle-inc" data-block="${b.id}">+1</button>
+        </div>
+        ${blockActionsHtml(b, index, total)}
+      </div>
+      ${dueHtml}
+      <div class="space-cycle-markers">
+        ${markerList}
+        <button type="button" class="btn space-marker-add" data-act="add-marker" data-block="${b.id}">+ Marker</button>
       </div>
     </div>`;
 }
@@ -3674,11 +3914,18 @@ function onSpaceBodyClick(e) {
   if (!el) return;
   const act = el.dataset.act;
   const bid = el.dataset.block;
+  const mid = el.dataset.marker;
   if      (act === 'add-block')    openBlockSheet();
   else if (act === 'toggle-block') toggleBlockToday(bid);
   else if (act === 'edit-block')   { const b = findBlock(bid); if (b) openBlockSheet(b); }
   else if (act === 'block-up')     moveBlock(bid, -1);
   else if (act === 'block-down')   moveBlock(bid, 1);
+  else if (act === 'log-counter')  openCounterLogSheet(bid);
+  else if (act === 'cycle-inc')    cycleIncrement(bid);
+  else if (act === 'cycle-dec')    cycleDecrement(bid);
+  else if (act === 'add-marker')   openMarkerSheet(bid, null);
+  else if (act === 'edit-marker')  openMarkerSheet(bid, mid);
+  else if (act === 'del-marker')   deleteMarker(bid, mid);
 }
 
 function toggleBlockToday(blockId) {
@@ -3799,12 +4046,32 @@ function deleteSpace(spaceId, fromSheet) {
   toast('Space deleted');
 }
 
-// ---- Block create / edit / delete (checkbox) ----
+// ---- Block create / edit / delete (checkbox / counter / cycle) ----
+
+const RECUR_KINDS = [
+  { k: 'daily', label: 'Daily' },
+  { k: 'weekdays', label: 'Days' },
+  { k: 'everyN', label: 'Every N' },
+  { k: 'weekly', label: 'Weekly' },
+  { k: 'once', label: 'One-off' }
+];
 
 function openBlockSheet(editing) {
-  spaceForm = editing
-    ? { mode: 'block', editingId: editing.id, label: editing.label, recurrence: editing.recurrence || 'daily' }
-    : { mode: 'block', editingId: null, label: '', recurrence: 'daily' };
+  if (editing) {
+    const rec = (editing.recurrence && typeof editing.recurrence === 'object') ? editing.recurrence : { kind: 'daily' };
+    spaceForm = {
+      mode: 'block', editingId: editing.id, blockType: editing.type || 'checkbox',
+      label: editing.label || '', unit: editing.unit || '',
+      recKind: rec.kind || 'daily',
+      recDays: Array.isArray(rec.days) ? rec.days.slice() : [],
+      recN: rec.n ? String(rec.n) : '3'
+    };
+  } else {
+    spaceForm = {
+      mode: 'block', editingId: null, blockType: 'checkbox',
+      label: '', unit: '', recKind: 'daily', recDays: [], recN: '3'
+    };
+  }
   buildBlockSheet();
   openSpaceSheetOverlay();
   setTimeout(() => { const n = document.getElementById('block-label-input'); if (n) n.focus(); }, 50);
@@ -3814,21 +4081,57 @@ function buildBlockSheet() {
   const panel = document.getElementById('space-sheet-panel');
   const f = spaceForm;
   const editing = !!f.editingId;
-  const recBtn = (r, label) => `<button type="button" data-rec="${r}" class="${f.recurrence === r ? 'active' : ''}">${label}</button>`;
+
+  // Type picker only when adding (type is fixed once created).
+  const typeBtn = (t, label) => `<button type="button" data-btype="${t}" class="${f.blockType === t ? 'active' : ''}">${label}</button>`;
+  const typePicker = editing ? '' : `
+    <div class="field">
+      <label>Type</label>
+      <div class="type-tabs" id="block-type-tabs">
+        ${typeBtn('checkbox', 'Checkbox')}
+        ${typeBtn('counter', 'Counter')}
+        ${typeBtn('cycle', 'Cycle')}
+      </div>
+    </div>`;
+
+  // Type-specific fields.
+  let typeFields = '';
+  if (f.blockType === 'checkbox') {
+    const kindBtn = (k, label) => `<button type="button" data-rk="${k}" class="${f.recKind === k ? 'active' : ''}">${label}</button>`;
+    const dayToggles = ALL_DAYS.map(c =>
+      `<button type="button" class="day-btn${f.recDays.includes(c) ? ' active' : ''}" data-daycode="${c}">${DAY_CODE_LABEL[c] || c}</button>`
+    ).join('');
+    typeFields = `
+      <div class="field">
+        <label>Recurrence</label>
+        <div class="type-tabs space-rec-tabs" id="block-rec-tabs">${RECUR_KINDS.map(r => kindBtn(r.k, r.label)).join('')}</div>
+      </div>
+      <div class="field" id="rec-weekdays-row" ${f.recKind === 'weekdays' ? '' : 'hidden'}>
+        <label>On days</label>
+        <div class="days-grid" id="rec-days-grid">${dayToggles}</div>
+      </div>
+      <div class="field" id="rec-everyn-row" ${f.recKind === 'everyN' ? '' : 'hidden'}>
+        <label for="rec-n-input">Every N days</label>
+        <input type="number" id="rec-n-input" inputmode="numeric" min="1" step="1" value="${escapeHtml(f.recN)}">
+      </div>`;
+  } else if (f.blockType === 'counter') {
+    typeFields = `
+      <div class="field">
+        <label for="block-unit-input">Unit (optional)</label>
+        <input type="text" id="block-unit-input" placeholder="e.g. mi, lb, min" autocomplete="off" maxlength="12" value="${escapeHtml(f.unit)}">
+      </div>`;
+  } else { // cycle
+    typeFields = `<div class="field"><div class="space-hint">Markers (every N → note) are added inside the block after you create it.</div></div>`;
+  }
+
   panel.innerHTML = `
     <h2>${editing ? 'Edit item' : 'Add item'}</h2>
+    ${typePicker}
     <div class="field">
       <label for="block-label-input">Label</label>
       <input type="text" id="block-label-input" placeholder="e.g. Take vitamins" autocomplete="off" maxlength="120" value="${escapeHtml(f.label)}">
     </div>
-    <div class="field">
-      <label>Recurrence</label>
-      <div class="type-tabs space-rec-tabs" id="block-rec-tabs">
-        ${recBtn('daily', 'Daily')}
-        ${recBtn('weekly', 'Weekly')}
-        ${recBtn('none', 'One-off')}
-      </div>
-    </div>
+    ${typeFields}
     <div id="space-form-error" class="error-msg" hidden></div>
     <div class="form-actions">
       ${editing ? '<button type="button" class="btn btn-danger" id="block-delete-btn">Delete</button>' : ''}
@@ -3837,10 +4140,21 @@ function buildBlockSheet() {
       <button type="button" class="btn btn-primary" id="block-save-btn">Save</button>
     </div>`;
 
+  // Type picker (add mode): switch type and rebuild, preserving the label.
+  panel.querySelectorAll('#block-type-tabs button').forEach(btn => {
+    btn.addEventListener('click', () => { syncBlockInputs(); f.blockType = btn.dataset.btype; buildBlockSheet(); });
+  });
+  // Recurrence kind selector: rebuild so conditional rows show/hide.
   panel.querySelectorAll('#block-rec-tabs button').forEach(btn => {
+    btn.addEventListener('click', () => { syncBlockInputs(); f.recKind = btn.dataset.rk; buildBlockSheet(); });
+  });
+  // Weekday toggles.
+  panel.querySelectorAll('#rec-days-grid .day-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      f.recurrence = btn.dataset.rec;
-      panel.querySelectorAll('#block-rec-tabs button').forEach(b => b.classList.toggle('active', b === btn));
+      const c = btn.dataset.daycode;
+      const i = f.recDays.indexOf(c);
+      if (i >= 0) f.recDays.splice(i, 1); else f.recDays.push(c);
+      btn.classList.toggle('active');
     });
   });
   document.getElementById('space-sheet-cancel').addEventListener('click', closeSpaceSheet);
@@ -3849,36 +4163,198 @@ function buildBlockSheet() {
   if (del) del.addEventListener('click', deleteBlockFromSheet);
 }
 
+// Read current sheet inputs into spaceForm so a rebuild (type/kind switch) keeps them.
+function syncBlockInputs() {
+  const f = spaceForm;
+  const lab = document.getElementById('block-label-input'); if (lab) f.label = lab.value;
+  const unit = document.getElementById('block-unit-input'); if (unit) f.unit = unit.value;
+  const n = document.getElementById('rec-n-input'); if (n) f.recN = n.value;
+}
+
+// Build the recurrence object from the form state.
+function buildRecurrenceFromForm(f, existingBlock) {
+  const kind = f.recKind || 'daily';
+  if (kind === 'weekdays') {
+    const days = (f.recDays && f.recDays.length) ? f.recDays.slice() : ALL_DAYS.slice();
+    return { kind: 'weekdays', days };
+  }
+  if (kind === 'everyN') {
+    const n = Math.max(1, parseInt(f.recN, 10) || 1);
+    // Keep an existing everyN anchor; otherwise anchor at the block's createdAt (or today).
+    const prior = existingBlock && existingBlock.recurrence && existingBlock.recurrence.kind === 'everyN' && existingBlock.recurrence.anchor;
+    const anchor = prior || ((existingBlock && existingBlock.createdAt) ? existingBlock.createdAt.slice(0, 10) : todayDate());
+    return { kind: 'everyN', n, anchor };
+  }
+  if (kind === 'weekly') return { kind: 'weekly' };
+  if (kind === 'once')   return { kind: 'once' };
+  return { kind: 'daily' };
+}
+
 function saveBlockForm() {
+  syncBlockInputs();
   const f = spaceForm;
   const errEl = document.getElementById('space-form-error');
-  const label = (document.getElementById('block-label-input').value || '').trim();
-  const recurrence = ['daily', 'weekly', 'none'].includes(f.recurrence) ? f.recurrence : 'daily';
+  const label = (f.label || '').trim();
   if (!label) { errEl.textContent = 'Give the item a label.'; errEl.hidden = false; return; }
 
   if (f.editingId) {
     const b = findBlock(f.editingId);
-    if (b) Object.assign(b, { label, recurrence });
+    if (!b) { closeSpaceSheet(); return; }
+    if (b.type === 'checkbox')      Object.assign(b, { label, recurrence: buildRecurrenceFromForm(f, b) });
+    else if (b.type === 'counter')  Object.assign(b, { label, unit: (f.unit || '').trim() });
+    else                            Object.assign(b, { label });
   } else {
     if (!spaceViewId) return;
     const siblings = blocksForSpace(spaceViewId);
     const maxOrder = siblings.reduce((m, b) => Math.max(m, b.order | 0), -1);
-    blocksData().push({
-      id: uuid(),
-      spaceId: spaceViewId,
-      type: 'checkbox',
-      order: maxOrder + 1,
-      createdAt: nowIso(),
-      label,
-      recurrence,
-      checks: {}
-    });
+    const base = { id: uuid(), spaceId: spaceViewId, order: maxOrder + 1, createdAt: nowIso(), label };
+    let block;
+    if (f.blockType === 'counter') {
+      block = Object.assign(base, { type: 'counter', unit: (f.unit || '').trim(), entries: [] });
+    } else if (f.blockType === 'cycle') {
+      block = Object.assign(base, { type: 'cycle', count: 0, markers: [], history: [] });
+    } else {
+      block = Object.assign(base, { type: 'checkbox', recurrence: buildRecurrenceFromForm(f, null), checks: {} });
+    }
+    blocksData().push(block);
   }
   saveState();
   render();
   if (spaceOverlay.classList.contains('open')) renderSpaceView();
   closeSpaceSheet();
   toast(f.editingId ? 'Item updated' : 'Item added');
+}
+
+// ---- Counter block: log a value (overwrite per day) ----
+
+function openCounterLogSheet(blockId) {
+  const b = findBlock(blockId);
+  if (!b || b.type !== 'counter') return;
+  spaceForm = { mode: 'counter-log', blockId };
+  const panel = document.getElementById('space-sheet-panel');
+  const unit = b.unit ? ` (${escapeHtml(b.unit)})` : '';
+  panel.innerHTML = `
+    <h2>Log ${escapeHtml(b.label)}</h2>
+    <div class="field">
+      <label for="counter-val-input">Value${unit}</label>
+      <input type="text" id="counter-val-input" inputmode="decimal" placeholder="0" autocomplete="off">
+    </div>
+    <div id="space-form-error" class="error-msg" hidden></div>
+    <div class="form-actions">
+      <div class="spacer"></div>
+      <button type="button" class="btn btn-ghost" id="space-sheet-cancel">Cancel</button>
+      <button type="button" class="btn btn-primary" id="counter-save-btn">Save</button>
+    </div>`;
+  document.getElementById('space-sheet-cancel').addEventListener('click', closeSpaceSheet);
+  document.getElementById('counter-save-btn').addEventListener('click', saveCounterLog);
+  openSpaceSheetOverlay();
+  setTimeout(() => { const n = document.getElementById('counter-val-input'); if (n) n.focus(); }, 50);
+}
+
+function saveCounterLog() {
+  const b = findBlock(spaceForm && spaceForm.blockId);
+  if (!b || b.type !== 'counter') { closeSpaceSheet(); return; }
+  const errEl = document.getElementById('space-form-error');
+  const v = parseFloat(document.getElementById('counter-val-input').value);
+  if (!isFinite(v)) { errEl.textContent = 'Enter a number.'; errEl.hidden = false; return; }
+  const date = todayDate();
+  if (!Array.isArray(b.entries)) b.entries = [];
+  b.entries = b.entries.filter(e => e.date !== date); // overwrite same-day
+  b.entries.push({ date, value: Math.round(v * 100) / 100 });
+  b.entries.sort((a, c) => a.date.localeCompare(c.date));
+  saveState();
+  render();
+  if (spaceOverlay.classList.contains('open')) renderSpaceView();
+  closeSpaceSheet();
+  toast('Logged');
+}
+
+// ---- Cycle block: increment / undo + marker management ----
+
+function cycleIncrement(blockId) {
+  const b = findBlock(blockId);
+  if (!b || b.type !== 'cycle') return;
+  b.count = (b.count | 0) + 1;
+  if (!Array.isArray(b.history)) b.history = [];
+  b.history.push({ date: todayDate(), count: b.count });
+  saveState();
+  render();
+  if (spaceOverlay.classList.contains('open')) renderSpaceView();
+}
+
+function cycleDecrement(blockId) {
+  const b = findBlock(blockId);
+  if (!b || b.type !== 'cycle') return;
+  if ((b.count | 0) <= 0) return; // never negative
+  b.count = (b.count | 0) - 1;
+  if (Array.isArray(b.history) && b.history.length) b.history.pop();
+  saveState();
+  render();
+  if (spaceOverlay.classList.contains('open')) renderSpaceView();
+}
+
+function openMarkerSheet(blockId, markerId) {
+  const b = findBlock(blockId);
+  if (!b || b.type !== 'cycle') return;
+  const marker = markerId ? (b.markers || []).find(m => m.id === markerId) : null;
+  spaceForm = { mode: 'marker', blockId, markerId: marker ? marker.id : null,
+                n: marker ? String(marker.n) : '', note: marker ? marker.note : '' };
+  const panel = document.getElementById('space-sheet-panel');
+  panel.innerHTML = `
+    <h2>${marker ? 'Edit marker' : 'Add marker'}</h2>
+    <div class="field">
+      <label for="marker-n-input">Every N ticks</label>
+      <input type="number" id="marker-n-input" inputmode="numeric" min="1" step="1" placeholder="4" value="${escapeHtml(spaceForm.n)}">
+    </div>
+    <div class="field">
+      <label for="marker-note-input">Note</label>
+      <input type="text" id="marker-note-input" placeholder="e.g. Clarifying shampoo" autocomplete="off" maxlength="120" value="${escapeHtml(spaceForm.note)}">
+    </div>
+    <div id="space-form-error" class="error-msg" hidden></div>
+    <div class="form-actions">
+      ${marker ? '<button type="button" class="btn btn-danger" id="marker-delete-btn">Delete</button>' : ''}
+      <div class="spacer"></div>
+      <button type="button" class="btn btn-ghost" id="space-sheet-cancel">Cancel</button>
+      <button type="button" class="btn btn-primary" id="marker-save-btn">Save</button>
+    </div>`;
+  document.getElementById('space-sheet-cancel').addEventListener('click', closeSpaceSheet);
+  document.getElementById('marker-save-btn').addEventListener('click', saveMarkerForm);
+  const del = document.getElementById('marker-delete-btn');
+  if (del) del.addEventListener('click', () => { deleteMarker(blockId, markerId); });
+  openSpaceSheetOverlay();
+  setTimeout(() => { const n = document.getElementById('marker-n-input'); if (n) n.focus(); }, 50);
+}
+
+function saveMarkerForm() {
+  const b = findBlock(spaceForm && spaceForm.blockId);
+  if (!b || b.type !== 'cycle') { closeSpaceSheet(); return; }
+  const errEl = document.getElementById('space-form-error');
+  const n = parseInt(document.getElementById('marker-n-input').value, 10);
+  const note = (document.getElementById('marker-note-input').value || '').trim();
+  if (!isFinite(n) || n < 1) { errEl.textContent = 'N must be a whole number ≥ 1.'; errEl.hidden = false; return; }
+  if (!Array.isArray(b.markers)) b.markers = [];
+  if (spaceForm.markerId) {
+    const m = b.markers.find(x => x.id === spaceForm.markerId);
+    if (m) Object.assign(m, { n, note });
+  } else {
+    b.markers.push({ id: uuid(), n, note });
+  }
+  saveState();
+  render();
+  if (spaceOverlay.classList.contains('open')) renderSpaceView();
+  closeSpaceSheet();
+  toast('Marker saved');
+}
+
+function deleteMarker(blockId, markerId) {
+  const b = findBlock(blockId);
+  if (!b || b.type !== 'cycle' || !markerId) return;
+  if (!confirm('Remove this marker?')) return;
+  b.markers = (b.markers || []).filter(m => m.id !== markerId);
+  saveState();
+  render();
+  if (spaceOverlay.classList.contains('open')) renderSpaceView();
+  closeSpaceSheet();
 }
 
 function deleteBlockFromSheet() {

@@ -1852,3 +1852,86 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 }
 .space-icon-chip.active { border-color: var(--accent); background: var(--accent-soft); }
 .space-rec-tabs { margin-bottom: 0; }
+
+/* ============================================================================
+   Spaces STEP 2 — all-done visuals, counter + cycle blocks
+   ========================================================================== */
+
+/* ---- "All done" green: hub tiles + master signal + space header ---- */
+.space-tile { position: relative; }
+.space-tile.complete {
+  background: rgba(52, 199, 89, 0.12);
+  border-color: var(--ok);
+}
+.space-tile-done {
+  position: absolute; top: 6px; right: 8px;
+  color: var(--ok); font-size: 14px; font-weight: 800; line-height: 1;
+}
+.spaces-master {
+  margin-bottom: 12px; padding: 10px 12px;
+  border-radius: var(--r-pill); font-size: 13px; font-weight: 600;
+  background: var(--surface-inset); color: var(--text-secondary);
+  text-align: center;
+}
+.spaces-master.done { background: rgba(52, 199, 89, 0.14); color: var(--ok); }
+.spaces-master.neutral { color: var(--text-tertiary); }
+
+.space-header.complete { border-bottom-color: var(--ok); }
+.space-header.complete .space-title { color: var(--ok); }
+.space-done-banner {
+  margin-bottom: 14px; padding: 12px;
+  border-radius: var(--r-card); text-align: center;
+  background: rgba(52, 199, 89, 0.14); color: var(--ok);
+  font-weight: 700; font-size: 15px;
+}
+
+/* ---- Checkbox row: not-due today (still visible, de-emphasised) ---- */
+.space-block.not-due .space-tick { opacity: 0.55; }
+.space-block.not-due .space-block-label { color: var(--text-secondary); }
+
+/* ---- Counter + cycle blocks ---- */
+.space-block-counter, .space-block-cycle {
+  flex-direction: column; align-items: stretch; gap: 10px;
+}
+.space-block-top {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+}
+.space-block-empty {
+  font-size: 12px; color: var(--text-tertiary); padding: 4px 0;
+}
+.space-log-btn, .space-marker-add {
+  min-height: 44px; padding: 8px 14px; font-weight: 600;
+  background: var(--accent-soft); color: var(--accent); flex-shrink: 0;
+}
+.space-log-btn:hover, .space-marker-add:hover { background: var(--accent); color: #fff; }
+.space-counter-trend { width: 100%; }
+
+/* Cycle */
+.space-cycle-count {
+  color: var(--accent); font-family: var(--font-mono);
+  font-feature-settings: var(--num); font-weight: 800;
+}
+.space-cycle-ticks { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.space-cycle-inc { min-width: 52px; min-height: 44px; font-size: 16px; font-weight: 800; }
+.space-cycle-due {
+  padding: 10px 12px; border-radius: var(--r-card);
+  background: var(--accent-soft); color: var(--accent);
+  font-weight: 700; font-size: 14px;
+}
+.space-cycle-markers { display: flex; flex-direction: column; gap: 6px; }
+.space-cycle-marker {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  min-height: 40px; padding: 8px 10px;
+  background: var(--surface-inset); border-radius: var(--r-pill);
+  cursor: pointer; font-size: 13px; color: var(--text-primary);
+}
+.space-cycle-marker-txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.space-cycle-marker-del {
+  width: 40px; height: 40px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: none; cursor: pointer;
+  color: var(--text-tertiary); font-size: 13px; border-radius: var(--r-pill);
+}
+.space-cycle-marker-del:hover { background: var(--danger-dim); color: var(--danger); }
+
+.space-hint { font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
