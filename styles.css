@@ -345,6 +345,10 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
   background: var(--surface-inset); padding: 3px;
   border-radius: var(--r-pill);
 }
+/* Add-item type selector holds exactly two tabs (To-do, Event) — no blank
+   third slot left over from the removed Habit tab. Scoped so #vault-type-tabs
+   (3) and #block-type-tabs (5, wrapping) keep the base 3-column layout. */
+#type-tabs { grid-template-columns: repeat(2, 1fr); }
 .type-tabs button {
   background: transparent; border: none;
   color: var(--text-secondary); padding: 8px;
