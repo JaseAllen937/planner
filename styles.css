@@ -315,6 +315,14 @@ label {
   font-family: var(--font-mono);
 }
 .field { margin-bottom: 16px; }
+
+/* Add-item sheet: even vertical rhythm across every field group (Title, Someday,
+   Date, All-day, Time, Duration, Priority, Notes) — uniform gap + label spacing. */
+#form-modal .field { margin: 0 0 18px; }
+#form-modal .field > label { margin-bottom: 8px; }
+#form-modal .field > label.toggle-row { margin-bottom: 0; }
+#form-modal #item-fields { margin-bottom: 0; }
+#form-modal #item-fields > .field:last-child { margin-bottom: 18px; }
 input[type="text"], input[type="time"], input[type="date"],
 input[type="number"], textarea, select {
   width: 100%;

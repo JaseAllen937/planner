@@ -1064,9 +1064,12 @@ function dailySummary(date) {
   const habitsToday = state.habits.filter(h => !h.archived && h.days.includes(dCode));
   // Only trackable to-do items count toward expected/missed — events (trackCompletion:false) are calendar markers.
   const trackItemsToday = state.items.filter(i => i.date === date && i.trackCompletion);
-  const expected = habitsToday.length + trackItemsToday.length;
+  // Spaces checkbox blocks due this date count toward completion too (habits are empty now).
+  const dueBlocks = (state.blocks || []).filter(b => b.type === 'checkbox' && isDueToday(b, date));
+  const doneBlocks = dueBlocks.filter(b => b.checks && b.checks[date]);
+  const expected = habitsToday.length + trackItemsToday.length + dueBlocks.length;
   const compsToday = state.completions.filter(c => c.date === date);
-  const done = compsToday.length;
+  const done = compsToday.length + doneBlocks.length;
 
   const isToday = date === todayDate();
   const nowMins = isToday ? minsSinceMidnight(nowHHMM()) : 24 * 60;
@@ -1194,14 +1197,18 @@ function weeklySummary(weekStart) {
     return { id: h.id, title: h.title, expected, done, pct: expected > 0 ? done / expected : 0 };
   }).filter(s => s.expected > 0);
 
+  // Per-day expected/done now come from dailySummary(d), which counts trackable
+  // to-do items AND Spaces checkbox blocks (plus habits, now empty). This keeps
+  // Today and This Week consistent and Spaces-inclusive.
   const byDay = [];
+  let weekExpected = 0, weekDone = 0;
   for (let i = 0; i < 7; i++) {
     const d = dates[i];
     if (d > today) { byDay.push(null); continue; }
-    const dCode = DAY_CODES[i];
-    const expected = activeHabits.filter(h => h.days.includes(dCode)).length;
-    const done = state.completions.filter(c => c.date === d && c.ref_type === 'habit').length;
-    byDay.push(expected > 0 ? done / expected : null);
+    const ds = dailySummary(d);
+    weekExpected += ds.expected;
+    weekDone += ds.done;
+    byDay.push(ds.expected > 0 ? ds.done / ds.expected : null);
   }
 
   const sleeps = dates.map(d => state.daily_state.find(ds => ds.date === d))
@@ -1246,8 +1253,8 @@ function weeklySummary(weekStart) {
     if (worstIdx === -1 || byDay[i] < byDay[worstIdx]) worstIdx = i;
   }
 
-  const overall = habitStats.length
-    ? habitStats.reduce((a,b) => a + b.pct, 0) / habitStats.length : 0;
+  // Overall = week-level done/expected (items + Spaces blocks + any habits).
+  const overall = weekExpected > 0 ? weekDone / weekExpected : 0;
 
   return {
     week_start: weekStart,
@@ -1280,10 +1287,11 @@ function renderWeeklySummary() {
   const w = weeklySummary(thisStart);
   const overall = Math.round(w.overall_pct * 100);
 
-  // Raw habit completions logged this week (present-tense count, not changing weeklySummary math).
+  // Present-tense count of items done this week — trackable to-do items + Spaces
+  // checkbox blocks (via dailySummary.done, which is Spaces-inclusive).
   const weekDatesUpToToday = weekDates(thisStart).filter(d => d <= today);
-  const habitsDone = state.completions
-    .filter(c => c.ref_type === 'habit' && weekDatesUpToToday.includes(c.date)).length;
+  let itemsDone = 0;
+  for (const d of weekDatesUpToToday) itemsDone += dailySummary(d).done;
 
   const parts = [];
   parts.push(`
@@ -1291,7 +1299,7 @@ function renderWeeklySummary() {
       <h3>This Week</h3>
       <div class="summary-pct">
         <span class="big">${overall}%</span>
-        <span class="label">${habitsDone} habit${habitsDone === 1 ? '' : 's'} completed</span>
+        <span class="label">${itemsDone} item${itemsDone === 1 ? '' : 's'} completed</span>
       </div>
       <div class="pct-bar"><div class="fill" style="width:${overall}%"></div></div>
   `);
@@ -1316,52 +1324,12 @@ function computeInsights() {
   const thisWeek = weeklySummary(thisStart);
   const lastWeek = weeklySummary(addDays(thisStart, -7));
 
-  // Rule 2: any habit with miss-streak >= 3
-  for (const h of state.habits) {
-    if (h.archived) continue;
-    const ms = missStreak(h.id, today);
-    if (ms >= 3) cards.push({ tone: 'warn', title: `${h.title} skipped ${ms} days in a row`, body: 'Time to restart, or rethink the cadence.' });
-  }
-
-  // Rule 7: long-streak broken
-  for (const h of state.habits) {
-    if (h.archived) continue;
-    const yest = addDays(today, -1);
-    const yestCode = DAY_CODES[parseYmd(yest).getDay()];
-    if (!h.days.includes(yestCode)) continue;
-    if (findCompletion(h.id, yest)) continue;
-    const prev = currentStreak(h.id, addDays(yest, -1));
-    if (prev >= 7) cards.push({ tone: 'warn', title: `Long streak broken: ${h.title}`, body: `Was ${prev} days.` });
-  }
-
-  // Rule 4: bucket completion
-  const bucketDoneByBucket = {};
-  const bucketExpectedByBucket = {};
-  for (const h of state.habits) {
-    if (h.archived || !h.time) continue;
-    const b = timeBucket(h.time);
-    for (const d of weekDates(thisStart)) {
-      if (d > today) continue;
-      const dCode = DAY_CODES[parseYmd(d).getDay()];
-      if (!h.days.includes(dCode)) continue;
-      bucketExpectedByBucket[b] = (bucketExpectedByBucket[b] || 0) + 1;
-      if (findCompletion(h.id, d)) bucketDoneByBucket[b] = (bucketDoneByBucket[b] || 0) + 1;
-    }
-  }
-  for (const b in bucketExpectedByBucket) {
-    const exp = bucketExpectedByBucket[b];
-    const done = bucketDoneByBucket[b] || 0;
-    if (exp < 3) continue;
-    const rate = done / exp;
-    if (rate >= 0.85) cards.push({ tone: 'good', title: `${b} habits: ${Math.round(rate*100)}% completion this week`, body: 'Strong consistency.' });
-    else if (rate <= 0.40) cards.push({ tone: 'warn', title: `${b} habits: ${Math.round(rate*100)}% completion this week`, body: 'This window keeps getting missed.' });
-  }
-
-  // Rule 5: habit at_risk now, crushing_it last week
-  const lastIds = new Set(lastWeek.crushing_it.map(s => s.id));
-  for (const s of thisWeek.at_risk) {
-    if (lastIds.has(s.id)) cards.push({ tone: 'warn', title: `${s.title} dropped from crushing-it to at-risk this week`, body: '' });
-  }
+  // ---- Individual-habit insight rules removed ----
+  // The old "skipped N days in a row", "long streak broken", per-time-bucket
+  // habit completion, and crushing-it→at-risk cards all read state.habits, which
+  // is now empty (habits live as Spaces checkbox blocks). They are intentionally
+  // gone. SEAM: future Spaces-based insights (per-block streaks, due-block
+  // completion trends) can be added here. Only aggregate wellness rules remain.
 
   // Rule 6: focused hours up >=5 vs last week
   if (thisWeek.total_focused_hours - lastWeek.total_focused_hours >= 5) {
