@@ -1897,6 +1897,11 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
   border-radius: var(--r-card); box-shadow: var(--shadow-lg);
   display: flex; flex-direction: column; gap: 2px;
 }
+/* The `hidden` attribute is the show/hide mechanism (closeBlockMenu sets
+   hidden=true). Ensure it wins over the display:flex / position:fixed above so
+   the menu and its full-screen backdrop fully disappear (no stray bar, no
+   lingering tap-blocking overlay). */
+.block-menu[hidden], .block-menu-backdrop[hidden] { display: none !important; }
 .block-menu-item {
   min-height: 44px; padding: 10px 14px;
   background: transparent; border: none; cursor: pointer;
