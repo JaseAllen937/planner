@@ -397,6 +397,11 @@
   <div class="modal-panel" id="space-sheet-panel"></div>
 </div>
 
+<!-- Per-row "⋯" action menu (Move up/down, Edit, Delete). Fixed-position popover
+     + full-screen backdrop for reliable outside-tap dismissal on iOS Safari. -->
+<div class="block-menu-backdrop" id="block-menu-backdrop" hidden></div>
+<div class="block-menu" id="block-menu" role="menu" hidden></div>
+
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
@@ -3778,6 +3783,7 @@ function closeSpaceSheet() { spaceSheet.classList.remove('open'); spaceForm = nu
 // ---- Space view render ----
 
 function renderSpaceView() {
+  closeBlockMenu(); // any open row menu points at soon-to-be-replaced DOM
   const body = document.getElementById('space-body');
   const titleEl = document.getElementById('space-title');
   const headerEl = document.getElementById('space-header');
@@ -3807,14 +3813,15 @@ function renderSpaceView() {
   body.innerHTML = parts.join('');
 }
 
+// Shared per-row control — collapsed into a single "⋯" that opens an action
+// menu (Move up/down, Edit, Delete). index/total ride along so the menu can
+// disable Move up/down at the ends. Used by all five row renderers.
 function blockActionsHtml(b, index, total) {
-  const upDis = index === 0 ? ' disabled' : '';
-  const downDis = index === total - 1 ? ' disabled' : '';
   return `
     <div class="space-block-actions">
-      <button type="button" class="space-arrow" data-act="block-up" data-block="${b.id}"${upDis} aria-label="Move up">▲</button>
-      <button type="button" class="space-arrow" data-act="block-down" data-block="${b.id}"${downDis} aria-label="Move down">▼</button>
-      <button type="button" class="space-arrow" data-act="edit-block" data-block="${b.id}" aria-label="Edit item">✎</button>
+      <button type="button" class="space-menu-btn" data-act="open-block-menu"
+              data-block="${b.id}" data-index="${index}" data-total="${total}"
+              aria-label="Item actions" aria-haspopup="menu">⋯</button>
     </div>`;
 }
 
@@ -3899,10 +3906,11 @@ function renderCheckboxRow(b, index, total) {
   const due = isDueToday(b);
   const checked = !!(b.checks && b.checks[todayDate()]);
   const recLabel = recurrenceLabel(b.recurrence);
-  // Snapchat-style streak badge — only once it's meaningful (>=3), recomputed each render.
+  // Snapchat-style streak badge — only once it's meaningful (>=3), recomputed
+  // each render. Lives on the recurrence (sub) line so the name line is free to wrap.
   const streak = blockStreak(b);
   const streakBadge = streak >= 3
-    ? ` <span class="space-streak" title="${streak}-day streak" aria-label="${streak} day streak">🔥<span class="space-streak-num">${streak}</span></span>`
+    ? ` · <span class="space-streak" title="${streak}-day streak" aria-label="${streak} day streak">🔥<span class="space-streak-num">${streak}</span></span>`
     : '';
   return `
     <div class="space-block${checked ? ' checked' : ''}${due ? '' : ' not-due'}">
@@ -3911,8 +3919,8 @@ function renderCheckboxRow(b, index, total) {
         <span class="space-tick-mark" aria-hidden="true">${checked ? '&check;' : ''}</span>
       </button>
       <div class="space-block-mid">
-        <div class="space-block-label">${escapeHtml(b.label)}${streakBadge}</div>
-        <div class="space-block-sub">${escapeHtml(recLabel)}${due ? '' : ' · not due today'}</div>
+        <div class="space-block-label">${escapeHtml(b.label)}</div>
+        <div class="space-block-sub">${escapeHtml(recLabel)}${due ? '' : ' · not due today'}${streakBadge}</div>
       </div>
       ${blockActionsHtml(b, index, total)}
     </div>`;
@@ -3990,6 +3998,7 @@ function onSpaceBodyClick(e) {
   else if (act === 'edit-block')   { const b = findBlock(bid); if (b) openBlockSheet(b); }
   else if (act === 'block-up')     moveBlock(bid, -1);
   else if (act === 'block-down')   moveBlock(bid, 1);
+  else if (act === 'open-block-menu') openBlockMenuFor(el);
   else if (act === 'log-counter')  openCounterLogSheet(bid);
   else if (act === 'add-goal-progress') openGoalProgressSheet(bid);
   else if (act === 'cycle-inc')    cycleIncrement(bid);
@@ -4022,6 +4031,77 @@ function moveBlock(blockId, delta) {
   renumberOrder(list);
   saveState();
   render();
+}
+
+// ---- Per-row "⋯" action menu (popover) ----
+// Only presentational: each item calls an EXISTING action (moveBlock / edit /
+// delete). One menu open at a time; re-render or outside tap closes it.
+
+function openBlockMenuFor(btn) {
+  const bid = btn.dataset.block;
+  const index = parseInt(btn.dataset.index, 10) || 0;
+  const total = parseInt(btn.dataset.total, 10) || 1;
+  const menu = document.getElementById('block-menu');
+  const backdrop = document.getElementById('block-menu-backdrop');
+  if (!menu || !backdrop) return;
+
+  const upDis = index === 0 ? ' disabled' : '';
+  const downDis = index === total - 1 ? ' disabled' : '';
+  menu.innerHTML = `
+    <button type="button" class="block-menu-item" data-menu-act="up" data-block="${bid}"${upDis} role="menuitem">Move up</button>
+    <button type="button" class="block-menu-item" data-menu-act="down" data-block="${bid}"${downDis} role="menuitem">Move down</button>
+    <button type="button" class="block-menu-item" data-menu-act="edit" data-block="${bid}" role="menuitem">Edit</button>
+    <button type="button" class="block-menu-item danger" data-menu-act="delete" data-block="${bid}" role="menuitem">Delete</button>`;
+
+  backdrop.hidden = false;
+  menu.hidden = false;
+
+  // Position under the ⋯, right-aligned; flip above if it would overflow.
+  const r = btn.getBoundingClientRect();
+  const mw = menu.offsetWidth || 200;
+  const mh = menu.offsetHeight || 200;
+  let left = Math.min(r.right - mw, window.innerWidth - mw - 8);
+  if (left < 8) left = 8;
+  let top = r.bottom + 6;
+  if (top + mh > window.innerHeight - 8) top = r.top - mh - 6;
+  if (top < 8) top = 8;
+  menu.style.left = left + 'px';
+  menu.style.top = top + 'px';
+}
+
+function closeBlockMenu() {
+  const menu = document.getElementById('block-menu');
+  const backdrop = document.getElementById('block-menu-backdrop');
+  if (menu) { menu.hidden = true; menu.innerHTML = ''; }
+  if (backdrop) backdrop.hidden = true;
+}
+
+function onBlockMenuClick(e) {
+  const item = e.target.closest('[data-menu-act]');
+  if (!item || item.disabled) return;
+  const act = item.dataset.menuAct;
+  const bid = item.dataset.block;
+  closeBlockMenu();
+  if      (act === 'up')     moveBlock(bid, -1);
+  else if (act === 'down')   moveBlock(bid, 1);
+  else if (act === 'edit')   { const b = findBlock(bid); if (b) openBlockSheet(b); }
+  else if (act === 'delete') deleteBlockById(bid);
+}
+
+// Delete a block by id (menu path). Same tombstone+renumber DATA logic as
+// deleteBlockFromSheet — no sheet coupling.
+function deleteBlockById(blockId) {
+  const b = findBlock(blockId);
+  if (!b) return;
+  if (!confirm('Delete this item?')) return;
+  const spaceId = b.spaceId;
+  tombstone('blocks', b.id);
+  state.blocks = blocksData().filter(x => x.id !== b.id);
+  renumberOrder(blocksForSpace(spaceId)); // keep sibling order contiguous
+  saveState();
+  render();
+  if (spaceOverlay.classList.contains('open')) renderSpaceView();
+  toast('Item deleted');
 }
 
 // ---- Space create / edit / delete ----
@@ -5318,6 +5398,8 @@ document.getElementById('space-body').addEventListener('click', onSpaceBodyClick
 spaceSheet.addEventListener('click', e => {
   if (e.target === spaceSheet) closeSpaceSheet();
 });
+document.getElementById('block-menu').addEventListener('click', onBlockMenuClick);
+document.getElementById('block-menu-backdrop').addEventListener('click', closeBlockMenu);
 
 initWheelPickers();
 render();

@@ -1866,17 +1866,47 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 }
 .space-tick.on { background: var(--accent); border-color: var(--accent); }
 .space-tick-mark { line-height: 1; }
-.space-block-mid { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.space-block-mid { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+/* Labels wrap freely (no truncation) now that the controls collapsed into ⋯. */
 .space-block-label {
-  font-size: 15px; color: var(--text-primary);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 15px; line-height: 1.3; color: var(--text-primary);
+  overflow-wrap: anywhere; word-break: break-word;
 }
 .space-block.checked .space-block-label { color: var(--text-tertiary); text-decoration: line-through; }
 .space-block-sub {
-  font-size: 12px; color: var(--text-tertiary);
-  font-family: var(--font-mono);
+  font-size: 12.5px; color: var(--text-tertiary);
+  font-family: var(--font-mono); line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 .space-block-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.space-menu-btn {
+  width: 44px; height: 44px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: none; cursor: pointer;
+  color: var(--text-secondary); font-size: 22px; line-height: 1;
+  border-radius: var(--r-pill);
+}
+.space-menu-btn:hover { background: var(--surface-inset); color: var(--text-primary); }
+
+/* ⋯ action-menu popover + outside-tap backdrop */
+.block-menu-backdrop { position: fixed; inset: 0; z-index: 200; background: transparent; }
+.block-menu {
+  position: fixed; z-index: 201;
+  min-width: 184px; padding: 6px;
+  background: var(--card); border: 1px solid var(--separator);
+  border-radius: var(--r-card); box-shadow: var(--shadow-lg);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.block-menu-item {
+  min-height: 44px; padding: 10px 14px;
+  background: transparent; border: none; cursor: pointer;
+  text-align: left; font-size: 15px; color: var(--text-primary);
+  border-radius: 9px;
+}
+.block-menu-item:hover { background: var(--surface-inset); }
+.block-menu-item:disabled { opacity: 0.35; cursor: default; }
+.block-menu-item.danger { color: var(--danger); }
+.block-menu-item.danger:hover { background: var(--danger-dim); }
 .space-arrow {
   width: 44px; height: 44px;
   display: inline-flex; align-items: center; justify-content: center;
