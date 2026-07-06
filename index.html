@@ -4757,6 +4757,57 @@ function mergeDailyState(localState, remoteState, remoteIsNewer, tomb) {
   return out;
 }
 
+// Field-wise merge of the SAME block existing on both devices. Scalars come from
+// the newer side (deep-copied); accumulating in-record data is UNIONED so a
+// completion/log made on one device is never overwritten by the other. Only used
+// for the 'blocks' collection. Null/shape-safe; never throws.
+function mergeBlockPair(olderBlock, newerBlock) {
+  const merged = JSON.parse(JSON.stringify(newerBlock)); // scalars (label, order, recurrence, markers, text, …) from newer
+  const o = olderBlock || {};
+  switch (merged.type) {
+    case 'checkbox': {
+      // Union check-marks — favour "checked" so a tick on either device survives.
+      const oc = (o.checks && typeof o.checks === 'object') ? o.checks : {};
+      const nc = (merged.checks && typeof merged.checks === 'object') ? merged.checks : {};
+      const out = {};
+      for (const k of Object.keys(oc)) if (oc[k]) out[k] = true;
+      for (const k of Object.keys(nc)) if (nc[k]) out[k] = true;
+      merged.checks = out;
+      break;
+    }
+    case 'counter': {
+      // Union entries by date; same date -> newer side's value. No date dropped.
+      const byDate = new Map();
+      for (const e of asArray(o.entries)) if (e && e.date != null) byDate.set(e.date, e);
+      for (const e of asArray(merged.entries)) if (e && e.date != null) byDate.set(e.date, e);
+      merged.entries = Array.from(byDate.values())
+        .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+      break;
+    }
+    case 'cycle': {
+      // Preserve the most progress; union history (concat + dedupe on date+count).
+      merged.count = Math.max(Number(o.count) || 0, Number(merged.count) || 0);
+      const seen = new Set();
+      const hist = [];
+      for (const h of asArray(o.history).concat(asArray(merged.history))) {
+        if (!h) continue;
+        const key = String(h.date) + '|' + String(h.count);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        hist.push(h);
+      }
+      merged.history = hist;
+      break;
+    }
+    case 'goal': {
+      merged.current = Math.max(Number(o.current) || 0, Number(merged.current) || 0);
+      break;
+    }
+    // 'notes' (and any future scalar-only type): keep newer as-is.
+  }
+  return merged;
+}
+
 // Conservative merge of two full state blobs. Returns a merged blob (run through
 // ensureShape). Neither input is mutated.
 function mergeStates(localState, remoteState) {
@@ -4784,7 +4835,14 @@ function mergeStates(localState, remoteState) {
     const newerArr = remoteIsNewer ? remoteArr : localArr;
     const byId = new Map();
     for (const r of olderArr) if (r && r.id != null) byId.set(r.id, r); // seed older
-    for (const r of newerArr) if (r && r.id != null) byId.set(r.id, r); // newer overwrites
+    for (const r of newerArr) {
+      if (!r || r.id == null) continue;
+      // BLOCKS: when the same block is on both sides, merge in-record accumulating
+      // data (checks/entries/count/current) instead of the newer whole-record
+      // clobbering the other's completions. All other collections: newer wins.
+      if (col.key === 'blocks' && byId.has(r.id)) byId.set(r.id, mergeBlockPair(byId.get(r.id), r));
+      else                                        byId.set(r.id, r);
+    }
     const outArr = [];
     for (const rec of byId.values()) {
       if (isTombstoned(tomb, col.key, rec)) continue;
