@@ -40,6 +40,7 @@
     <div id="focus-card-wrap"></div>
     <div id="sleep-card-wrap"></div>
     <div id="vault-card-wrap"></div>
+    <div id="three-day-wrap"></div>
     <div id="spaces-hub-wrap"></div>
     <div id="timeline"></div>
   </section>
@@ -2117,6 +2118,46 @@ function renderTimeline() {
   });
 }
 
+// ---------------- 3-day timeline (Today card, read-only) ----------------
+// Three columns (Today | Tomorrow | weekday) of dated to-dos/events. Someday
+// items (date === null) never appear. Pure display: no taps, no completion.
+function renderThreeDayTimeline() {
+  const wrap = document.getElementById('three-day-wrap');
+  if (!wrap) return;
+  const d0 = todayDate();
+  const d1 = addDays(d0, 1);
+  const d2 = addDays(d0, 2);
+  const days = [
+    { date: d0, header: 'Today' },
+    { date: d1, header: 'Tomorrow' },
+    { date: d2, header: parseYmd(d2).toLocaleDateString(undefined, { weekday: 'short' }) }
+  ];
+
+  const colHtml = (day) => {
+    const items = state.items
+      .filter(it => it.date && it.date === day.date)   // excludes someday (date null)
+      .slice()
+      .sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99')); // timed asc, untimed last
+    const list = items.length
+      ? items.map(it => {
+          const t = it.time ? `<span class="td-time">${escapeHtml(fmt12(it.time))}</span>` : '';
+          return `<li class="td-item">${t}<span class="td-title">${escapeHtml(it.title)}</span></li>`;
+        }).join('')
+      : `<li class="td-empty">Nothing</li>`;
+    return `
+      <div class="td-col">
+        <div class="td-head">${escapeHtml(day.header)}</div>
+        <ul class="td-list">${list}</ul>
+      </div>`;
+  };
+
+  wrap.innerHTML = `
+    <div class="vault-section td-section">
+      <div class="vault-section-head"><span class="vault-section-title">Next 3 days</span></div>
+      <div class="td-cols">${days.map(colHtml).join('')}</div>
+    </div>`;
+}
+
 // ---------------- banner ----------------
 
 function shouldShowBanner() {
@@ -2496,6 +2537,7 @@ function render() {
   renderSleepCard();
   renderVaultCard();
   if (vaultOverlay && vaultOverlay.classList.contains('open')) renderVault();
+  renderThreeDayTimeline();
   renderSpacesHub();
   if (spaceOverlay && spaceOverlay.classList.contains('open')) renderSpaceView();
   renderWeeklySummary();
