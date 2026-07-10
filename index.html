@@ -39,7 +39,10 @@
     <div id="intention-card-wrap"></div>
     <div id="focus-card-wrap"></div>
     <div id="sleep-card-wrap"></div>
-    <div id="vault-card-wrap"></div>
+    <div class="today-squares">
+      <div id="vault-card-wrap"></div>
+      <div id="franklin-card-wrap"></div>
+    </div>
     <div id="three-day-wrap"></div>
     <div id="spaces-hub-wrap"></div>
     <div id="timeline"></div>
@@ -378,6 +381,17 @@
   <div class="modal-panel" id="vault-sheet-panel"></div>
 </div>
 
+<!-- The Benjamin Franklin — full-screen virtues + vices overlay (reuses Vault overlay CSS) -->
+<div class="modal vault-overlay-mode" id="franklin-overlay" role="dialog" aria-modal="true" aria-label="Benjamin Franklin">
+  <div class="vault-overlay-panel">
+    <div class="vault-header">
+      <h2 class="vault-title">🎩 Benjamin Franklin</h2>
+      <button type="button" class="btn vault-close-btn" id="franklin-close-btn" aria-label="Close Benjamin Franklin">Done</button>
+    </div>
+    <div class="vault-body" id="franklin-body"></div>
+  </div>
+</div>
+
 <!-- Spaces — full-screen Space view (modelled on the Vault overlay) -->
 <div class="modal space-overlay-mode" id="space-overlay" role="dialog" aria-modal="true" aria-label="Space">
   <div class="space-overlay-panel">
@@ -651,7 +665,7 @@ function loadState() {
   if (raw) {
     try {
       const parsed = JSON.parse(raw);
-      if (parsed && parsed.meta && (parsed.meta.version >= 1 && parsed.meta.version <= 8)) {
+      if (parsed && parsed.meta && (parsed.meta.version >= 1 && parsed.meta.version <= 9)) {
         return ensureShape(parsed);
       }
     } catch (e) {
@@ -845,6 +859,23 @@ function ensureShape(s) {
   // propagates to other synced devices. Real (non-sample) habits are untouched.
   removeSampleHabits(s);
 
+  // v8 -> v9: The Benjamin Franklin — virtues + bad-habit tracker. Event-log
+  // based (tallyEvents / virtueSlips) so counts derive and slips union-merge.
+  // Idempotent: never re-seed if franklin already exists. Runs on load + import.
+  if ((s.meta.version || 1) < 9) {
+    if (!s.franklin) s.franklin = seedFranklin();
+    s.meta.version = 9;
+  }
+  // Defensive post-guards — franklin + all sub-fields always exist (fresh v9,
+  // imports, and partial franklin objects produced by a cross-device merge).
+  if (!s.franklin || typeof s.franklin !== 'object') s.franklin = seedFranklin();
+  if (!s.franklin.anchorDate) s.franklin.anchorDate = todayDate();
+  if (typeof s.franklin.cycleDays !== 'number' || s.franklin.cycleDays < 1) s.franklin.cycleDays = 3;
+  if (!Array.isArray(s.franklin.tallies) || s.franklin.tallies.length === 0) s.franklin.tallies = seedFranklin().tallies;
+  if (!Array.isArray(s.franklin.virtues) || s.franklin.virtues.length === 0) s.franklin.virtues = seedFranklin().virtues;
+  if (!Array.isArray(s.franklin.tallyEvents)) s.franklin.tallyEvents = [];
+  if (!Array.isArray(s.franklin.virtueSlips)) s.franklin.virtueSlips = [];
+
   // Cloud-sync uses meta.updated_at as the conflict-resolution timestamp.
   // Backfill it for pre-sync states.
   if (!s.meta.updated_at) s.meta.updated_at = s.meta.created_at || nowIso();
@@ -868,7 +899,7 @@ function removeSampleHabits(s) {
 function seedState() {
   const now = nowIso();
   return {
-    meta: { version: 8, created_at: now, updated_at: now, last_export_at: null, lastWipe: null, tombstones: {} },
+    meta: { version: 9, created_at: now, updated_at: now, last_export_at: null, lastWipe: null, tombstones: {} },
     // No sample habits — habits are now created only as checkbox blocks in Spaces.
     habits: [],
     items: [],
@@ -880,7 +911,8 @@ function seedState() {
     activeFocus: null,
     vault: { transactions: [], goals: [] },
     spaces: [],
-    blocks: []
+    blocks: [],
+    franklin: seedFranklin()
   };
 }
 
@@ -2158,6 +2190,210 @@ function renderThreeDayTimeline() {
     </div>`;
 }
 
+// ============================================================================
+// The Benjamin Franklin — virtues + bad-habit tracker (event-log based).
+// Counts DERIVE from dated event logs (tallyEvents / virtueSlips) so future
+// stats are trivial and the logs union-merge across devices. Definitions
+// (anchorDate, cycleDays, tallies, virtues) are newer-wins scalars. The focus
+// virtue rotates purely by date — never stored.
+// ============================================================================
+
+// Stable string ids so two devices seed IDENTICAL definitions (events align).
+function seedFranklin() {
+  return {
+    anchorDate: todayDate(),
+    cycleDays: 3,
+    tallies: [
+      { id: 'tally-fapping', label: 'Fapping' },
+      { id: 'tally-smoking', label: 'Smoking' },
+      { id: 'tally-impulse', label: 'Impulse' }
+    ],
+    virtues: [
+      { id: 'virtue-comitas',    name: 'Comitas',    definition: 'An approachable, kind, and polite demeanor that fosters goodwill and sociability.' },
+      { id: 'virtue-clementia',  name: 'Clementia',  definition: 'The virtue of mercy, leniency, and showing compassion, particularly in leadership and towards those in need.' },
+      { id: 'virtue-disciplina', name: 'Disciplina', definition: 'The pursuit of education, training, and discipline to achieve self-control and excellence.' },
+      { id: 'virtue-firmitas',   name: 'Firmitas',   definition: 'Steadfastness and mental strength in adversity.' },
+      { id: 'virtue-gravitas',   name: 'Gravitas',   definition: 'Seriousness, dignity, and moral weight.' },
+      { id: 'virtue-honestas',   name: 'Honestas',   definition: 'Moral uprightness and integrity.' },
+      { id: 'virtue-industria',  name: 'Industria',  definition: 'Hard work and excellence through effort.' },
+      { id: 'virtue-prudentia',  name: 'Prudentia',  definition: 'Practical wisdom and sound judgement.' },
+      { id: 'virtue-veritas',    name: 'Veritas',    definition: 'Truthfulness and honesty.' },
+      { id: 'virtue-xenia',      name: 'Xenia',      definition: 'Hospitality and respect for guests.' },
+      { id: 'virtue-ophrosyne',  name: 'Ophrosyne',  definition: 'Balanced moderation and joy.' }
+    ],
+    tallyEvents: [],
+    virtueSlips: []
+  };
+}
+
+function franklinData() {
+  if (!state.franklin || typeof state.franklin !== 'object') state.franklin = seedFranklin();
+  const f = state.franklin;
+  if (!Array.isArray(f.tallies) || f.tallies.length === 0) f.tallies = seedFranklin().tallies;
+  if (!Array.isArray(f.virtues) || f.virtues.length === 0) f.virtues = seedFranklin().virtues;
+  if (!Array.isArray(f.tallyEvents)) f.tallyEvents = [];
+  if (!Array.isArray(f.virtueSlips)) f.virtueSlips = [];
+  if (!f.anchorDate) f.anchorDate = todayDate();
+  if (typeof f.cycleDays !== 'number' || f.cycleDays < 1) f.cycleDays = 3;
+  return f;
+}
+
+// Focus virtue + cycle window, computed purely from date (never stored).
+function franklinCycleInfo() {
+  const f = franklinData();
+  const n = f.virtues.length;
+  const today = todayDate();
+  const cycleDays = Math.max(1, f.cycleDays | 0);
+  if (n === 0) {
+    return { index: 0, virtue: null, nextVirtue: null, cycleStart: today, cycleEnd: addDays(today, cycleDays), daysRemaining: cycleDays };
+  }
+  let diff = daysBetween(f.anchorDate, today);
+  if (!isFinite(diff) || diff < 0) diff = 0; // today before anchor -> first cycle
+  const cycleIndex = Math.floor(diff / cycleDays);
+  const index = ((cycleIndex % n) + n) % n;
+  const cycleStart = addDays(f.anchorDate, cycleIndex * cycleDays);
+  const cycleEnd = addDays(cycleStart, cycleDays); // exclusive
+  const daysRemaining = cycleDays - daysBetween(cycleStart, today);
+  return { index, virtue: f.virtues[index], nextVirtue: f.virtues[(index + 1) % n], cycleStart, cycleEnd, daysRemaining };
+}
+
+// Derived counts (event-log lengths — always integers).
+function tallyCount(tallyId) {
+  return franklinData().tallyEvents.filter(e => e.tallyId === tallyId).length;
+}
+function virtueLifetimeSlips(virtueId) {
+  return franklinData().virtueSlips.filter(e => e.virtueId === virtueId).length;
+}
+function virtueCycleSlips(virtueId, cycleStart, cycleEnd) {
+  return franklinData().virtueSlips
+    .filter(e => e.virtueId === virtueId && e.date >= cycleStart && e.date < cycleEnd).length;
+}
+
+// Mutations — append/remove one dated event, then saveState + render.
+function addTallyEvent(tallyId) {
+  franklinData().tallyEvents.push({ id: uuid(), tallyId, date: todayDate(), at: nowIso() });
+  saveState(); render();
+}
+function removeTallyEvent(tallyId) {
+  const f = franklinData();
+  const evs = f.tallyEvents.filter(e => e.tallyId === tallyId);
+  if (!evs.length) return; // floor at none
+  evs.sort((a, b) => String(b.at).localeCompare(String(a.at)));
+  const rm = evs[0].id;
+  f.tallyEvents = f.tallyEvents.filter(e => e.id !== rm);
+  saveState(); render();
+}
+function addVirtueSlip(virtueId) {
+  franklinData().virtueSlips.push({ id: uuid(), virtueId, date: todayDate(), at: nowIso() });
+  saveState(); render();
+}
+function removeVirtueSlipInCycle(virtueId) {
+  const f = franklinData();
+  const ci = franklinCycleInfo();
+  const evs = f.virtueSlips.filter(e => e.virtueId === virtueId && e.date >= ci.cycleStart && e.date < ci.cycleEnd);
+  if (!evs.length) return; // floor at none, scoped to current cycle
+  evs.sort((a, b) => String(b.at).localeCompare(String(a.at)));
+  const rm = evs[0].id;
+  f.virtueSlips = f.virtueSlips.filter(e => e.id !== rm);
+  saveState(); render();
+}
+
+// ---- Today square card ----
+function renderFranklinCard() {
+  const wrap = document.getElementById('franklin-card-wrap');
+  if (!wrap) return;
+  wrap.innerHTML = `
+    <button type="button" class="vault-entry-card vault-entry-square" id="franklin-entry-card" aria-label="Open Benjamin Franklin">
+      <span class="vault-entry-icon" aria-hidden="true">🎩</span>
+      <span class="vault-entry-title">Benjamin Franklin</span>
+      <span class="vault-entry-sub">Virtues &amp; vices</span>
+    </button>`;
+  document.getElementById('franklin-entry-card').addEventListener('click', openFranklin);
+}
+
+// ---- Full-screen overlay ----
+const franklinOverlay = document.getElementById('franklin-overlay');
+let franklinListOpen = false; // in-memory collapse state
+
+function openFranklin() { renderFranklin(); franklinOverlay.classList.add('open'); }
+function closeFranklin() { franklinOverlay.classList.remove('open'); }
+
+function renderFranklin() {
+  const body = document.getElementById('franklin-body');
+  if (!body) return;
+  const f = franklinData();
+  const ci = franklinCycleInfo();
+  const parts = [];
+
+  // 1. Three bad-habit tallies.
+  parts.push(`<div class="vault-section"><div class="vault-section-head"><span class="vault-section-title">Bad-habit tallies</span></div><div class="fr-tallies">`);
+  for (const t of f.tallies) {
+    const c = tallyCount(t.id);
+    parts.push(`
+      <div class="fr-tally">
+        <div class="fr-tally-count">${c}</div>
+        <div class="fr-tally-label">${escapeHtml(t.label)}</div>
+        <div class="fr-ctrls">
+          <button type="button" class="fr-btn" data-fact="tally-dec" data-id="${escapeHtml(t.id)}"${c === 0 ? ' disabled' : ''} aria-label="Minus one ${escapeHtml(t.label)}">−1</button>
+          <button type="button" class="fr-btn fr-btn-plus" data-fact="tally-inc" data-id="${escapeHtml(t.id)}" aria-label="Plus one ${escapeHtml(t.label)}">+1</button>
+        </div>
+      </div>`);
+  }
+  parts.push(`</div></div>`);
+
+  // 2. Focus virtue.
+  if (ci.virtue) {
+    const cycleSlips = virtueCycleSlips(ci.virtue.id, ci.cycleStart, ci.cycleEnd);
+    const life = virtueLifetimeSlips(ci.virtue.id);
+    const rem = Math.max(0, ci.daysRemaining);
+    parts.push(`
+      <div class="vault-section fr-focus">
+        <div class="vault-section-head"><span class="vault-section-title">Focus virtue</span><span class="fr-days">${rem} day${rem === 1 ? '' : 's'} left</span></div>
+        <div class="fr-focus-name">${escapeHtml(ci.virtue.name)}</div>
+        <div class="fr-focus-def">${escapeHtml(ci.virtue.definition)}</div>
+        <div class="fr-focus-stats">
+          <div class="fr-stat"><span class="fr-stat-num">${cycleSlips}</span><span class="fr-stat-lab">Slips this cycle</span></div>
+          <div class="fr-stat"><span class="fr-stat-num">${life}</span><span class="fr-stat-lab">Lifetime</span></div>
+        </div>
+        <div class="fr-ctrls fr-ctrls-wide">
+          <button type="button" class="fr-btn" data-fact="virtue-dec" data-id="${escapeHtml(ci.virtue.id)}"${cycleSlips === 0 ? ' disabled' : ''} aria-label="Remove a slip">−1</button>
+          <button type="button" class="fr-btn fr-btn-plus" data-fact="virtue-inc" data-id="${escapeHtml(ci.virtue.id)}" aria-label="Log a slip">+1 slip</button>
+        </div>
+        <div class="fr-next">Next: ${escapeHtml(ci.nextVirtue ? ci.nextVirtue.name : '—')}</div>
+      </div>`);
+  }
+
+  // 3. Collapsible full virtue list.
+  parts.push(`
+    <div class="vault-section fr-list-section${franklinListOpen ? ' open' : ''}">
+      <button type="button" class="fr-list-toggle" data-fact="toggle-list" aria-expanded="${franklinListOpen ? 'true' : 'false'}">
+        <span>All ${f.virtues.length} virtues · next: ${escapeHtml(ci.nextVirtue ? ci.nextVirtue.name : '—')}</span>
+        <span class="fr-list-chev" aria-hidden="true">›</span>
+      </button>
+      <div class="fr-list-body"${franklinListOpen ? '' : ' hidden'}>
+        ${f.virtues.map((v, i) => `
+          <div class="fr-list-row${i === ci.index ? ' current' : ''}">
+            <span class="fr-list-name">${escapeHtml(v.name)}</span>
+            <span class="fr-list-count">${virtueLifetimeSlips(v.id)}</span>
+          </div>`).join('')}
+      </div>
+    </div>`);
+
+  body.innerHTML = parts.join('');
+}
+
+function onFranklinBodyClick(e) {
+  const el = e.target.closest('[data-fact]');
+  if (!el) return;
+  const act = el.dataset.fact;
+  const id = el.dataset.id;
+  if      (act === 'tally-inc')   addTallyEvent(id);
+  else if (act === 'tally-dec')   removeTallyEvent(id);
+  else if (act === 'virtue-inc')  addVirtueSlip(id);
+  else if (act === 'virtue-dec')  removeVirtueSlipInCycle(id);
+  else if (act === 'toggle-list') { franklinListOpen = !franklinListOpen; renderFranklin(); }
+}
+
 // ---------------- banner ----------------
 
 function shouldShowBanner() {
@@ -2447,8 +2683,8 @@ function importData(file) {
   reader.onload = () => {
     try {
       const parsed = JSON.parse(reader.result);
-      if (!parsed || !parsed.meta || !(parsed.meta.version >= 1 && parsed.meta.version <= 8)) {
-        toast('Invalid file: expected agendaai schema v1–v8');
+      if (!parsed || !parsed.meta || !(parsed.meta.version >= 1 && parsed.meta.version <= 9)) {
+        toast('Invalid file: expected agendaai schema v1–v9');
         return;
       }
       if (!confirm('Replace all current data with the imported file?')) return;
@@ -2536,7 +2772,9 @@ function render() {
   renderFocusCard();
   renderSleepCard();
   renderVaultCard();
+  renderFranklinCard();
   if (vaultOverlay && vaultOverlay.classList.contains('open')) renderVault();
+  if (franklinOverlay && franklinOverlay.classList.contains('open')) renderFranklin();
   renderThreeDayTimeline();
   renderSpacesHub();
   if (spaceOverlay && spaceOverlay.classList.contains('open')) renderSpaceView();
@@ -3079,13 +3317,10 @@ function renderVaultCard() {
   const wrap = document.getElementById('vault-card-wrap');
   if (!wrap) return;
   wrap.innerHTML = `
-    <button type="button" class="vault-entry-card" id="vault-entry-card" aria-label="Open The Vault">
+    <button type="button" class="vault-entry-card vault-entry-square" id="vault-entry-card" aria-label="Open The Vault">
       <span class="vault-entry-icon" aria-hidden="true">🏦</span>
-      <span class="vault-entry-text">
-        <span class="vault-entry-title">The Vault</span>
-        <span class="vault-entry-sub">Money in, out &amp; saved</span>
-      </span>
-      <span class="vault-entry-chev" aria-hidden="true">›</span>
+      <span class="vault-entry-title">The Vault</span>
+      <span class="vault-entry-sub">Money in, out &amp; saved</span>
     </button>`;
   document.getElementById('vault-entry-card').addEventListener('click', openVault);
 }
@@ -4727,7 +4962,13 @@ const MERGE_COLLECTIONS = [
   { key: 'vault.transactions', get: s => s.vault && s.vault.transactions,
     set: (s, v) => { if (!s.vault || typeof s.vault !== 'object') s.vault = { transactions: [], goals: [] }; s.vault.transactions = v; } },
   { key: 'vault.goals',        get: s => s.vault && s.vault.goals,
-    set: (s, v) => { if (!s.vault || typeof s.vault !== 'object') s.vault = { transactions: [], goals: [] }; s.vault.goals = v; } }
+    set: (s, v) => { if (!s.vault || typeof s.vault !== 'object') s.vault = { transactions: [], goals: [] }; s.vault.goals = v; } },
+  // Franklin event logs — union by id so a slip/tally logged on one device is
+  // never lost (definitions stay newer-wins scalars on the franklin object).
+  { key: 'franklin.tallyEvents', get: s => s.franklin && s.franklin.tallyEvents,
+    set: (s, v) => { if (!s.franklin || typeof s.franklin !== 'object') s.franklin = {}; s.franklin.tallyEvents = v; } },
+  { key: 'franklin.virtueSlips', get: s => s.franklin && s.franklin.virtueSlips,
+    set: (s, v) => { if (!s.franklin || typeof s.franklin !== 'object') s.franklin = {}; s.franklin.virtueSlips = v; } }
 ];
 
 function blobUpdatedAt(s) {
@@ -5487,6 +5728,10 @@ document.getElementById('vault-body').addEventListener('click', onVaultBodyClick
 vaultSheet.addEventListener('click', e => {
   if (e.target === vaultSheet) closeVaultSheet();
 });
+
+// ---- Benjamin Franklin wiring ----
+document.getElementById('franklin-close-btn').addEventListener('click', closeFranklin);
+document.getElementById('franklin-body').addEventListener('click', onFranklinBodyClick);
 
 // ---- Spaces wiring ----
 document.getElementById('space-close-btn').addEventListener('click', closeSpace);

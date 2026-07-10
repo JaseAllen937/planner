@@ -1543,6 +1543,82 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 .vault-entry-sub { font-size: 13px; color: var(--text-secondary); }
 .vault-entry-chev { color: var(--text-tertiary); font-size: 22px; line-height: 1; flex-shrink: 0; }
 
+/* Two square Today cards (Vault + Franklin) side by side */
+.today-squares { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+.today-squares > div { min-width: 0; }
+.vault-entry-square {
+  flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; gap: 7px; padding: 16px 12px;
+  aspect-ratio: 1 / 1; margin-bottom: 0; min-height: 0;
+}
+.vault-entry-square .vault-entry-icon { font-size: 30px; width: 56px; height: 56px; }
+.vault-entry-square .vault-entry-title { font-size: 15px; line-height: 1.2; }
+.vault-entry-square .vault-entry-sub { font-size: 12px; line-height: 1.2; }
+
+/* ---- The Benjamin Franklin overlay body ---- */
+.fr-tallies { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.fr-tally {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  background: var(--surface-inset); border-radius: var(--r-card); padding: 12px 8px;
+}
+.fr-tally-count {
+  font-size: 28px; font-weight: 800; color: var(--text-primary);
+  font-family: var(--font-mono); font-feature-settings: var(--num); line-height: 1;
+}
+.fr-tally-label {
+  font-size: 12px; color: var(--text-secondary); text-align: center;
+  overflow-wrap: anywhere;
+}
+.fr-ctrls { display: flex; gap: 6px; justify-content: center; }
+.fr-ctrls-wide { margin-top: 12px; }
+.fr-btn {
+  min-width: 44px; min-height: 44px; padding: 8px 12px;
+  border: none; border-radius: var(--r-pill); cursor: pointer;
+  background: var(--surface-inset); color: var(--text-secondary);
+  font-size: 15px; font-weight: 700; font-family: var(--font-mono);
+}
+.fr-btn:hover { background: var(--separator); }
+.fr-btn:disabled { opacity: 0.35; cursor: default; }
+.fr-btn-plus { background: var(--accent-soft); color: var(--accent); }
+.fr-btn-plus:hover { background: var(--accent); color: #fff; }
+
+.fr-focus { border: 1px solid var(--accent); }
+.fr-days { font-size: 12px; color: var(--text-secondary); font-family: var(--font-mono); }
+.fr-focus-name {
+  font-size: 26px; font-weight: 800; letter-spacing: -0.02em;
+  color: var(--accent); margin-bottom: 6px;
+}
+.fr-focus-def { font-size: 14px; color: var(--text-secondary); line-height: 1.45; }
+.fr-focus-stats { display: flex; gap: 24px; margin-top: 14px; }
+.fr-stat { display: flex; flex-direction: column; gap: 2px; }
+.fr-stat-num {
+  font-size: 24px; font-weight: 800; color: var(--text-primary);
+  font-family: var(--font-mono); font-feature-settings: var(--num); line-height: 1;
+}
+.fr-stat-lab { font-size: 11px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.04em; }
+.fr-next { margin-top: 12px; font-size: 12px; color: var(--text-tertiary); font-family: var(--font-mono); }
+
+.fr-list-toggle {
+  width: 100%; min-height: 44px;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  background: transparent; border: none; cursor: pointer;
+  font-size: 14px; font-weight: 600; color: var(--text-primary); text-align: left;
+}
+.fr-list-chev { color: var(--text-tertiary); font-size: 20px; transition: transform 0.2s; }
+.fr-list-section.open .fr-list-chev { transform: rotate(90deg); }
+.fr-list-body { margin-top: 8px; }
+.fr-list-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 10px; border-radius: 9px; min-height: 40px;
+}
+.fr-list-row.current { background: var(--accent-soft); }
+.fr-list-row.current .fr-list-name { color: var(--accent); font-weight: 700; }
+.fr-list-name { font-size: 14px; color: var(--text-primary); }
+.fr-list-count {
+  font-size: 13px; color: var(--text-secondary);
+  font-family: var(--font-mono); font-feature-settings: var(--num);
+}
+
 /* ---- Full-screen overlay (modelled on the Focus overlay) ---- */
 .modal.vault-overlay-mode {
   background: var(--bg);
