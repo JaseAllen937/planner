@@ -540,6 +540,14 @@ function minsSinceMidnight(hhmm) {
   return h * 60 + m;
 }
 
+// A plausible BEDTIME lies in the 6pm–6am window (18:00–23:59 or 00:00–05:59).
+// Daytime hours (06:00–17:59) are almost always an AM/PM mis-tap.
+function isPlausibleBedtime(hhmm) {
+  if (!hhmm || !/^\d{2}:\d{2}$/.test(hhmm)) return false;
+  const m = minsSinceMidnight(hhmm);
+  return m >= 18 * 60 || m < 6 * 60;
+}
+
 function addDays(date, days) {
   const d = parseYmd(date);
   d.setDate(d.getDate() + days);
@@ -1662,10 +1670,20 @@ function renderSleepCard() {
         <input type="time" class="sleep-bedtime-input" id="sleep-bedtime-input"
                value="${bt || ''}" aria-label="Set today's bedtime">
       </div>
+      <div class="sleep-warn" id="sleep-warn" role="alert" hidden></div>
     </div>
   `;
   document.getElementById('sleep-bedtime-input').addEventListener('change', e => {
-    setTodayBedtime(e.target.value || null);
+    const v = e.target.value;
+    const warn = document.getElementById('sleep-warn');
+    // Guard at the door: a daytime hour is almost always an AM/PM mis-tap — warn
+    // and DON'T save; the user re-picks. Native picker keeps their chosen value.
+    if (v && !isPlausibleBedtime(v)) {
+      if (warn) { warn.textContent = "That's a daytime hour — did you mean AM?"; warn.hidden = false; }
+      return;
+    }
+    if (warn) { warn.textContent = ''; warn.hidden = true; }
+    setTodayBedtime(v || null);
   });
 }
 
@@ -1898,16 +1916,18 @@ function renderSleepStats() {
     const ds = state.daily_state.find(x => x.date === d);
     days.push({ date: d, bedtime: (ds && ds.bedtime) || null });
   }
-  const set = days.filter(d => d.bedtime);
-  if (set.length === 0) { wrap.innerHTML = ''; return; }
+  const anySet = days.filter(d => d.bedtime);
+  if (anySet.length === 0) { wrap.innerHTML = ''; return; }
 
-  // Average bedtime (only with >=2 entries). Treat 00:00–04:00 as "next day"
-  // so late nights average correctly — mirrors the insight bedtime math.
+  // Average bedtime — EXCLUDE implausible (daytime) entries so a mis-tapped
+  // "12:33" can't poison the mean; needs >=2 plausible entries. Shift anything
+  // before 06:00 to "next day" so late nights average correctly.
   let avgStr = null;
-  if (set.length >= 2) {
-    const mins = set.map(d => {
+  const plausible = anySet.filter(d => isPlausibleBedtime(d.bedtime));
+  if (plausible.length >= 2) {
+    const mins = plausible.map(d => {
       let m = minsSinceMidnight(d.bedtime);
-      if (m < 4 * 60) m += 1440;
+      if (m < 6 * 60) m += 1440;
       return m;
     });
     const avg = Math.round(mins.reduce((a, b) => a + b, 0) / mins.length) % 1440;
@@ -1923,8 +1943,10 @@ function renderSleepStats() {
   for (const d of days) {
     const dow = parseYmd(d.date).toLocaleDateString(undefined, { weekday: 'narrow' });
     const label = d.bedtime ? fmt12(d.bedtime) : '—';
+    // Still display every stored value; flag implausible ones so they're fixable.
+    const cls = !d.bedtime ? ' unset' : (isPlausibleBedtime(d.bedtime) ? '' : ' impl');
     parts.push(`<div class="sleep-week-col">
-      <div class="sleep-week-val${d.bedtime ? '' : ' unset'}">${escapeHtml(label)}</div>
+      <div class="sleep-week-val${cls}">${escapeHtml(label)}</div>
       <div class="sleep-week-day">${escapeHtml(dow)}</div>
     </div>`);
   }
@@ -1945,7 +1967,7 @@ function renderSleepStats() {
 // ---------------- tally line chart (Stats, read-only) ----------------
 // Hand-rolled inline SVG. Reads existing data only (off-track counts + Franklin
 // tallyEvents); never mutates state. UI selections live in memory.
-let tallyChartUI = { series: '__offtrack', range: 30, bucket: 'daily' };
+let tallyChartUI = { series: '__offtrack', range: 7, bucket: 'daily' };
 
 function tallySeriesLabel() {
   if (tallyChartUI.series === '__offtrack') return 'Off-track';
@@ -1955,30 +1977,56 @@ function tallySeriesLabel() {
 }
 
 // Build the SVG from bucketed points. maxV guarded to >= 1 (no divide-by-zero).
+// "Nice" integer y-axis ticks from a max value: pick a step (1,2,5,10,20,25,50…)
+// aiming for ~5 intervals, then round the axis top up to a multiple of it.
+// Integer ticks only (tallies are whole numbers); top is always >= step >= 1.
+function tallyNiceTicks(maxV) {
+  const target = 5;
+  const raw = Math.max(maxV, 1) / target;
+  const steps = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 5000, 10000];
+  let step = steps[steps.length - 1];
+  for (const s of steps) { if (s >= raw) { step = s; break; } }
+  const top = Math.max(step, Math.ceil(Math.max(maxV, 1) / step) * step);
+  const ticks = [];
+  for (let v = 0; v <= top; v += step) ticks.push(v);
+  return { ticks, top };
+}
+
 function tallyChartSvg(points, xlabel) {
-  const W = 340, H = 160, padL = 28, padR = 10, padT = 12, padB = 22;
+  const W = 340, H = 160, padL = 30, padR = 10, padT = 12, padB = 22;
   const plotW = W - padL - padR, plotH = H - padT - padB;
   const n = points.length;
-  const maxV = Math.max(1, ...points.map(p => p.value));
+  const maxV = Math.max(1, ...points.map(p => p.value)); // keep >= 1 guard
+  const { ticks, top } = tallyNiceTicks(maxV);
   const x = i => n <= 1 ? padL + plotW / 2 : padL + (i / (n - 1)) * plotW;
-  const y = v => padT + plotH - (v / maxV) * plotH;
+  const y = v => padT + plotH - (v / top) * plotH;
 
-  const yTicks = [...new Set([0, Math.round(maxV / 2), maxV])];
+  // Faint horizontal gridlines + integer y labels at each nice tick.
   let grid = '', yLab = '';
-  for (const v of yTicks) {
+  for (const v of ticks) {
     const yy = y(v).toFixed(1);
     grid += `<line class="tc-grid" x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}"/>`;
-    yLab += `<text class="tc-axis" x="${padL - 4}" y="${(y(v) + 3).toFixed(1)}" text-anchor="end">${v}</text>`;
+    yLab += `<text class="tc-axis" x="${padL - 5}" y="${(y(v) + 3).toFixed(1)}" text-anchor="end">${v}</text>`;
   }
+
+  // X-label indices (first / middle / last) — also the only vertical gridlines
+  // (never per-point, which would be noise at 90+ points).
+  const idxs = n === 1 ? [0] : [...new Set([0, Math.floor((n - 1) / 2), n - 1])];
+  let vgrid = '';
+  for (const i of idxs) {
+    const xx = x(i).toFixed(1);
+    vgrid += `<line class="tc-grid tc-vgrid" x1="${xx}" y1="${padT}" x2="${xx}" y2="${(padT + plotH).toFixed(1)}"/>`;
+  }
+
   const poly = points.map((p, i) => `${x(i).toFixed(1)},${y(p.value).toFixed(1)}`).join(' ');
   const line = n >= 2 ? `<polyline class="tc-line" points="${poly}"/>` : '';
   let dots = '';
   for (let i = 0; i < n; i++) dots += `<circle class="tc-dot" cx="${x(i).toFixed(1)}" cy="${y(points[i].value).toFixed(1)}" r="2.5"/>`;
   let xLab = '';
-  const idxs = n === 1 ? [0] : [...new Set([0, Math.floor((n - 1) / 2), n - 1])];
   for (const i of idxs) xLab += `<text class="tc-axis" x="${x(i).toFixed(1)}" y="${H - 6}" text-anchor="middle">${escapeHtml(xlabel(points[i]))}</text>`;
 
-  return `<svg class="tally-chart-svg" viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Tally line chart">${grid}${yLab}${line}${dots}${xLab}</svg>`;
+  // Gridlines first (behind); data line + dots on top so --accent stays dominant.
+  return `<svg class="tally-chart-svg" viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Tally line chart">${grid}${vgrid}${line}${dots}${yLab}${xLab}</svg>`;
 }
 
 function renderTallyChart() {

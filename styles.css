@@ -724,6 +724,11 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
   text-align: center;
 }
 .sleep-week-val.unset { color: var(--text-tertiary); font-weight: 500; }
+.sleep-week-val.impl { color: var(--danger); }   /* implausible (daytime) bedtime — shown but flagged */
+.sleep-warn {
+  margin-top: 8px; font-size: 12px; color: var(--danger);
+  line-height: 1.35;
+}
 .sleep-week-day {
   font-size: 10px; color: var(--text-tertiary); text-transform: uppercase;
 }
@@ -1625,13 +1630,19 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 }
 
 /* ---- Tally line chart (Stats) ---- */
-.tally-controls { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
-.tc-select { flex: 1; min-width: 0; min-height: 44px; }
-.tc-range { width: 84px; flex-shrink: 0; min-height: 44px; text-align: center; }
+/* Three controls share the row proportionally: series widest (shows its label),
+   range narrow, bucket medium. min-width:0 lets the selects shrink w/o collapsing. */
+.tally-controls {
+  display: grid; grid-template-columns: 2fr 1fr 1.2fr;
+  gap: 8px; align-items: center; margin-bottom: 12px;
+}
+.tc-select { width: 100%; min-width: 0; min-height: 44px; }
+.tc-range { width: 100%; min-width: 0; min-height: 44px; text-align: center; padding-left: 6px; padding-right: 6px; }
 .tally-chart-svg { display: block; width: 100%; height: auto; margin: 4px 0 2px; }
 .tc-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
 .tc-dot { fill: var(--accent); }
-.tc-grid { stroke: var(--separator); stroke-width: 1; }
+.tc-grid { stroke: var(--separator); stroke-width: 1; opacity: 0.7; }   /* faint, behind the data line */
+.tc-vgrid { opacity: 0.4; }
 .tc-axis { font-size: 9px; fill: var(--text-tertiary); font-family: var(--font-mono); }
 .tally-caption {
   font-size: 12px; color: var(--text-secondary);
