@@ -1608,15 +1608,34 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 .fr-list-section.open .fr-list-chev { transform: rotate(90deg); }
 .fr-list-body { margin-top: 8px; }
 .fr-list-row {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
   padding: 10px 10px; border-radius: 9px; min-height: 40px;
 }
 .fr-list-row.current { background: var(--accent-soft); }
 .fr-list-row.current .fr-list-name { color: var(--accent); font-weight: 700; }
-.fr-list-name { font-size: 14px; color: var(--text-primary); }
+.fr-list-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.fr-list-name { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.fr-list-def {
+  font-size: 11.5px; color: var(--text-tertiary); line-height: 1.35;
+  overflow-wrap: anywhere;
+}
 .fr-list-count {
-  font-size: 13px; color: var(--text-secondary);
+  font-size: 13px; color: var(--text-secondary); flex-shrink: 0;
   font-family: var(--font-mono); font-feature-settings: var(--num);
+}
+
+/* ---- Tally line chart (Stats) ---- */
+.tally-controls { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+.tc-select { flex: 1; min-width: 0; min-height: 44px; }
+.tc-range { width: 84px; flex-shrink: 0; min-height: 44px; text-align: center; }
+.tally-chart-svg { display: block; width: 100%; height: auto; margin: 4px 0 2px; }
+.tc-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.tc-dot { fill: var(--accent); }
+.tc-grid { stroke: var(--separator); stroke-width: 1; }
+.tc-axis { font-size: 9px; fill: var(--text-tertiary); font-family: var(--font-mono); }
+.tally-caption {
+  font-size: 12px; color: var(--text-secondary);
+  font-family: var(--font-mono); margin-top: 6px;
 }
 
 /* ---- Full-screen overlay (modelled on the Focus overlay) ---- */
