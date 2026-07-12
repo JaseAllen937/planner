@@ -1560,6 +1560,93 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 .vault-entry-square .vault-entry-title { font-size: 15px; line-height: 1.2; }
 .vault-entry-square .vault-entry-sub { font-size: 12px; line-height: 1.2; }
 
+/* Three squares side by side — tighter to fit ~360-390px iPhone width. */
+.today-squares-3 { grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.today-squares-3 .vault-entry-square { padding: 12px 6px; gap: 5px; }
+.today-squares-3 .vault-entry-icon { font-size: 24px; width: 44px; height: 44px; }
+.today-squares-3 .vault-entry-title { font-size: 12.5px; line-height: 1.15; }
+.today-squares-3 .vault-entry-sub { font-size: 10px; line-height: 1.2; }
+
+/* ---- My Code overlay ---- */
+.code-header-actions { display: flex; gap: 8px; align-items: center; }
+.code-journal-btn {
+  min-width: 44px; min-height: 44px; padding: 8px 12px; font-size: 18px;
+  background: var(--surface-inset);
+}
+.code-tabs { margin-bottom: 14px; }
+.code-empty { font-size: 13px; color: var(--text-tertiary); padding: 8px 0; }
+
+.code-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 11px 0; border-top: 1px solid var(--separator);
+}
+.code-row:first-of-type { border-top: none; }
+.code-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.code-row-text {
+  font-size: 14px; line-height: 1.4; color: var(--text-primary);
+  white-space: pre-wrap; word-break: break-word;
+}
+.code-virtue-tag {
+  align-self: flex-start; font-size: 11px; font-weight: 600;
+  color: var(--accent); background: var(--accent-soft);
+  padding: 2px 8px; border-radius: var(--r-pill);
+}
+.code-row-actions { display: flex; gap: 2px; flex-shrink: 0; }
+
+.code-virtue-item {
+  width: 100%; display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; min-height: 48px; padding: 12px 10px;
+  background: transparent; border: none; border-top: 1px solid var(--separator);
+  cursor: pointer; text-align: left;
+}
+.code-virtue-item:first-of-type { border-top: none; }
+.code-virtue-item:hover { background: var(--surface-inset); }
+.code-virtue-name { font-size: 15px; font-weight: 600; color: var(--text-primary); }
+.code-virtue-status { color: var(--text-tertiary); font-size: 16px; }
+
+.code-back {
+  background: transparent; border: none; cursor: pointer;
+  color: var(--accent); font-size: 15px; font-weight: 600;
+  padding: 8px 2px; margin-bottom: 4px; min-height: 44px;
+}
+.code-virtue-title { font-size: 22px; font-weight: 800; color: var(--accent); letter-spacing: -0.02em; }
+.code-virtue-def { font-size: 13px; color: var(--text-secondary); line-height: 1.45; margin: 4px 0 12px; }
+.code-field-label {
+  display: block; font-size: 12px; font-weight: 600; color: var(--text-secondary);
+  margin: 12px 0 6px; text-transform: none; letter-spacing: 0; font-family: inherit;
+}
+.code-textarea {
+  width: 100%; min-height: 88px; resize: vertical; line-height: 1.45;
+  background: var(--surface-inset); color: var(--text-primary);
+  border: 1px solid transparent; border-radius: var(--r-pill);
+  padding: 11px 12px; font-size: 15px; font-family: inherit;
+}
+.code-textarea:focus { outline: none; border-color: var(--accent); background: var(--card); }
+.code-linked-rule {
+  font-size: 13px; color: var(--text-secondary); line-height: 1.4;
+  padding: 8px 0; border-top: 1px solid var(--separator);
+  white-space: pre-wrap; word-break: break-word;
+}
+.code-linked-rule:first-of-type { border-top: none; }
+
+.code-rating { margin: 12px 0; }
+.code-journal-save { width: 100%; min-height: 48px; font-weight: 600; }
+.code-journal-past {
+  padding: 10px 0; border-top: 1px solid var(--separator);
+}
+.code-journal-past:first-of-type { border-top: none; }
+.code-journal-past-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 4px;
+}
+.code-journal-date { font-size: 12px; color: var(--text-tertiary); font-family: var(--font-mono); }
+.code-journal-rating { font-size: 11px; font-weight: 700; color: var(--text-secondary); }
+.code-journal-rating.rating-lived { color: var(--ok); }
+.code-journal-rating.rating-short { color: var(--danger); }
+.code-journal-past-text {
+  font-size: 14px; color: var(--text-primary); line-height: 1.45;
+  white-space: pre-wrap; word-break: break-word;
+}
+
 /* ---- The Benjamin Franklin overlay body ---- */
 .fr-tallies { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .fr-tally {
