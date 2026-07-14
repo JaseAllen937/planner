@@ -2618,7 +2618,8 @@ function codeRatingLabel(r) { const m = CODE_RATINGS.find(x => x.id === r); retu
 
 let codeTab = 'rules';        // 'rules' | 'virtues' | 'skills'
 let codeView = 'main';        // 'main' | 'journal'
-let codeVirtueId = null;      // virtue detail (within main view)
+let codeVirtueId = null;      // (legacy — virtue detail page removed; kept to avoid churn)
+let codeRuleScope = 'public'; // narrow-screen Public|Private toggle
 let codeForm = null;          // sheet form state
 let codeJournalRating = '';   // composer rating (in-memory)
 
@@ -2670,12 +2671,12 @@ function toggleCodeJournal() {
 
 // ---- Main render (guards against clobbering a focused textarea) ----
 function renderCode() {
+  closeBlockMenu(); // any open row menu points at soon-to-be-replaced DOM
   const body = document.getElementById('code-body');
   if (!body) return;
   const ae = document.activeElement;
-  if (ae && (ae.id === 'code-why' || ae.id === 'code-manifest' || ae.id === 'code-journal-text')) return;
+  if (ae && ae.id === 'code-journal-text') return; // don't clobber the composer
   if (codeView === 'journal') return renderCodeJournal(body);
-  if (codeVirtueId) return renderCodeVirtueDetail(body);
   renderCodeMain(body);
 }
 
@@ -2689,49 +2690,74 @@ function renderCodeMain(body) {
   body.innerHTML = html;
 }
 
-function codeRowActions(prefix, id, i, total) {
-  return `<div class="code-row-actions">
-    <button type="button" class="space-arrow" data-cact="${prefix}-up" data-id="${id}"${i === 0 ? ' disabled' : ''} aria-label="Move up">▲</button>
-    <button type="button" class="space-arrow" data-cact="${prefix}-down" data-id="${id}"${i === total - 1 ? ' disabled' : ''} aria-label="Move down">▼</button>
-    <button type="button" class="space-arrow" data-cact="edit-${prefix}" data-id="${id}" aria-label="Edit">✎</button>
-    <button type="button" class="space-arrow" data-cact="del-${prefix}" data-id="${id}" aria-label="Delete">✕</button>
+// A single tight, numbered row with one ⋯ menu (rules + skills share it).
+function codeNumberedRow(kind, item, i, total, text, tag) {
+  return `<div class="code-rule-row">
+    <span class="code-rule-num">${i + 1}</span>
+    <div class="code-rule-body">
+      <div class="code-rule-text">${escapeHtml(text)}</div>
+      ${tag ? `<span class="code-virtue-tag">${escapeHtml(tag)}</span>` : ''}
+    </div>
+    <button type="button" class="space-menu-btn code-menu-btn" data-cact="open-menu" data-menu-kind="${kind}" data-menu-id="${item.id}" data-index="${i}" data-total="${total}" aria-label="Actions" aria-haspopup="menu">⋯</button>
   </div>`;
 }
 
 function renderCodeRules() {
-  const scopes = [['public', 'Public conduct'], ['private', 'Private conduct']];
-  let html = '';
-  for (const [scope, label] of scopes) {
+  const col = (scope, label) => {
     const rules = codeRulesByScope(scope);
-    html += `<div class="vault-section"><div class="vault-section-head"><span class="vault-section-title">${label}</span><button type="button" class="vault-mini-btn" data-cact="add-rule" data-scope="${scope}">+ Add</button></div>`;
-    if (!rules.length) html += `<div class="code-empty">No rules yet.</div>`;
-    else rules.forEach((r, i) => {
-      const vname = r.virtueId ? virtueNameById(r.virtueId) : null;
-      html += `<div class="code-row">
-        <div class="code-row-main">
-          <div class="code-row-text">${escapeHtml(r.text)}</div>
-          ${vname ? `<span class="code-virtue-tag">${escapeHtml(vname)}</span>` : ''}
-        </div>
-        ${codeRowActions('rule', r.id, i, rules.length)}
-      </div>`;
-    });
-    html += `</div>`;
-  }
-  return html;
+    const rows = rules.length
+      ? rules.map((r, i) => codeNumberedRow('rule', r, i, rules.length, r.text, r.virtueId ? virtueNameById(r.virtueId) : null)).join('')
+      : `<div class="code-empty">No rules yet.</div>`;
+    return `<div class="code-rule-col code-rule-col-${scope}">
+      <div class="vault-section-head"><span class="vault-section-title">${label}</span><button type="button" class="vault-mini-btn" data-cact="add-rule" data-scope="${scope}">+ Add</button></div>
+      <div class="code-rule-list">${rows}</div>
+    </div>`;
+  };
+  // Narrow: segmented toggle picks one scope (CSS hides toggle + shows both cols at >=700px).
+  return `<div class="vault-section code-rules-section">
+    <div class="type-tabs code-rule-toggle">
+      <button type="button" data-cact="rule-scope" data-scope="public" class="${codeRuleScope === 'public' ? 'active' : ''}">Public</button>
+      <button type="button" data-cact="rule-scope" data-scope="private" class="${codeRuleScope === 'private' ? 'active' : ''}">Private</button>
+    </div>
+    <div class="code-rule-cols" data-active-scope="${codeRuleScope}">
+      ${col('public', 'Public conduct')}
+      ${col('private', 'Private conduct')}
+    </div>
+  </div>`;
 }
 
+// Every virtue expanded inline (no tap-in detail page): name + ⋯, Latin
+// definition, Why it matters, How it manifests, and the rules serving it.
 function renderCodeVirtuesList() {
-  let html = `<div class="vault-section"><div class="vault-section-head"><span class="vault-section-title">My Virtues</span></div>`;
   const notes = codeData().virtueNotes;
+  const rules = codeData().rules;
+  let html = '';
   for (const v of codeVirtues()) {
     const n = notes[v.id] || {};
-    const has = (n.why || '').trim() || (n.manifest || '').trim();
-    html += `<button type="button" class="code-virtue-item" data-cact="open-virtue" data-id="${v.id}">
-      <span class="code-virtue-name">${escapeHtml(v.name)}</span>
-      <span class="code-virtue-status">${has ? '✎' : '+'}</span>
-    </button>`;
+    const why = (n.why || '').trim();
+    const manifest = (n.manifest || '').trim();
+    const linked = rules.filter(r => r.virtueId === v.id);
+    let inner;
+    if (!why && !manifest) {
+      inner = `<div class="code-virtue-empty">Not written yet — tap ⋯ to add your reasons.</div>`;
+    } else {
+      inner =
+        (why ? `<div class="code-vn-block"><div class="code-vn-label">Why it matters</div><div class="code-vn-text">${escapeHtml(why)}</div></div>` : '') +
+        (manifest ? `<div class="code-vn-block"><div class="code-vn-label">How it manifests</div><div class="code-vn-text">${escapeHtml(manifest)}</div></div>` : '');
+    }
+    const footer = linked.length
+      ? `<div class="code-vn-footer"><div class="code-vn-label">Rules serving this virtue</div>${linked.map(r => `<div class="code-linked-rule">${escapeHtml(r.text)}</div>`).join('')}</div>`
+      : '';
+    html += `<div class="vault-section code-virtue-card">
+      <div class="code-virtue-card-head">
+        <span class="code-virtue-name">${escapeHtml(v.name)}</span>
+        <button type="button" class="space-menu-btn code-menu-btn" data-cact="open-menu" data-menu-kind="virtue" data-menu-id="${v.id}" aria-label="Edit ${escapeHtml(v.name)}" aria-haspopup="menu">⋯</button>
+      </div>
+      <div class="code-virtue-def">${escapeHtml(v.definition)}</div>
+      ${inner}
+      ${footer}
+    </div>`;
   }
-  html += `</div>`;
   return html;
 }
 
@@ -2774,14 +2800,48 @@ function renderCodeSkills() {
   const skills = codeData().skills.slice().sort((a, b) => (a.order | 0) - (b.order | 0));
   let html = `<div class="vault-section"><div class="vault-section-head"><span class="vault-section-title">Skills acquired</span><button type="button" class="vault-mini-btn" data-cact="add-skill">+ Add</button></div>`;
   if (!skills.length) html += `<div class="code-empty">No skills yet.</div>`;
-  else skills.forEach((s, i) => {
-    html += `<div class="code-row">
-      <div class="code-row-main"><div class="code-row-text">${escapeHtml(s.text)}</div></div>
-      ${codeRowActions('skill', s.id, i, skills.length)}
-    </div>`;
-  });
+  else html += `<div class="code-rule-list">${skills.map((s, i) => codeNumberedRow('skill', s, i, skills.length, s.text, null)).join('')}</div>`;
   html += `</div>`;
   return html;
+}
+
+// Virtue notes editor (opened via ⋯ → Edit). Writes both fields to virtueNotes.
+function openVirtueEditor(virtueId) {
+  const v = codeVirtues().find(x => x.id === virtueId);
+  if (!v) return;
+  const note = codeData().virtueNotes[virtueId] || {};
+  codeForm = { kind: 'virtue', id: virtueId };
+  const panel = document.getElementById('code-sheet-panel');
+  panel.innerHTML = `
+    <h2>${escapeHtml(v.name)}</h2>
+    <div class="field">
+      <label for="code-vn-why">Why does this virtue matter?</label>
+      <textarea id="code-vn-why" placeholder="Write why this matters to you…">${escapeHtml(note.why || '')}</textarea>
+    </div>
+    <div class="field">
+      <label for="code-vn-manifest">What will it look like as it manifests?</label>
+      <textarea id="code-vn-manifest" placeholder="Describe how you'll live it…">${escapeHtml(note.manifest || '')}</textarea>
+    </div>
+    <div class="form-actions">
+      <div class="spacer"></div>
+      <button type="button" class="btn btn-ghost" id="code-sheet-cancel">Cancel</button>
+      <button type="button" class="btn btn-primary" id="code-vn-save">Save</button>
+    </div>`;
+  document.getElementById('code-sheet-cancel').addEventListener('click', closeCodeSheet);
+  document.getElementById('code-vn-save').addEventListener('click', saveVirtueEditor);
+  openCodeSheet();
+  setTimeout(() => { const t = document.getElementById('code-vn-why'); if (t) t.focus(); }, 50);
+}
+function saveVirtueEditor() {
+  const f = codeForm;
+  if (!f || f.kind !== 'virtue') { closeCodeSheet(); return; }
+  const why = document.getElementById('code-vn-why').value;
+  const manifest = document.getElementById('code-vn-manifest').value;
+  codeData().virtueNotes[f.id] = { why, manifest };
+  saveState();
+  render();
+  if (codeOverlay.classList.contains('open')) renderCode();
+  closeCodeSheet();
 }
 
 function renderCodeJournal(body) {
@@ -2816,21 +2876,14 @@ function onCodeBodyClick(e) {
   const el = e.target.closest('[data-cact]');
   if (!el) return;
   const act = el.dataset.cact;
-  const id = el.dataset.id;
-  if      (act === 'tab')          { codeTab = el.dataset.tab; codeVirtueId = null; renderCode(); }
-  else if (act === 'open-virtue')  { codeVirtueId = id; renderCode(); }
-  else if (act === 'virtue-back')  { codeVirtueId = null; renderCode(); }
+  // rule/skill/virtue reorder+edit+delete are now driven by the shared ⋯ menu
+  // (open-menu -> openBlockMenuFor -> onBlockMenuClick -> the existing fns).
+  if      (act === 'tab')          { codeTab = el.dataset.tab; renderCode(); }
+  else if (act === 'rule-scope')   { codeRuleScope = el.dataset.scope; renderCode(); }
+  else if (act === 'open-menu')    openBlockMenuFor(el);
   else if (act === 'journal-back') { codeView = 'main'; renderCode(); }
   else if (act === 'add-rule')     openCodeRuleSheet(null, el.dataset.scope);
-  else if (act === 'edit-rule')    { const r = codeData().rules.find(x => x.id === id); if (r) openCodeRuleSheet(r); }
-  else if (act === 'del-rule')     deleteCodeRule(id);
-  else if (act === 'rule-up')      moveCodeRule(id, -1);
-  else if (act === 'rule-down')    moveCodeRule(id, 1);
   else if (act === 'add-skill')    openCodeSkillSheet(null);
-  else if (act === 'edit-skill')   { const s = codeData().skills.find(x => x.id === id); if (s) openCodeSkillSheet(s); }
-  else if (act === 'del-skill')    deleteCodeSkill(id);
-  else if (act === 'skill-up')     moveCodeSkill(id, -1);
-  else if (act === 'skill-down')   moveCodeSkill(id, 1);
   else if (act === 'rate')         { codeJournalRating = el.dataset.rating; document.querySelectorAll('#code-rating button').forEach(b => b.classList.toggle('active', b.dataset.rating === codeJournalRating)); }
   else if (act === 'save-journal') saveJournalFromComposer();
 }
@@ -4911,21 +4964,31 @@ function moveBlock(blockId, delta) {
 // Only presentational: each item calls an EXISTING action (moveBlock / edit /
 // delete). One menu open at a time; re-render or outside tap closes it.
 
+// Generalized: the one menu system serves blocks AND My Code rows. The button
+// carries data-menu-kind ('block' default | 'rule' | 'skill' | 'virtue') and
+// data-menu-id (falls back to legacy data-block). Action set varies by kind;
+// 'virtue' offers only Edit.
 function openBlockMenuFor(btn) {
-  const bid = btn.dataset.block;
+  const kind = btn.dataset.menuKind || 'block';
+  const bid = btn.dataset.menuId || btn.dataset.block;
   const index = parseInt(btn.dataset.index, 10) || 0;
   const total = parseInt(btn.dataset.total, 10) || 1;
   const menu = document.getElementById('block-menu');
   const backdrop = document.getElementById('block-menu-backdrop');
   if (!menu || !backdrop) return;
 
+  const attrs = `data-menu-kind="${kind}" data-menu-id="${bid}"`;
   const upDis = index === 0 ? ' disabled' : '';
   const downDis = index === total - 1 ? ' disabled' : '';
-  menu.innerHTML = `
-    <button type="button" class="block-menu-item" data-menu-act="up" data-block="${bid}"${upDis} role="menuitem">Move up</button>
-    <button type="button" class="block-menu-item" data-menu-act="down" data-block="${bid}"${downDis} role="menuitem">Move down</button>
-    <button type="button" class="block-menu-item" data-menu-act="edit" data-block="${bid}" role="menuitem">Edit</button>
-    <button type="button" class="block-menu-item danger" data-menu-act="delete" data-block="${bid}" role="menuitem">Delete</button>`;
+  if (kind === 'virtue') {
+    menu.innerHTML = `<button type="button" class="block-menu-item" data-menu-act="edit" ${attrs} role="menuitem">Edit</button>`;
+  } else {
+    menu.innerHTML = `
+      <button type="button" class="block-menu-item" data-menu-act="up" ${attrs}${upDis} role="menuitem">Move up</button>
+      <button type="button" class="block-menu-item" data-menu-act="down" ${attrs}${downDis} role="menuitem">Move down</button>
+      <button type="button" class="block-menu-item" data-menu-act="edit" ${attrs} role="menuitem">Edit</button>
+      <button type="button" class="block-menu-item danger" data-menu-act="delete" ${attrs} role="menuitem">Delete</button>`;
+  }
 
   backdrop.hidden = false;
   menu.hidden = false;
@@ -4954,12 +5017,27 @@ function onBlockMenuClick(e) {
   const item = e.target.closest('[data-menu-act]');
   if (!item || item.disabled) return;
   const act = item.dataset.menuAct;
-  const bid = item.dataset.block;
+  const kind = item.dataset.menuKind || 'block';
+  const id = item.dataset.menuId || item.dataset.block;
   closeBlockMenu();
-  if      (act === 'up')     moveBlock(bid, -1);
-  else if (act === 'down')   moveBlock(bid, 1);
-  else if (act === 'edit')   { const b = findBlock(bid); if (b) openBlockSheet(b); }
-  else if (act === 'delete') deleteBlockById(bid);
+  if (kind === 'block') {
+    if      (act === 'up')     moveBlock(id, -1);
+    else if (act === 'down')   moveBlock(id, 1);
+    else if (act === 'edit')   { const b = findBlock(id); if (b) openBlockSheet(b); }
+    else if (act === 'delete') deleteBlockById(id);
+  } else if (kind === 'rule') {
+    if      (act === 'up')     moveCodeRule(id, -1);
+    else if (act === 'down')   moveCodeRule(id, 1);
+    else if (act === 'edit')   { const r = codeData().rules.find(x => x.id === id); if (r) openCodeRuleSheet(r); }
+    else if (act === 'delete') deleteCodeRule(id);
+  } else if (kind === 'skill') {
+    if      (act === 'up')     moveCodeSkill(id, -1);
+    else if (act === 'down')   moveCodeSkill(id, 1);
+    else if (act === 'edit')   { const s = codeData().skills.find(x => x.id === id); if (s) openCodeSkillSheet(s); }
+    else if (act === 'delete') deleteCodeSkill(id);
+  } else if (kind === 'virtue') {
+    if (act === 'edit') openVirtueEditor(id);
+  }
 }
 
 // Delete a block by id (menu path). Same tombstone+renumber DATA logic as

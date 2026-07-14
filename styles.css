@@ -1629,6 +1629,57 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 }
 .code-linked-rule:first-of-type { border-top: none; }
 
+/* ---- Rules: numbered tight rows + responsive public/private ---- */
+.code-rule-toggle { margin-bottom: 14px; }
+.code-rule-cols { display: block; }
+/* Narrow (default): show only the toggled scope's column. */
+.code-rule-cols[data-active-scope="public"]  .code-rule-col-private { display: none; }
+.code-rule-cols[data-active-scope="private"] .code-rule-col-public  { display: none; }
+.code-rule-col + .code-rule-col { margin-top: 18px; }
+.code-rule-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 9px 0; border-top: 1px solid var(--separator);
+}
+.code-rule-row:first-child { border-top: none; }
+.code-rule-num {
+  flex-shrink: 0; min-width: 1.5em; text-align: right;
+  font-family: var(--font-mono); font-feature-settings: var(--num);
+  font-weight: 700; font-size: 13px; color: var(--accent); line-height: 1.45;
+  padding-top: 1px;
+}
+.code-rule-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.code-rule-text {
+  font-size: 14px; line-height: 1.45; color: var(--text-primary);
+  white-space: pre-wrap; word-break: break-word;
+}
+.code-menu-btn { flex-shrink: 0; }
+
+@media (min-width: 700px) {
+  .code-rule-toggle { display: none; }                 /* both columns shown, no toggle */
+  .code-rule-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+  .code-rule-cols .code-rule-col { display: block !important; } /* override narrow hide */
+  .code-rule-col + .code-rule-col { margin-top: 0; }
+}
+
+/* ---- Virtues: all expanded inline ---- */
+.code-virtue-card { }
+.code-virtue-card-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.code-virtue-card-head .code-virtue-name { font-size: 18px; font-weight: 800; color: var(--text-primary); letter-spacing: -0.01em; }
+.code-virtue-card .code-virtue-def { font-style: italic; margin: 2px 0 12px; }
+.code-vn-block { margin-top: 10px; }
+.code-vn-label {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--text-tertiary); font-family: var(--font-mono); margin-bottom: 3px;
+}
+.code-vn-text {
+  font-size: 14px; line-height: 1.5; color: var(--text-primary);
+  white-space: pre-wrap; word-break: break-word;
+}
+.code-virtue-empty { font-size: 13px; color: var(--text-tertiary); margin-top: 8px; }
+.code-vn-footer { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--separator); }
+
 .code-rating { margin: 12px 0; }
 .code-journal-save { width: 100%; min-height: 48px; font-weight: 600; }
 .code-journal-past {
