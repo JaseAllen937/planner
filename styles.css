@@ -712,9 +712,16 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 .sleep-value { color: var(--text-primary); font-weight: 600; }
 .sleep-bedtime-input { width: auto; max-width: 130px; min-width: 110px; min-height: 44px; }
 
+.sleep-substrip-label {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--text-tertiary); font-family: var(--font-mono);
+  margin: 12px 0 2px;
+}
 .sleep-week {
   display: flex; gap: 6px; padding: 6px 0 2px;
 }
+/* Morning-popup inline validation warning (blocks save; user re-picks). */
+.mc-warn { margin-top: 8px; font-size: 12px; color: var(--danger); line-height: 1.35; }
 .sleep-week-col {
   flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;
 }
@@ -1560,12 +1567,18 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 .vault-entry-square .vault-entry-title { font-size: 15px; line-height: 1.2; }
 .vault-entry-square .vault-entry-sub { font-size: 12px; line-height: 1.2; }
 
-/* Three squares side by side — tighter to fit ~360-390px iPhone width. */
+/* Three squares side by side — tighter to fit ~360-390px iPhone width.
+   (Retained for compatibility; My Code is now a full-width card above.) */
 .today-squares-3 { grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .today-squares-3 .vault-entry-square { padding: 12px 6px; gap: 5px; }
 .today-squares-3 .vault-entry-icon { font-size: 24px; width: 44px; height: 44px; }
 .today-squares-3 .vault-entry-title { font-size: 12.5px; line-height: 1.15; }
 .today-squares-3 .vault-entry-sub { font-size: 10px; line-height: 1.2; }
+
+/* My Code — primary full-width card above the two squares. */
+.code-entry-primary { min-height: 72px; padding: 18px 16px; }
+.code-entry-primary .vault-entry-icon { font-size: 28px; width: 48px; height: 48px; }
+.code-entry-primary .vault-entry-title { font-size: 17px; }
 
 /* ---- My Code overlay ---- */
 .code-header-actions { display: flex; gap: 8px; align-items: center; }

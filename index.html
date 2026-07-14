@@ -38,10 +38,10 @@
     <div id="banner-wrap"></div>
     <div id="intention-card-wrap"></div>
     <div id="focus-card-wrap"></div>
-    <div class="today-squares today-squares-3">
+    <div id="code-card-wrap"></div>
+    <div class="today-squares">
       <div id="vault-card-wrap"></div>
       <div id="franklin-card-wrap"></div>
-      <div id="code-card-wrap"></div>
     </div>
     <div id="three-day-wrap"></div>
     <div id="spaces-hub-wrap"></div>
@@ -196,10 +196,12 @@
     <div class="field">
       <label>Wake time (now)</label>
       <div class="wheel-picker" id="mc-wake-wheel"></div>
+      <div class="mc-warn" id="mc-wake-warn" role="alert" hidden></div>
     </div>
     <div class="field">
       <label>Bedtime last night</label>
       <div class="wheel-picker" id="mc-bed-wheel"></div>
+      <div class="mc-warn" id="mc-bed-warn" role="alert" hidden></div>
     </div>
 
     <div class="field">
@@ -565,6 +567,14 @@ function isPlausibleBedtime(hhmm) {
   if (!hhmm || !/^\d{2}:\d{2}$/.test(hhmm)) return false;
   const m = minsSinceMidnight(hhmm);
   return m >= 18 * 60 || m < 6 * 60;
+}
+
+// A plausible WAKE time lies in 04:00–14:00 inclusive. Outside that is almost
+// always an AM/PM mis-tap (e.g. tapping PM for an 8am wake -> "20:00").
+function isPlausibleWakeTime(hhmm) {
+  if (!hhmm || !/^\d{2}:\d{2}$/.test(hhmm)) return false;
+  const m = minsSinceMidnight(hhmm);
+  return m >= 4 * 60 && m <= 14 * 60;
 }
 
 function addDays(date, days) {
@@ -999,12 +1009,17 @@ function computeAndStoreHoursSlept() {
     if (dsToday) dsToday.hours_slept = null;
     return;
   }
-  const [bH, bM] = bed.split(':').map(Number);
-  const [wH, wM] = wake.split(':').map(Number);
-  let bedMins = bH * 60 + bM;
-  let wakeMins = wH * 60 + wM;
-  if (wakeMins <= bedMins) wakeMins += 1440;
-  ensureDailyState(today).hours_slept = (wakeMins - bedMins) / 60;
+  const bedMins = minsSinceMidnight(bed);
+  const wakeMins = minsSinceMidnight(wake);
+  // Part B: wrap around midnight — a pre-midnight bedtime means wake is the next
+  // day, so a negative raw difference gets +24h. (bed 23:00 + wake 06:00 = 7h.)
+  let diff = wakeMins - bedMins;
+  if (diff < 0) diff += 1440;
+  const hours = diff / 60;
+  // Part C2 (applied AFTER the wrap): never persist an impossible value. A PM
+  // mis-entry (bed "12:33") now computes positive-but-absurd (~19.5h) rather than
+  // negative, so a plain range check is required. Out of 1–14h -> store null.
+  ensureDailyState(today).hours_slept = (hours >= 1 && hours <= 14) ? hours : null;
 }
 
 // ---------------- completions / missed ----------------
@@ -1492,6 +1507,8 @@ function showMorningPopup() {
   const wake = nowHHMM();
   const dsYest = state.daily_state.find(d => d.date === yesterdayDate());
   const bed = (dsYest && dsYest.bedtime) || '23:00';
+  const bw = document.getElementById('mc-bed-warn'); if (bw) { bw.textContent = ''; bw.hidden = true; }
+  const ww = document.getElementById('mc-wake-warn'); if (ww) { ww.textContent = ''; ww.hidden = true; }
   document.getElementById('morning-modal').classList.add('open');
   requestAnimationFrame(() => {
     if (wheelPickers.morningWake) wheelPickers.morningWake.setValue(wake);
@@ -1526,6 +1543,21 @@ function refreshFlags() {
 function submitMorningPopup() {
   const wake = wheelPickers.morningWake.getValue();
   const bed  = wheelPickers.morningBed.getValue();
+
+  // Part C1: block implausible entries at the door — never silently rewrite what
+  // the user picked. Reuse the existing bedtime rule; add the wake-time rule.
+  const bedWarn = document.getElementById('mc-bed-warn');
+  const wakeWarn = document.getElementById('mc-wake-warn');
+  let bad = false;
+  if (!isPlausibleBedtime(bed)) {
+    if (bedWarn) { bedWarn.textContent = "That's a daytime hour — did you mean AM?"; bedWarn.hidden = false; }
+    bad = true;
+  } else if (bedWarn) { bedWarn.textContent = ''; bedWarn.hidden = true; }
+  if (!isPlausibleWakeTime(wake)) {
+    if (wakeWarn) { wakeWarn.textContent = "That's an unusual wake time — did you mean AM?"; wakeWarn.hidden = false; }
+    bad = true;
+  } else if (wakeWarn) { wakeWarn.textContent = ''; wakeWarn.hidden = true; }
+  if (bad) return; // do not save; user re-picks
 
   const dsToday = ensureDailyState(todayDate());
   dsToday.wake_time = wake;
@@ -1948,10 +1980,19 @@ function renderSleepStats() {
   for (let i = 6; i >= 0; i--) {
     const d = addDays(today, -i);
     const ds = state.daily_state.find(x => x.date === d);
-    days.push({ date: d, bedtime: (ds && ds.bedtime) || null });
+    days.push({
+      date: d,
+      bedtime: (ds && ds.bedtime) || null,
+      hours: (ds && typeof ds.hours_slept === 'number' && isFinite(ds.hours_slept)) ? ds.hours_slept : null
+    });
   }
   const anySet = days.filter(d => d.bedtime);
-  if (anySet.length === 0) { wrap.innerHTML = ''; return; }
+  const anyHours = days.some(d => d.hours != null);
+  if (anySet.length === 0 && !anyHours) { wrap.innerHTML = ''; return; }
+
+  // Part C3: a usable hours_slept value is a real number in 1–14h. Junk (null,
+  // negative, absurd) is excluded from the average — the final backstop.
+  const isUsableSleep = h => typeof h === 'number' && isFinite(h) && h >= 1 && h <= 14;
 
   // Average bedtime — EXCLUDE implausible (daytime) entries so a mis-tapped
   // "12:33" can't poison the mean; needs >=2 plausible entries. Shift anything
@@ -1968,23 +2009,52 @@ function renderSleepStats() {
     avgStr = fmt12(`${String(Math.floor(avg / 60)).padStart(2, '0')}:${String(avg % 60).padStart(2, '0')}`);
   }
 
+  // Part D: average sleep — same >=2-usable rule, junk excluded (C3).
+  let avgSleepStr = null;
+  const usable = days.map(d => d.hours).filter(isUsableSleep);
+  if (usable.length >= 2) {
+    avgSleepStr = hoursToHuman(usable.reduce((a, b) => a + b, 0) / usable.length);
+  }
+
   const parts = [];
   parts.push(`<div class="summary-panel"><h3>Sleep</h3>`);
+  if (avgSleepStr) {
+    parts.push(`<div class="summary-row"><span class="k">Avg sleep (7-day)</span><span class="v">${escapeHtml(avgSleepStr)}</span></div>`);
+  }
   if (avgStr) {
     parts.push(`<div class="summary-row"><span class="k">Avg bedtime (7-day)</span><span class="v">${escapeHtml(avgStr)}</span></div>`);
   }
+
+  // Bedtime strip (unchanged).
+  parts.push(`<div class="sleep-substrip-label">Bedtime</div>`);
   parts.push(`<div class="sleep-week">`);
   for (const d of days) {
     const dow = parseYmd(d.date).toLocaleDateString(undefined, { weekday: 'narrow' });
     const label = d.bedtime ? fmt12(d.bedtime) : '—';
-    // Still display every stored value; flag implausible ones so they're fixable.
     const cls = !d.bedtime ? ' unset' : (isPlausibleBedtime(d.bedtime) ? '' : ' impl');
     parts.push(`<div class="sleep-week-col">
       <div class="sleep-week-val${cls}">${escapeHtml(label)}</div>
       <div class="sleep-week-day">${escapeHtml(dow)}</div>
     </div>`);
   }
-  parts.push(`</div></div>`);
+  parts.push(`</div>`);
+
+  // Part D: per-day hours-slept strip. Displays every stored value ("—" when
+  // null; flagged if out of the usable range) — only the AVERAGE excludes junk.
+  parts.push(`<div class="sleep-substrip-label">Hours slept</div>`);
+  parts.push(`<div class="sleep-week">`);
+  for (const d of days) {
+    const dow = parseYmd(d.date).toLocaleDateString(undefined, { weekday: 'narrow' });
+    const label = d.hours != null ? (hoursToHuman(d.hours) || '—') : '—';
+    const cls = d.hours == null ? ' unset' : (isUsableSleep(d.hours) ? '' : ' impl');
+    parts.push(`<div class="sleep-week-col">
+      <div class="sleep-week-val${cls}">${escapeHtml(label)}</div>
+      <div class="sleep-week-day">${escapeHtml(dow)}</div>
+    </div>`);
+  }
+  parts.push(`</div>`);
+
+  parts.push(`</div>`);
   wrap.innerHTML = parts.join('');
 }
 
@@ -2643,10 +2713,13 @@ function renderCodeCard() {
   const wrap = document.getElementById('code-card-wrap');
   if (!wrap) return;
   wrap.innerHTML = `
-    <button type="button" class="vault-entry-card vault-entry-square" id="code-entry-card" aria-label="Open My Code">
+    <button type="button" class="vault-entry-card code-entry-primary" id="code-entry-card" aria-label="Open My Code">
       <span class="vault-entry-icon" aria-hidden="true">📜</span>
-      <span class="vault-entry-title">My Code</span>
-      <span class="vault-entry-sub">Rules, virtues &amp; journal</span>
+      <span class="vault-entry-text">
+        <span class="vault-entry-title">My Code</span>
+        <span class="vault-entry-sub">Rules, virtues &amp; journal</span>
+      </span>
+      <span class="vault-entry-chev" aria-hidden="true">›</span>
     </button>`;
   document.getElementById('code-entry-card').addEventListener('click', openCode);
 }
@@ -3418,9 +3491,9 @@ function render() {
   renderBanner();
   renderIntentionCard();
   renderFocusCard();
+  renderCodeCard();
   renderVaultCard();
   renderFranklinCard();
-  renderCodeCard();
   if (vaultOverlay && vaultOverlay.classList.contains('open')) renderVault();
   if (franklinOverlay && franklinOverlay.classList.contains('open')) renderFranklin();
   if (codeOverlay && codeOverlay.classList.contains('open')) renderCode();
