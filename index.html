@@ -1988,10 +1988,7 @@ function sleepHours(h) {
   return `${Math.floor(mins / 60)}h${String(mins % 60).padStart(2, '0')}`;
 }
 
-let sleepNightsShown = 10;         // in-memory (not persisted)
-let sleepScrollMode = 'end';       // 'end' -> newest visible; 'start' -> after "Show more"
-
-function sleepShowMoreNights() { sleepNightsShown += 10; sleepScrollMode = 'start'; renderSleepStats(); }
+const SLEEP_NIGHTS_MAX = 90;       // cap the strip's history; it simply scrolls
 
 // A NIGHT belongs to the day it STARTS. For night keyed to date D:
 //   bedtime = daily_state[D].bedtime;  wake/hours = daily_state[D+1].* (the wake day).
@@ -2062,29 +2059,27 @@ function renderSleepStats() {
     avgStr = fmt12(`${String(Math.floor(avg / 60)).padStart(2, '0')}:${String(avg % 60).padStart(2, '0')}`);
   }
 
-  // Strip: most recent N nights, rendered oldest -> newest (left -> right).
-  const shown = allNights.slice(-sleepNightsShown);
-  const hasMore = allNights.length > sleepNightsShown;
+  // Strip: most recent SLEEP_NIGHTS_MAX nights, rendered oldest -> newest (left -> right).
+  const shown = allNights.slice(-SLEEP_NIGHTS_MAX);
 
   const parts = [];
   parts.push(`<div class="summary-panel"><h3>Sleep</h3>`);
   if (avgSleepStr) parts.push(`<div class="summary-row"><span class="k">Avg sleep (7-night)</span><span class="v">${escapeHtml(avgSleepStr)}</span></div>`);
   if (avgStr) parts.push(`<div class="summary-row"><span class="k">Avg bedtime</span><span class="v">${escapeHtml(avgStr)}</span></div>`);
   parts.push(`<div class="sleep-nights-scroll" id="sleep-nights-scroll"><div class="sleep-nights-row">${shown.map(sleepNightCard).join('')}</div></div>`);
-  if (hasMore) parts.push(`<button type="button" class="btn sleep-show-more" id="sleep-show-more">Show more</button>`);
   parts.push(`<p class="sleep-night-caption">Each column is one night — bedtime, wake, and the sleep that followed.</p>`);
   parts.push(`</div>`);
   wrap.innerHTML = parts.join('');
 
-  const moreBtn = document.getElementById('sleep-show-more');
-  if (moreBtn) moreBtn.addEventListener('click', sleepShowMoreNights);
-
-  // Newest at the right end; jump to the left after "Show more" to reveal older.
+  // Always open on the NEWEST night (right end). Set it now AND after layout: a
+  // single rAF often runs before the horizontal strip has sized on iOS Safari,
+  // so pin scrollLeft immediately, then again in nested rAFs and a 0ms timeout.
   const scroller = document.getElementById('sleep-nights-scroll');
   if (scroller) {
-    const mode = sleepScrollMode;
-    requestAnimationFrame(() => { scroller.scrollLeft = (mode === 'start') ? 0 : scroller.scrollWidth; });
-    sleepScrollMode = 'end';
+    const toEnd = () => { scroller.scrollLeft = scroller.scrollWidth; };
+    toEnd();
+    requestAnimationFrame(() => { toEnd(); requestAnimationFrame(toEnd); });
+    setTimeout(toEnd, 0);
   }
 }
 
