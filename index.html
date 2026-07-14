@@ -1971,37 +1971,90 @@ function renderFocusStats() {
 }
 
 // Compact 7-day bedtime view. Null-safe — renders nothing if no bedtimes set.
+// ---- Sleep strip helpers (display-only; do NOT change stored values) ----
+// A usable hours_slept value is a real number in 1–14h.
+function isUsableSleep(h) { return typeof h === 'number' && isFinite(h) && h >= 1 && h <= 14; }
+// Consistent compact clock, e.g. "12:31a" / "8:24a" / "11:52p" (always :MM).
+function sleepClock(hhmm) {
+  if (!hhmm || !/^\d{2}:\d{2}$/.test(hhmm)) return '—';
+  const [h, m] = hhmm.split(':').map(Number);
+  const h12 = ((h + 11) % 12) + 1;
+  return `${h12}:${String(m).padStart(2, '0')}${h >= 12 ? 'p' : 'a'}`;
+}
+// Compact hours, e.g. "7h23" / "8h37".
+function sleepHours(h) {
+  if (typeof h !== 'number' || !isFinite(h)) return '—';
+  const mins = Math.round(h * 60);
+  return `${Math.floor(mins / 60)}h${String(mins % 60).padStart(2, '0')}`;
+}
+
+let sleepNightsShown = 10;         // in-memory (not persisted)
+let sleepScrollMode = 'end';       // 'end' -> newest visible; 'start' -> after "Show more"
+
+function sleepShowMoreNights() { sleepNightsShown += 10; sleepScrollMode = 'start'; renderSleepStats(); }
+
+// A NIGHT belongs to the day it STARTS. For night keyed to date D:
+//   bedtime = daily_state[D].bedtime;  wake/hours = daily_state[D+1].* (the wake day).
+function buildSleepNights() {
+  // Night-start dates carrying any data: a bedtime dates the night itself; a
+  // wake_time/hours_slept dates the night that STARTED the previous day.
+  const nightDates = new Set();
+  for (const ds of state.daily_state) {
+    if (!ds || !ds.date) continue;
+    if (ds.bedtime) nightDates.add(ds.date);
+    if (ds.wake_time || (typeof ds.hours_slept === 'number' && isFinite(ds.hours_slept))) nightDates.add(addDays(ds.date, -1));
+  }
+  return [...nightDates].sort().map(D => {                     // ascending -> oldest..newest
+    const dsBed = state.daily_state.find(x => x.date === D);
+    const dsWake = state.daily_state.find(x => x.date === addDays(D, 1));
+    return {
+      date: D,
+      bedtime: (dsBed && dsBed.bedtime) || null,
+      wake: (dsWake && dsWake.wake_time) || null,
+      hours: (dsWake && typeof dsWake.hours_slept === 'number' && isFinite(dsWake.hours_slept)) ? dsWake.hours_slept : null
+    };
+  });
+}
+
+function sleepNightCard(n) {
+  const badBed = !!(n.bedtime && !isPlausibleBedtime(n.bedtime));
+  const badHours = n.hours != null && !isUsableSleep(n.hours);
+  const dim = badBed || badHours;
+  const dObj = parseYmd(n.date);
+  const dayLabel = dObj.toLocaleDateString(undefined, { weekday: 'short' }) + ' ' + dObj.getDate();
+  const bedStr = n.bedtime ? sleepClock(n.bedtime) : '—';
+  const wakeStr = n.wake ? sleepClock(n.wake) : '—';
+  // Never show a misleading derived hours figure for a bad night.
+  const hoursStr = (n.hours != null && isUsableSleep(n.hours)) ? sleepHours(n.hours) : '—';
+  return `<div class="sleep-night${dim ? ' bad' : ''}">
+    <div class="sleep-night-day">${escapeHtml(dayLabel)}</div>
+    <div class="sleep-night-bed${badBed ? ' danger' : ''}">${escapeHtml(bedStr)}</div>
+    <div class="sleep-night-wake">${escapeHtml(wakeStr)}</div>
+    <div class="sleep-night-hours${badHours ? ' danger' : ''}">${escapeHtml(hoursStr)}</div>
+  </div>`;
+}
+
 function renderSleepStats() {
   const wrap = document.getElementById('sleep-stats-wrap');
   if (!wrap) return;
-  const today = todayDate();
 
-  const days = [];
-  for (let i = 6; i >= 0; i--) {
-    const d = addDays(today, -i);
-    const ds = state.daily_state.find(x => x.date === d);
-    days.push({
-      date: d,
-      bedtime: (ds && ds.bedtime) || null,
-      hours: (ds && typeof ds.hours_slept === 'number' && isFinite(ds.hours_slept)) ? ds.hours_slept : null
-    });
+  const allNights = buildSleepNights();
+  if (allNights.length === 0) { wrap.innerHTML = ''; return; }
+
+  // Averages over the last 7 NIGHTS (same rules as before).
+  const last7 = allNights.slice(-7);
+
+  let avgSleepStr = null;
+  const usable = last7.map(n => n.hours).filter(isUsableSleep);
+  if (usable.length >= 2) {
+    avgSleepStr = hoursToHuman(usable.reduce((a, b) => a + b, 0) / usable.length);
   }
-  const anySet = days.filter(d => d.bedtime);
-  const anyHours = days.some(d => d.hours != null);
-  if (anySet.length === 0 && !anyHours) { wrap.innerHTML = ''; return; }
 
-  // Part C3: a usable hours_slept value is a real number in 1–14h. Junk (null,
-  // negative, absurd) is excluded from the average — the final backstop.
-  const isUsableSleep = h => typeof h === 'number' && isFinite(h) && h >= 1 && h <= 14;
-
-  // Average bedtime — EXCLUDE implausible (daytime) entries so a mis-tapped
-  // "12:33" can't poison the mean; needs >=2 plausible entries. Shift anything
-  // before 06:00 to "next day" so late nights average correctly.
   let avgStr = null;
-  const plausible = anySet.filter(d => isPlausibleBedtime(d.bedtime));
-  if (plausible.length >= 2) {
-    const mins = plausible.map(d => {
-      let m = minsSinceMidnight(d.bedtime);
+  const plausibleBeds = last7.filter(n => n.bedtime && isPlausibleBedtime(n.bedtime));
+  if (plausibleBeds.length >= 2) {
+    const mins = plausibleBeds.map(n => {
+      let m = minsSinceMidnight(n.bedtime);
       if (m < 6 * 60) m += 1440;
       return m;
     });
@@ -2009,53 +2062,30 @@ function renderSleepStats() {
     avgStr = fmt12(`${String(Math.floor(avg / 60)).padStart(2, '0')}:${String(avg % 60).padStart(2, '0')}`);
   }
 
-  // Part D: average sleep — same >=2-usable rule, junk excluded (C3).
-  let avgSleepStr = null;
-  const usable = days.map(d => d.hours).filter(isUsableSleep);
-  if (usable.length >= 2) {
-    avgSleepStr = hoursToHuman(usable.reduce((a, b) => a + b, 0) / usable.length);
-  }
+  // Strip: most recent N nights, rendered oldest -> newest (left -> right).
+  const shown = allNights.slice(-sleepNightsShown);
+  const hasMore = allNights.length > sleepNightsShown;
 
   const parts = [];
   parts.push(`<div class="summary-panel"><h3>Sleep</h3>`);
-  if (avgSleepStr) {
-    parts.push(`<div class="summary-row"><span class="k">Avg sleep (7-day)</span><span class="v">${escapeHtml(avgSleepStr)}</span></div>`);
-  }
-  if (avgStr) {
-    parts.push(`<div class="summary-row"><span class="k">Avg bedtime (7-day)</span><span class="v">${escapeHtml(avgStr)}</span></div>`);
-  }
-
-  // Bedtime strip (unchanged).
-  parts.push(`<div class="sleep-substrip-label">Bedtime</div>`);
-  parts.push(`<div class="sleep-week">`);
-  for (const d of days) {
-    const dow = parseYmd(d.date).toLocaleDateString(undefined, { weekday: 'narrow' });
-    const label = d.bedtime ? fmt12(d.bedtime) : '—';
-    const cls = !d.bedtime ? ' unset' : (isPlausibleBedtime(d.bedtime) ? '' : ' impl');
-    parts.push(`<div class="sleep-week-col">
-      <div class="sleep-week-val${cls}">${escapeHtml(label)}</div>
-      <div class="sleep-week-day">${escapeHtml(dow)}</div>
-    </div>`);
-  }
-  parts.push(`</div>`);
-
-  // Part D: per-day hours-slept strip. Displays every stored value ("—" when
-  // null; flagged if out of the usable range) — only the AVERAGE excludes junk.
-  parts.push(`<div class="sleep-substrip-label">Hours slept</div>`);
-  parts.push(`<div class="sleep-week">`);
-  for (const d of days) {
-    const dow = parseYmd(d.date).toLocaleDateString(undefined, { weekday: 'narrow' });
-    const label = d.hours != null ? (hoursToHuman(d.hours) || '—') : '—';
-    const cls = d.hours == null ? ' unset' : (isUsableSleep(d.hours) ? '' : ' impl');
-    parts.push(`<div class="sleep-week-col">
-      <div class="sleep-week-val${cls}">${escapeHtml(label)}</div>
-      <div class="sleep-week-day">${escapeHtml(dow)}</div>
-    </div>`);
-  }
-  parts.push(`</div>`);
-
+  if (avgSleepStr) parts.push(`<div class="summary-row"><span class="k">Avg sleep (7-night)</span><span class="v">${escapeHtml(avgSleepStr)}</span></div>`);
+  if (avgStr) parts.push(`<div class="summary-row"><span class="k">Avg bedtime</span><span class="v">${escapeHtml(avgStr)}</span></div>`);
+  parts.push(`<div class="sleep-nights-scroll" id="sleep-nights-scroll"><div class="sleep-nights-row">${shown.map(sleepNightCard).join('')}</div></div>`);
+  if (hasMore) parts.push(`<button type="button" class="btn sleep-show-more" id="sleep-show-more">Show more</button>`);
+  parts.push(`<p class="sleep-night-caption">Each column is one night — bedtime, wake, and the sleep that followed.</p>`);
   parts.push(`</div>`);
   wrap.innerHTML = parts.join('');
+
+  const moreBtn = document.getElementById('sleep-show-more');
+  if (moreBtn) moreBtn.addEventListener('click', sleepShowMoreNights);
+
+  // Newest at the right end; jump to the left after "Show more" to reveal older.
+  const scroller = document.getElementById('sleep-nights-scroll');
+  if (scroller) {
+    const mode = sleepScrollMode;
+    requestAnimationFrame(() => { scroller.scrollLeft = (mode === 'start') ? 0 : scroller.scrollWidth; });
+    sleepScrollMode = 'end';
+  }
 }
 
 // ---------------- off-track chip ----------------
