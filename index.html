@@ -2031,6 +2031,17 @@ function sleepNightCard(n) {
   </div>`;
 }
 
+// Scroll the night strip to its right end (newest night) — but ONLY when it is
+// actually laid out. A hidden tab (display:none) gives scrollWidth 0, so the old
+// approach set scrollLeft 0 = the OLDEST night; here we no-op instead. Safe when
+// the element is absent or there's nothing to scroll.
+function scrollSleepStripToNewest() {
+  const el = document.getElementById('sleep-nights-scroll');
+  if (!el) return;
+  if (el.scrollWidth <= el.clientWidth) return; // hidden / not laid out / nothing to scroll
+  el.scrollLeft = el.scrollWidth;
+}
+
 function renderSleepStats() {
   const wrap = document.getElementById('sleep-stats-wrap');
   if (!wrap) return;
@@ -2069,17 +2080,31 @@ function renderSleepStats() {
   parts.push(`<div class="sleep-nights-scroll" id="sleep-nights-scroll"><div class="sleep-nights-row">${shown.map(sleepNightCard).join('')}</div></div>`);
   parts.push(`<p class="sleep-night-caption">Each column is one night — bedtime, wake, and the sleep that followed.</p>`);
   parts.push(`</div>`);
+
+  // Capture the user's current scroll position BEFORE we replace the DOM, so an
+  // unrelated re-render (while they're scrolled back through history) doesn't yank
+  // them to the end. Only meaningful when the strip is currently visible/laid out.
+  const prev = document.getElementById('sleep-nights-scroll');
+  let priorLeft = null, priorAtEnd = false;
+  if (prev && prev.scrollWidth > prev.clientWidth) {
+    priorLeft = prev.scrollLeft;
+    priorAtEnd = (prev.scrollLeft + prev.clientWidth) >= (prev.scrollWidth - 2);
+  }
+
   wrap.innerHTML = parts.join('');
 
-  // Always open on the NEWEST night (right end). Set it now AND after layout: a
-  // single rAF often runs before the horizontal strip has sized on iOS Safari,
-  // so pin scrollLeft immediately, then again in nested rAFs and a 0ms timeout.
+  // Restore the prior scroll-back position; otherwise pin to the newest night.
+  // scrollSleepStripToNewest() no-ops while hidden (scrollWidth 0), so it never
+  // pins the strip to the oldest night off-screen — the real fix lives in the
+  // switchTab('history') hook, which runs once Stats is actually visible.
   const scroller = document.getElementById('sleep-nights-scroll');
   if (scroller) {
-    const toEnd = () => { scroller.scrollLeft = scroller.scrollWidth; };
-    toEnd();
-    requestAnimationFrame(() => { toEnd(); requestAnimationFrame(toEnd); });
-    setTimeout(toEnd, 0);
+    if (priorLeft != null && !priorAtEnd) {
+      scroller.scrollLeft = priorLeft;
+    } else {
+      scrollSleepStripToNewest();
+      requestAnimationFrame(scrollSleepStripToNewest);
+    }
   }
 }
 
@@ -3507,6 +3532,9 @@ function switchTab(tab) {
     b.classList.toggle('active', b.dataset.tab === tab);
   });
   if (tab === 'settings') renderSettings();
+  // Stats tab is now visible (has real width) — this is the moment the sleep
+  // strip can actually scroll to the newest night. rAF lets layout settle first.
+  if (tab === 'history') requestAnimationFrame(scrollSleepStripToNewest);
 }
 
 // ---------------- main render ----------------
