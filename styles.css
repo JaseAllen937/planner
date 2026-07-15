@@ -2166,6 +2166,27 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 .space-title-icon { font-size: 22px; }
 .space-header-actions { display: flex; gap: 8px; flex-shrink: 0; }
 .space-edit-btn, .space-close-btn { min-height: 44px; padding: 8px 14px; font-weight: 600; }
+
+/* Eye toggle: "hiding" state (default) shows a slash over the eye. */
+.space-eye-btn {
+  min-width: 44px; min-height: 44px; padding: 8px 10px; font-size: 18px;
+  background: var(--surface-inset); position: relative; line-height: 1;
+}
+.space-eye-btn.eye-off { opacity: 0.75; }
+.space-eye-btn.eye-off::after {
+  content: ''; position: absolute; left: 8px; right: 8px; top: 50%;
+  height: 2px; background: var(--text-secondary);
+  transform: rotate(-20deg); border-radius: 2px; pointer-events: none;
+}
+
+/* Muted hint shown when not-due items are hidden. */
+.space-hidden-hint {
+  display: block; width: 100%; min-height: 44px; margin-top: 10px;
+  background: transparent; border: 1px dashed var(--separator);
+  border-radius: var(--r-card); padding: 11px 12px;
+  color: var(--text-tertiary); font-size: 13px; cursor: pointer; text-align: center;
+}
+.space-hidden-hint:hover { background: var(--surface-inset); color: var(--text-secondary); }
 .space-body { flex: 1; overflow-y: auto; padding: 14px 2px calc(24px + env(safe-area-inset-bottom, 0)); }
 
 /* Sheet sits above the overlay */

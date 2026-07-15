@@ -420,6 +420,7 @@
     <div class="space-header" id="space-header">
       <h2 class="space-title" id="space-title">Space</h2>
       <div class="space-header-actions">
+        <button type="button" class="btn space-eye-btn" id="space-eye-btn" aria-label="Show hidden items" aria-pressed="false">👁</button>
         <button type="button" class="btn space-edit-btn" id="space-edit-btn" aria-label="Edit this Space">Edit</button>
         <button type="button" class="btn space-close-btn" id="space-close-btn" aria-label="Close Space">Done</button>
       </div>
@@ -4819,9 +4820,15 @@ function renderSpacesHub() {
 const spaceOverlay = document.getElementById('space-overlay');
 const spaceSheet   = document.getElementById('space-sheet');
 
+// In-memory, per-view: false = hide not-due checkbox items; true = show all.
+// NOT persisted; resets to hiding each time a Space opens.
+let spaceShowAll = false;
+function toggleSpaceShowAll() { spaceShowAll = !spaceShowAll; renderSpaceView(); }
+
 function openSpace(id) {
   if (!findSpace(id)) return;
   spaceViewId = id;
+  spaceShowAll = false;   // always open in the clean "only what's due" state
   renderSpaceView();
   spaceOverlay.classList.add('open');
 }
@@ -4849,6 +4856,20 @@ function renderSpaceView() {
   if (headerEl) headerEl.classList.toggle('complete', complete);
 
   const blocks = blocksForSpace(space.id);
+  const today = todayDate();
+  // A checkbox block is hidden when it's not due today and we're not showing all.
+  // Non-checkbox blocks (counter/cycle/goal/notes) have no "due" concept — never hidden.
+  const isHiddenNow = b => b.type === 'checkbox' && !spaceShowAll && !isDueToday(b, today);
+  const hiddenCount = spaceShowAll ? 0 : blocks.filter(b => b.type === 'checkbox' && !isDueToday(b, today)).length;
+
+  // Reflect the eye's state in the header (icon slash + a11y).
+  const eyeBtn = document.getElementById('space-eye-btn');
+  if (eyeBtn) {
+    eyeBtn.classList.toggle('eye-off', !spaceShowAll);
+    eyeBtn.setAttribute('aria-pressed', spaceShowAll ? 'true' : 'false');
+    eyeBtn.setAttribute('aria-label', spaceShowAll ? 'Hide not-due items' : 'Show hidden items');
+  }
+
   const parts = [];
 
   if (complete) parts.push(`<div class="space-done-banner">✓ All done for today</div>`);
@@ -4859,8 +4880,15 @@ function renderSpaceView() {
     parts.push(`<div class="vault-section"><div class="vault-empty">Add your first item to this Space.</div></div>`);
   } else {
     parts.push(`<div class="vault-section">`);
-    blocks.forEach((b, i) => parts.push(renderBlockRow(b, i, blocks.length)));
+    // Render only visible blocks, but pass each block's REAL index/total so the
+    // ⋯ menu's Move up/down and reorder stay correct against the full list.
+    blocks.forEach((b, i) => { if (!isHiddenNow(b)) parts.push(renderBlockRow(b, i, blocks.length)); });
     parts.push(`</div>`);
+  }
+
+  // Muted hint when items are hidden — tap it (or the eye) to reveal.
+  if (hiddenCount > 0) {
+    parts.push(`<button type="button" class="space-hidden-hint" data-act="reveal-hidden">${hiddenCount} not due today — tap 👁 to show</button>`);
   }
 
   body.innerHTML = parts.join('');
@@ -5047,6 +5075,7 @@ function onSpaceBodyClick(e) {
   const bid = el.dataset.block;
   const mid = el.dataset.marker;
   if      (act === 'add-block')    openBlockSheet();
+  else if (act === 'reveal-hidden') { spaceShowAll = true; renderSpaceView(); }
   else if (act === 'toggle-block') toggleBlockToday(bid);
   else if (act === 'edit-block')   { const b = findBlock(bid); if (b) openBlockSheet(b); }
   else if (act === 'block-up')     moveBlock(bid, -1);
@@ -6576,6 +6605,7 @@ codeSheet.addEventListener('click', e => { if (e.target === codeSheet) closeCode
 
 // ---- Spaces wiring ----
 document.getElementById('space-close-btn').addEventListener('click', closeSpace);
+document.getElementById('space-eye-btn').addEventListener('click', toggleSpaceShowAll);
 document.getElementById('space-edit-btn').addEventListener('click', () => {
   const s = findSpace(spaceViewId);
   if (s) openSpaceSheet(s);
