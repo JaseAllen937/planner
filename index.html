@@ -389,10 +389,18 @@
   <div class="vault-overlay-panel">
     <div class="vault-header">
       <h2 class="vault-title">🎩 Benjamin Franklin</h2>
-      <button type="button" class="btn vault-close-btn" id="franklin-close-btn" aria-label="Close Benjamin Franklin">Done</button>
+      <div class="space-header-actions">
+        <button type="button" class="btn franklin-edit-btn" id="franklin-edit-btn" aria-pressed="false" aria-label="Edit tallies and virtues">Edit</button>
+        <button type="button" class="btn vault-close-btn" id="franklin-close-btn" aria-label="Close Benjamin Franklin">Done</button>
+      </div>
     </div>
     <div class="vault-body" id="franklin-body"></div>
   </div>
+</div>
+
+<!-- Franklin edit sheet — add/edit a tally or a virtue. -->
+<div class="modal vault-sheet-mode" id="franklin-sheet" role="dialog" aria-modal="true">
+  <div class="modal-panel" id="franklin-sheet-panel"></div>
 </div>
 
 <!-- My Code — full-screen personal-code overlay (reuses Vault overlay CSS) -->
@@ -910,8 +918,12 @@ function ensureShape(s) {
   if (!s.franklin || typeof s.franklin !== 'object') s.franklin = seedFranklin();
   if (!s.franklin.anchorDate) s.franklin.anchorDate = todayDate();
   if (typeof s.franklin.cycleDays !== 'number' || s.franklin.cycleDays < 1) s.franklin.cycleDays = 3;
-  if (!Array.isArray(s.franklin.tallies) || s.franklin.tallies.length === 0) s.franklin.tallies = seedFranklin().tallies;
-  if (!Array.isArray(s.franklin.virtues) || s.franklin.virtues.length === 0) s.franklin.virtues = seedFranklin().virtues;
+  // DATA SAFETY: only create MISSING arrays; NEVER refill defaults on empty.
+  // Tallies/virtues are editable — an empty array on an existing account means
+  // the user deleted them and must be left empty (never resurrected). The seed
+  // applies to fresh installs only (the `!s.franklin` case above / seedState).
+  if (!Array.isArray(s.franklin.tallies)) s.franklin.tallies = [];
+  if (!Array.isArray(s.franklin.virtues)) s.franklin.virtues = [];
   if (!Array.isArray(s.franklin.tallyEvents)) s.franklin.tallyEvents = [];
   if (!Array.isArray(s.franklin.virtueSlips)) s.franklin.virtueSlips = [];
 
@@ -2556,8 +2568,9 @@ function seedFranklin() {
 function franklinData() {
   if (!state.franklin || typeof state.franklin !== 'object') state.franklin = seedFranklin();
   const f = state.franklin;
-  if (!Array.isArray(f.tallies) || f.tallies.length === 0) f.tallies = seedFranklin().tallies;
-  if (!Array.isArray(f.virtues) || f.virtues.length === 0) f.virtues = seedFranklin().virtues;
+  // NEVER refill defaults on empty — editable lists; an empty array is valid.
+  if (!Array.isArray(f.tallies)) f.tallies = [];
+  if (!Array.isArray(f.virtues)) f.virtues = [];
   if (!Array.isArray(f.tallyEvents)) f.tallyEvents = [];
   if (!Array.isArray(f.virtueSlips)) f.virtueSlips = [];
   if (!f.anchorDate) f.anchorDate = todayDate();
@@ -2625,6 +2638,159 @@ function removeVirtueSlipInCycle(virtueId) {
   saveState(); render();
 }
 
+// ---- Editable tallies + virtues (with data-safety guarantees) ----
+const FRANKLIN_TALLY_CAP = 6;
+let franklinEditMode = false;   // in-memory edit toggle
+let franklinForm = null;        // sheet form state
+
+// TALLIES
+function addTally(label) {
+  const f = franklinData();
+  if (f.tallies.length >= FRANKLIN_TALLY_CAP) return;
+  const name = (label || '').trim();
+  if (!name) return;
+  f.tallies.push({ id: uuid(), label: name });
+  saveState(); render();
+}
+function renameTally(id, label) {
+  const t = franklinData().tallies.find(x => x.id === id);
+  if (!t) return;
+  const name = (label || '').trim();
+  if (!name) return;
+  t.label = name;
+  saveState(); render();
+}
+function deleteTally(id) {
+  const f = franklinData();
+  const t = f.tallies.find(x => x.id === id);
+  if (!t) return;
+  const n = tallyCount(id);
+  if (!confirm(`Delete "${t.label}"? Its ${n} logged tap${n === 1 ? '' : 's'} will be kept (hidden) and the tally won't come back.`)) return;
+  tombstone('franklin.tallies', id);   // stays deleted across sync
+  f.tallies = f.tallies.filter(x => x.id !== id); // events in tallyEvents are preserved (orphaned)
+  saveState(); render();
+}
+function moveTally(id, delta) {
+  const f = franklinData();
+  const i = f.tallies.findIndex(x => x.id === id);
+  const j = i + delta;
+  if (i < 0 || j < 0 || j >= f.tallies.length) return;
+  const t = f.tallies[i]; f.tallies[i] = f.tallies[j]; f.tallies[j] = t;
+  saveState(); render();
+}
+
+// VIRTUES (shared with My Code — deletion protects writing + rule links)
+function addVirtue(name, definition) {
+  const nm = (name || '').trim();
+  if (!nm) return;
+  franklinData().virtues.push({ id: uuid(), name: nm, definition: (definition || '').trim() });
+  saveState(); render();
+}
+function editVirtue(id, name, definition) {
+  const v = franklinData().virtues.find(x => x.id === id);
+  if (!v) return;
+  const nm = (name || '').trim();
+  if (!nm) return;
+  v.name = nm; v.definition = (definition || '').trim(); // rename safe — notes/rules key off id
+  saveState(); render();
+}
+function moveVirtue(id, delta) {
+  const f = franklinData();
+  const i = f.virtues.findIndex(x => x.id === id);
+  const j = i + delta;
+  if (i < 0 || j < 0 || j >= f.virtues.length) return;
+  const t = f.virtues[i]; f.virtues[i] = f.virtues[j]; f.virtues[j] = t;
+  saveState(); render();
+}
+function deleteVirtue(id) {
+  const f = franklinData();
+  const v = f.virtues.find(x => x.id === id);
+  if (!v) return;
+  const c = codeData();
+  const linked = c.rules.filter(r => r.virtueId === id).length;
+  const note = c.virtueNotes[id];
+  const hasNote = !!(note && ((note.why || '').trim() || (note.manifest || '').trim()));
+  const msg = `Delete "${v.name}"?\n\nThis virtue has ${hasNote ? 'writing in My Code' : 'no writing'} and ${linked} linked rule${linked === 1 ? '' : 's'}. Its slip history and your writing will be KEPT but hidden; linked rules will be UNLINKED, not deleted. The virtue won't come back.`;
+  if (!confirm(msg)) return;
+  tombstone('franklin.virtues', id);                       // stays deleted across sync
+  c.rules.forEach(r => { if (r.virtueId === id) r.virtueId = null; }); // unlink, keep the rule
+  // virtueSlips retained (orphaned); code.virtueNotes[id] retained (hidden, recoverable-in-state).
+  f.virtues = f.virtues.filter(x => x.id !== id);
+  saveState(); render();
+}
+
+// ---- Franklin edit sheet ----
+const franklinSheet = document.getElementById('franklin-sheet');
+function openFranklinSheet()  { franklinSheet.classList.add('open'); }
+function closeFranklinSheet() { franklinSheet.classList.remove('open'); franklinForm = null; }
+
+function openFranklinTallySheet(id) {
+  const t = id ? franklinData().tallies.find(x => x.id === id) : null;
+  franklinForm = { kind: 'tally', id: t ? t.id : null, label: t ? t.label : '' };
+  const panel = document.getElementById('franklin-sheet-panel');
+  panel.innerHTML = `
+    <h2>${t ? 'Rename tally' : 'Add tally'}</h2>
+    <div class="field">
+      <label for="fr-tally-label">Label</label>
+      <input type="text" id="fr-tally-label" placeholder="e.g. Doomscrolling" autocomplete="off" maxlength="40" value="${escapeHtml(franklinForm.label)}">
+    </div>
+    <div id="fr-sheet-error" class="error-msg" hidden></div>
+    <div class="form-actions">
+      <div class="spacer"></div>
+      <button type="button" class="btn btn-ghost" id="fr-sheet-cancel">Cancel</button>
+      <button type="button" class="btn btn-primary" id="fr-tally-save">Save</button>
+    </div>`;
+  document.getElementById('fr-sheet-cancel').addEventListener('click', closeFranklinSheet);
+  document.getElementById('fr-tally-save').addEventListener('click', saveFranklinTallyForm);
+  openFranklinSheet();
+  setTimeout(() => { const n = document.getElementById('fr-tally-label'); if (n) n.focus(); }, 50);
+}
+function saveFranklinTallyForm() {
+  const f = franklinForm;
+  const errEl = document.getElementById('fr-sheet-error');
+  const label = (document.getElementById('fr-tally-label').value || '').trim();
+  if (!label) { errEl.textContent = 'Give the tally a label.'; errEl.hidden = false; return; }
+  if (f.id) renameTally(f.id, label);
+  else addTally(label);
+  closeFranklinSheet();
+}
+
+function openFranklinVirtueSheet(id) {
+  const v = id ? franklinData().virtues.find(x => x.id === id) : null;
+  franklinForm = { kind: 'virtue', id: v ? v.id : null };
+  const panel = document.getElementById('franklin-sheet-panel');
+  panel.innerHTML = `
+    <h2>${v ? 'Edit virtue' : 'Add virtue'}</h2>
+    <div class="field">
+      <label for="fr-virtue-name">Name</label>
+      <input type="text" id="fr-virtue-name" placeholder="e.g. Temperance" autocomplete="off" maxlength="40" value="${escapeHtml(v ? v.name : '')}">
+    </div>
+    <div class="field">
+      <label for="fr-virtue-def">Definition (optional)</label>
+      <textarea id="fr-virtue-def" placeholder="What it means to you…">${escapeHtml(v ? (v.definition || '') : '')}</textarea>
+    </div>
+    <div id="fr-sheet-error" class="error-msg" hidden></div>
+    <div class="form-actions">
+      <div class="spacer"></div>
+      <button type="button" class="btn btn-ghost" id="fr-sheet-cancel">Cancel</button>
+      <button type="button" class="btn btn-primary" id="fr-virtue-save">Save</button>
+    </div>`;
+  document.getElementById('fr-sheet-cancel').addEventListener('click', closeFranklinSheet);
+  document.getElementById('fr-virtue-save').addEventListener('click', saveFranklinVirtueForm);
+  openFranklinSheet();
+  setTimeout(() => { const n = document.getElementById('fr-virtue-name'); if (n) n.focus(); }, 50);
+}
+function saveFranklinVirtueForm() {
+  const f = franklinForm;
+  const errEl = document.getElementById('fr-sheet-error');
+  const name = (document.getElementById('fr-virtue-name').value || '').trim();
+  const def = document.getElementById('fr-virtue-def').value || '';
+  if (!name) { errEl.textContent = 'Give the virtue a name.'; errEl.hidden = false; return; }
+  if (f.id) editVirtue(f.id, name, def);
+  else addVirtue(name, def);
+  closeFranklinSheet();
+}
+
 // ---- Today square card ----
 function renderFranklinCard() {
   const wrap = document.getElementById('franklin-card-wrap');
@@ -2642,8 +2808,14 @@ function renderFranklinCard() {
 const franklinOverlay = document.getElementById('franklin-overlay');
 let franklinListOpen = false; // in-memory collapse state
 
-function openFranklin() { renderFranklin(); franklinOverlay.classList.add('open'); }
-function closeFranklin() { franklinOverlay.classList.remove('open'); }
+function openFranklin() {
+  franklinEditMode = false; // always open in read mode
+  const btn = document.getElementById('franklin-edit-btn');
+  if (btn) { btn.textContent = 'Edit'; btn.setAttribute('aria-pressed', 'false'); }
+  renderFranklin();
+  franklinOverlay.classList.add('open');
+}
+function closeFranklin() { franklinOverlay.classList.remove('open'); closeFranklinSheet(); }
 
 function renderFranklin() {
   const body = document.getElementById('franklin-body');
@@ -2652,24 +2824,61 @@ function renderFranklin() {
   const ci = franklinCycleInfo();
   const parts = [];
 
-  // 1. Three bad-habit tallies.
-  parts.push(`<div class="vault-section"><div class="vault-section-head"><span class="vault-section-title">Bad-habit tallies</span></div><div class="fr-tallies">`);
-  for (const t of f.tallies) {
-    const c = tallyCount(t.id);
-    parts.push(`
-      <div class="fr-tally">
-        <div class="fr-tally-count">${c}</div>
-        <div class="fr-tally-label">${escapeHtml(t.label)}</div>
-        <div class="fr-ctrls">
-          <button type="button" class="fr-btn" data-fact="tally-dec" data-id="${escapeHtml(t.id)}"${c === 0 ? ' disabled' : ''} aria-label="Minus one ${escapeHtml(t.label)}">−1</button>
-          <button type="button" class="fr-btn fr-btn-plus" data-fact="tally-inc" data-id="${escapeHtml(t.id)}" aria-label="Plus one ${escapeHtml(t.label)}">+1</button>
-        </div>
+  // 1. Bad-habit tallies.
+  const tallies = f.tallies;
+  const addTallyBtn = franklinEditMode
+    ? `<button type="button" class="vault-mini-btn" data-fact="tally-add"${tallies.length >= FRANKLIN_TALLY_CAP ? ' disabled' : ''}>+ Add</button>`
+    : '';
+  parts.push(`<div class="vault-section"><div class="vault-section-head"><span class="vault-section-title">Bad-habit tallies</span>${addTallyBtn}</div>`);
+  if (tallies.length === 0) {
+    parts.push(`<div class="fr-empty">No tallies.${franklinEditMode ? ' Tap “+ Add” to create one.' : ' Tap Edit to add one.'}</div>`);
+  } else if (franklinEditMode) {
+    parts.push(`<div class="fr-edit-list">`);
+    tallies.forEach((t, i) => {
+      parts.push(`<div class="fr-edit-row">
+        <span class="fr-edit-name">${escapeHtml(t.label)}</span>
+        <span class="fr-edit-actions">
+          <button type="button" class="space-arrow" data-fact="tally-up" data-id="${escapeHtml(t.id)}"${i === 0 ? ' disabled' : ''} aria-label="Move up">▲</button>
+          <button type="button" class="space-arrow" data-fact="tally-down" data-id="${escapeHtml(t.id)}"${i === tallies.length - 1 ? ' disabled' : ''} aria-label="Move down">▼</button>
+          <button type="button" class="space-arrow" data-fact="tally-edit" data-id="${escapeHtml(t.id)}" aria-label="Rename">✎</button>
+          <button type="button" class="space-arrow" data-fact="tally-del" data-id="${escapeHtml(t.id)}" aria-label="Delete">✕</button>
+        </span>
       </div>`);
+    });
+    parts.push(`</div>`);
+    if (tallies.length >= FRANKLIN_TALLY_CAP) parts.push(`<div class="fr-cap-note">Maximum of ${FRANKLIN_TALLY_CAP} tallies.</div>`);
+  } else {
+    // Balanced grid: 1-3 single row, 4=2+2, 5=3+2, 6=3+3.
+    const cols = tallies.length <= 3 ? tallies.length : (tallies.length === 4 ? 2 : 3);
+    parts.push(`<div class="fr-tallies" style="grid-template-columns: repeat(${cols}, 1fr);">`);
+    for (const t of tallies) {
+      const c = tallyCount(t.id);
+      parts.push(`
+        <div class="fr-tally">
+          <div class="fr-tally-count">${c}</div>
+          <div class="fr-tally-label">${escapeHtml(t.label)}</div>
+          <div class="fr-ctrls">
+            <button type="button" class="fr-btn" data-fact="tally-dec" data-id="${escapeHtml(t.id)}"${c === 0 ? ' disabled' : ''} aria-label="Minus one ${escapeHtml(t.label)}">−1</button>
+            <button type="button" class="fr-btn fr-btn-plus" data-fact="tally-inc" data-id="${escapeHtml(t.id)}" aria-label="Plus one ${escapeHtml(t.label)}">+1</button>
+          </div>
+        </div>`);
+    }
+    parts.push(`</div>`);
   }
-  parts.push(`</div></div>`);
+  parts.push(`</div>`);
 
-  // 2. Focus virtue.
-  if (ci.virtue) {
+  // Virtues empty state (no rotation possible).
+  if (f.virtues.length === 0) {
+    parts.push(`<div class="vault-section">
+      <div class="vault-section-head"><span class="vault-section-title">Virtues</span>${franklinEditMode ? '<button type="button" class="vault-mini-btn" data-fact="virtue-add">+ Add</button>' : ''}</div>
+      <div class="fr-empty">No virtues yet.${franklinEditMode ? ' Tap “+ Add” to create one.' : ' Tap Edit to add one.'}</div>
+    </div>`);
+    body.innerHTML = parts.join('');
+    return;
+  }
+
+  // 2. Focus virtue (only when not editing — editing shows the full list).
+  if (!franklinEditMode && ci.virtue) {
     const cycleSlips = virtueCycleSlips(ci.virtue.id, ci.cycleStart, ci.cycleEnd);
     const life = virtueLifetimeSlips(ci.virtue.id);
     const rem = Math.max(0, ci.daysRemaining);
@@ -2690,26 +2899,54 @@ function renderFranklin() {
       </div>`);
   }
 
-  // 3. Collapsible full virtue list.
-  parts.push(`
-    <div class="vault-section fr-list-section${franklinListOpen ? ' open' : ''}">
-      <button type="button" class="fr-list-toggle" data-fact="toggle-list" aria-expanded="${franklinListOpen ? 'true' : 'false'}">
-        <span>All ${f.virtues.length} virtues · next: ${escapeHtml(ci.nextVirtue ? ci.nextVirtue.name : '—')}</span>
-        <span class="fr-list-chev" aria-hidden="true">›</span>
-      </button>
-      <div class="fr-list-body"${franklinListOpen ? '' : ' hidden'}>
+  // 3. Virtue list — editable (flat, with controls) or collapsible (read view).
+  if (franklinEditMode) {
+    parts.push(`<div class="vault-section">
+      <div class="vault-section-head"><span class="vault-section-title">Virtues (${f.virtues.length})</span><button type="button" class="vault-mini-btn" data-fact="virtue-add">+ Add</button></div>
+      <div class="fr-edit-list">
         ${f.virtues.map((v, i) => `
-          <div class="fr-list-row${i === ci.index ? ' current' : ''}">
-            <div class="fr-list-main">
-              <div class="fr-list-name">${escapeHtml(v.name)}</div>
-              <div class="fr-list-def">${escapeHtml(v.definition)}</div>
+          <div class="fr-edit-row">
+            <div class="fr-edit-main">
+              <div class="fr-edit-name">${escapeHtml(v.name)}</div>
+              <div class="fr-edit-def">${escapeHtml(v.definition || '')}</div>
             </div>
-            <span class="fr-list-count">${virtueLifetimeSlips(v.id)}</span>
+            <span class="fr-edit-actions">
+              <button type="button" class="space-arrow" data-fact="virtue-up" data-id="${escapeHtml(v.id)}"${i === 0 ? ' disabled' : ''} aria-label="Move up">▲</button>
+              <button type="button" class="space-arrow" data-fact="virtue-down" data-id="${escapeHtml(v.id)}"${i === f.virtues.length - 1 ? ' disabled' : ''} aria-label="Move down">▼</button>
+              <button type="button" class="space-arrow" data-fact="virtue-edit" data-id="${escapeHtml(v.id)}" aria-label="Edit">✎</button>
+              <button type="button" class="space-arrow" data-fact="virtue-del" data-id="${escapeHtml(v.id)}" aria-label="Delete">✕</button>
+            </span>
           </div>`).join('')}
       </div>
     </div>`);
+  } else {
+    parts.push(`
+      <div class="vault-section fr-list-section${franklinListOpen ? ' open' : ''}">
+        <button type="button" class="fr-list-toggle" data-fact="toggle-list" aria-expanded="${franklinListOpen ? 'true' : 'false'}">
+          <span>All ${f.virtues.length} virtues · next: ${escapeHtml(ci.nextVirtue ? ci.nextVirtue.name : '—')}</span>
+          <span class="fr-list-chev" aria-hidden="true">›</span>
+        </button>
+        <div class="fr-list-body"${franklinListOpen ? '' : ' hidden'}>
+          ${f.virtues.map((v, i) => `
+            <div class="fr-list-row${i === ci.index ? ' current' : ''}">
+              <div class="fr-list-main">
+                <div class="fr-list-name">${escapeHtml(v.name)}</div>
+                <div class="fr-list-def">${escapeHtml(v.definition || '')}</div>
+              </div>
+              <span class="fr-list-count">${virtueLifetimeSlips(v.id)}</span>
+            </div>`).join('')}
+        </div>
+      </div>`);
+  }
 
   body.innerHTML = parts.join('');
+}
+
+function toggleFranklinEdit() {
+  franklinEditMode = !franklinEditMode;
+  const btn = document.getElementById('franklin-edit-btn');
+  if (btn) { btn.textContent = franklinEditMode ? 'Done' : 'Edit'; btn.setAttribute('aria-pressed', franklinEditMode ? 'true' : 'false'); }
+  renderFranklin();
 }
 
 function onFranklinBodyClick(e) {
@@ -2722,6 +2959,17 @@ function onFranklinBodyClick(e) {
   else if (act === 'virtue-inc')  addVirtueSlip(id);
   else if (act === 'virtue-dec')  removeVirtueSlipInCycle(id);
   else if (act === 'toggle-list') { franklinListOpen = !franklinListOpen; renderFranklin(); }
+  // editing
+  else if (act === 'tally-add')   openFranklinTallySheet(null);
+  else if (act === 'tally-edit')  openFranklinTallySheet(id);
+  else if (act === 'tally-del')   deleteTally(id);
+  else if (act === 'tally-up')    moveTally(id, -1);
+  else if (act === 'tally-down')  moveTally(id, 1);
+  else if (act === 'virtue-add')  openFranklinVirtueSheet(null);
+  else if (act === 'virtue-edit') openFranklinVirtueSheet(id);
+  else if (act === 'virtue-del')  deleteVirtue(id);
+  else if (act === 'virtue-up')   moveVirtue(id, -1);
+  else if (act === 'virtue-down') moveVirtue(id, 1);
 }
 
 // ============================================================================
@@ -5793,8 +6041,15 @@ const MERGE_COLLECTIONS = [
     set: (s, v) => { if (!s.vault || typeof s.vault !== 'object') s.vault = { transactions: [], goals: [] }; s.vault.transactions = v; } },
   { key: 'vault.goals',        get: s => s.vault && s.vault.goals,
     set: (s, v) => { if (!s.vault || typeof s.vault !== 'object') s.vault = { transactions: [], goals: [] }; s.vault.goals = v; } },
+  // Franklin DEFINITIONS (editable) — union by id + tombstones so an add on one
+  // device survives, a delete stays deleted, and rename/definition edits resolve
+  // newer-wins per record. (Order is best-effort across a merge.)
+  { key: 'franklin.tallies', get: s => s.franklin && s.franklin.tallies,
+    set: (s, v) => { if (!s.franklin || typeof s.franklin !== 'object') s.franklin = {}; s.franklin.tallies = v; } },
+  { key: 'franklin.virtues', get: s => s.franklin && s.franklin.virtues,
+    set: (s, v) => { if (!s.franklin || typeof s.franklin !== 'object') s.franklin = {}; s.franklin.virtues = v; } },
   // Franklin event logs — union by id so a slip/tally logged on one device is
-  // never lost (definitions stay newer-wins scalars on the franklin object).
+  // never lost.
   { key: 'franklin.tallyEvents', get: s => s.franklin && s.franklin.tallyEvents,
     set: (s, v) => { if (!s.franklin || typeof s.franklin !== 'object') s.franklin = {}; s.franklin.tallyEvents = v; } },
   { key: 'franklin.virtueSlips', get: s => s.franklin && s.franklin.virtueSlips,
@@ -6595,7 +6850,9 @@ vaultSheet.addEventListener('click', e => {
 
 // ---- Benjamin Franklin wiring ----
 document.getElementById('franklin-close-btn').addEventListener('click', closeFranklin);
+document.getElementById('franklin-edit-btn').addEventListener('click', toggleFranklinEdit);
 document.getElementById('franklin-body').addEventListener('click', onFranklinBodyClick);
+franklinSheet.addEventListener('click', e => { if (e.target === franklinSheet) closeFranklinSheet(); });
 
 // ---- My Code wiring ----
 document.getElementById('code-close-btn').addEventListener('click', closeCode);
