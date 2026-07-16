@@ -1955,45 +1955,29 @@ function closeFocusOverlay() {
 
 // FOCUS card — present-tense: this week's focus time + lapse rate, the most
 // recent few sessions, today's off-track count, and a compact 7-day mini-trend.
+// ---------------- Focus doorway — pure, pressure-free feedback ----------------
+// READ-ONLY over state.focusSessions. NO target/goal. Off-track lives in Franklin
+// now (removed here). Everything derives from focusSessions each render; nothing
+// is stored. duration hours = (end - start)/3600000; lapse rate = lapses / hours.
+function focusSessHours(s) {
+  const a = new Date(s.start).getTime(), b = new Date(s.end).getTime();
+  const h = (b - a) / 3600000;
+  return (isFinite(h) && h > 0) ? h : 0;
+}
+function focusFmtRate(r) {
+  if (r == null || !isFinite(r)) return '—';
+  return r < 1 ? r.toFixed(1) : String(Math.round(r));
+}
+
 function renderFocusStats() {
   const wrap = document.getElementById('focus-stats-wrap');
   if (!wrap) return;
 
   const today = todayDate();
-  const todayOffCount = getTodayOffTrackCount();
-  const sessionsAll = state.focusSessions || [];
-  const hasFocus = sessionsAll.length > 0;
+  const sessionsAll = (state.focusSessions || []).filter(s => s && s.start && s.end);
 
-  const sessHours = s => (new Date(s.end).getTime() - new Date(s.start).getTime()) / 3600000;
-
-  // This week's focus time + lapse rate.
-  const thisStart = startOfWeek(today);
-  const weekSet = new Set(weekDates(thisStart));
-  let weekHours = 0, weekLapses = 0;
-  for (const s of sessionsAll) {
-    if (!weekSet.has(s.date)) continue;
-    const h = sessHours(s);
-    if (h > 0) weekHours += h;
-    weekLapses += (s.lapses | 0);
-  }
-  const weekRate = weekHours > 0 ? weekLapses / weekHours : null;
-
-  // Most recent 1–3 sessions (across all history), newest first.
-  const recent = [...sessionsAll]
-    .sort((a, b) => (b.start || '').localeCompare(a.start || ''))
-    .slice(0, 3);
-
-  // Compact 7-day off-track mini-trend (includes zero days so the bars read as a trend).
-  const offTrend = [];
-  for (let i = 6; i >= 0; i--) {
-    const d = addDays(today, -i);
-    const ds = state.daily_state.find(x => x.date === d);
-    offTrend.push({ date: d, count: ds ? (ds.offTrackCount | 0) : 0 });
-  }
-  const anyOffTrack = todayOffCount > 0 || offTrend.some(t => t.count > 0);
-
-  // Friendly empty state — nothing logged at all.
-  if (!hasFocus && !anyOffTrack) {
+  // Friendly empty state — no focus sessions logged at all.
+  if (sessionsAll.length === 0) {
     wrap.innerHTML = `
       <div class="summary-panel focus-stats-panel">
         <h3>Focus</h3>
@@ -2002,64 +1986,153 @@ function renderFocusStats() {
     return;
   }
 
-  const parts = [];
-  parts.push(`<div class="summary-panel focus-stats-panel"><h3>Focus</h3>`);
-
-  parts.push(`<div class="summary-row"><span class="k">Focus this week</span><span class="v">${escapeHtml(hoursToHuman(weekHours) || '0m')}</span></div>`);
-  if (weekRate != null) {
-    const rateStr = weekRate < 1 ? weekRate.toFixed(1) : String(Math.round(weekRate));
-    parts.push(`<div class="summary-row"><span class="k">Lapse rate</span><span class="v">~${escapeHtml(rateStr)} /hr</span></div>`);
-  }
-
-  const dimAttr = todayOffCount === 0 ? ' disabled' : '';
-  parts.push(`<div class="summary-row off-track-today-row">
-    <span class="k">Off-track today</span>
-    <span class="v">
-      <strong class="off-track-today-num">${todayOffCount}</strong>
-      <button type="button" class="off-track-correct-btn" id="off-track-correct-btn"${dimAttr} aria-label="Subtract one off-track moment">−1</button>
-    </span>
-  </div>`);
-
-  // Compact 7-day off-track mini-trend (small bars).
-  const maxOff = Math.max(...offTrend.map(t => t.count), 1);
-  parts.push(`<div class="summary-row"><span class="k">Off-track (7-day)</span><span class="v"></span></div>`);
-  parts.push(`<div class="offtrack-mini">`);
-  for (const t of offTrend) {
-    const h = Math.round((t.count / maxOff) * 100);
-    const dObj = parseYmd(t.date);
-    const dow = dObj.toLocaleDateString(undefined, { weekday: 'narrow' });
-    parts.push(`<div class="offtrack-mini-col" title="${escapeHtml(t.date)}: ${t.count}">
-      <div class="offtrack-mini-track"><div class="offtrack-mini-fill" style="height:${h}%"></div></div>
-      <div class="offtrack-mini-val">${t.count}</div>
-      <div class="offtrack-mini-day">${escapeHtml(dow)}</div>
-    </div>`);
-  }
-  parts.push(`</div>`);
-  parts.push(`<p class="focus-stats-note">A rising count early on usually means you're noticing more lapses — the rate tends to fall as your focus improves.</p>`);
-
-  // Most recent sessions.
-  if (recent.length) {
-    parts.push(`<div class="summary-row"><span class="k">Recent sessions</span><span class="v"></span></div>`);
-    for (const s of recent) {
-      const startHm = new Date(s.start);
-      const hhmm = `${String(startHm.getHours()).padStart(2,'0')}:${String(startHm.getMinutes()).padStart(2,'0')}`;
-      const durStr = hoursToHuman(sessHours(s)) || '0m';
-      const dLabel = s.date === today
-        ? 'Today'
-        : parseYmd(s.date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-      parts.push(`<div class="focus-session-row">
-        <span class="focus-session-time">${escapeHtml(dLabel)} · ${escapeHtml(fmt12(hhmm))}</span>
-        <span class="focus-session-dur">${escapeHtml(durStr)}</span>
-        <span class="focus-session-lapses">${s.lapses | 0} lapse${s.lapses === 1 ? '' : 's'}</span>
-      </div>`);
+  // Week totals for a given week-start, EXCLUDING today (today is partial/in
+  // progress, so it would skew a rate). We drop today's date from the date set.
+  const weekTotals = (weekStart) => {
+    const dates = new Set(weekDates(weekStart));
+    dates.delete(today);               // <-- today excluded from BOTH weeks' rates
+    let hours = 0, lapses = 0;
+    for (const s of sessionsAll) {
+      if (!dates.has(s.date)) continue;
+      const h = focusSessHours(s);
+      if (h > 0) { hours += h; lapses += (s.lapses | 0); }
     }
+    return { hours, lapses, rate: hours > 0 ? lapses / hours : null };
+  };
+  const thisStart = startOfWeek(today);
+  const lastStart = startOfWeek(addDays(thisStart, -1));   // previous week's Sunday
+  const thisWk = weekTotals(thisStart);
+  const lastWk = weekTotals(lastStart);
+
+  // Week-over-week nudge (compare raw rates; omit if either week lacks data).
+  let nudge = '';
+  if (thisWk.rate != null && lastWk.rate != null) {
+    if (thisWk.rate < lastWk.rate)
+      nudge = `<div class="focus-nudge improving">↓ improving · ${escapeHtml(focusFmtRate(lastWk.rate))} last week</div>`;
+    else if (thisWk.rate > lastWk.rate)
+      nudge = `<div class="focus-nudge worse">↑ ${escapeHtml(focusFmtRate(thisWk.rate))} vs ${escapeHtml(focusFmtRate(lastWk.rate))} last week</div>`;
+    else
+      nudge = `<div class="focus-nudge">≈ same as last week</div>`;
   }
 
-  parts.push(`</div>`);
-  wrap.innerHTML = parts.join('');
+  // Companion tiles (context, NOT goals). Week time/count INCLUDE today (real
+  // logged time); only the headline RATE excludes today.
+  const thisWeekSet = new Set(weekDates(thisStart));
+  let weekHoursAll = 0, weekCount = 0;
+  for (const s of sessionsAll) {
+    if (!thisWeekSet.has(s.date)) continue;
+    if (focusSessHours(s) > 0) { weekHoursAll += focusSessHours(s); weekCount++; }
+  }
+  const byStartDesc = [...sessionsAll].sort((a, b) => (b.start || '').localeCompare(a.start || ''));
+  const avgSample = byStartDesc.slice(0, 20);
+  const avgHours = avgSample.length
+    ? avgSample.reduce((sum, s) => sum + focusSessHours(s), 0) / avgSample.length : 0;
+  const avgLabel = sessionsAll.length > 20 ? 'avg session (last 20)' : 'avg session';
 
-  const correctBtn = document.getElementById('off-track-correct-btn');
-  if (correctBtn) correctBtn.addEventListener('click', decrementOffTrackCount);
+  const tile = (val, label) =>
+    `<div class="focus-tile"><div class="focus-tile-val">${escapeHtml(val)}</div><div class="focus-tile-label">${escapeHtml(label)}</div></div>`;
+
+  // Scatter over the most recent 20 sessions.
+  const scatterSet = byStartDesc.slice(0, 20);
+  const scatter = focusScatterSvg(scatterSet, today);
+
+  // Recent log — newest first, last 10.
+  const logRows = byStartDesc.slice(0, 10).map(s => {
+    const dLabel = s.date === today
+      ? 'Today'
+      : parseYmd(s.date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+    const durStr = hoursToHuman(focusSessHours(s)) || '0m';
+    const laps = s.lapses | 0;
+    return `<div class="focus-session-row">
+      <span class="focus-session-time">${escapeHtml(dLabel)}</span>
+      <span class="focus-session-dur">${escapeHtml(durStr)}</span>
+      <span class="focus-session-lapses">${laps} lapse${laps === 1 ? '' : 's'}</span>
+    </div>`;
+  }).join('');
+
+  wrap.innerHTML = `
+    <div class="summary-panel focus-stats-panel">
+      <h3>Focus</h3>
+      <div class="focus-headline">
+        <span class="focus-headline-num">${escapeHtml(focusFmtRate(thisWk.rate))}</span>
+        <span class="focus-headline-unit">lapses / hour</span>
+      </div>
+      ${nudge}
+      <div class="focus-tiles">
+        ${tile(hoursToHuman(avgHours) || '0m', avgLabel)}
+        ${tile(hoursToHuman(weekHoursAll) || '0m', 'focus this week')}
+        ${tile(String(weekCount), weekCount === 1 ? 'session this week' : 'sessions this week')}
+      </div>
+      <div class="focus-scatter-head">Length vs lapse rate</div>
+      ${scatter}
+      <div class="focus-legend">faded = older · ringed = last 3 days · bottom-right = long &amp; clean</div>
+      <div class="focus-log-head">Recent sessions</div>
+      ${logRows}
+    </div>`;
+}
+
+// Scatter: x = duration (minutes), y = lapse rate (lapses/hr, 0 at BOTTOM), so the
+// desirable corner is BOTTOM-RIGHT (long + clean). Dots shade oldest(pale)->newest
+// (--accent); sessions within the last 3 days get a ring. READ-ONLY; no target line.
+function focusScatterSvg(sessions, today) {
+  const W = 340, H = 184, padL = 34, padR = 14, padT = 14, padB = 30;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+
+  const pts = sessions
+    .map(s => {
+      const h = focusSessHours(s);
+      if (h <= 0) return null;
+      return { min: h * 60, rate: (s.lapses | 0) / h, date: s.date || '' };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.date.localeCompare(b.date)); // oldest -> newest for age rank
+
+  if (pts.length === 0) {
+    return `<div class="empty focus-scatter-empty">No completed sessions to chart yet.</div>`;
+  }
+
+  // Domains (padded). Guards for a single point / all-equal / all-clean.
+  let xMin = Math.min(...pts.map(p => p.min)), xMax = Math.max(...pts.map(p => p.min));
+  if (xMax - xMin < 1) { xMin -= 5; xMax += 5; }
+  else { const px = (xMax - xMin) * 0.08; xMin -= px; xMax += px; }
+  if (xMin < 0) xMin = 0;
+  const rateMax = Math.max(...pts.map(p => p.rate));
+  const yTop = rateMax > 0 ? rateMax * 1.15 : 1;   // all-clean -> flat baseline
+
+  const x = m => padL + ((m - xMin) / (xMax - xMin)) * plotW;
+  const y = r => padT + plotH - (r / yTop) * plotH;
+
+  // Bottom-right "long + clean" zone: right 40% x, lower 45% (low rate) y.
+  const zoneX = padL + plotW * 0.60, zoneY = padT + plotH * 0.55;
+  const zone = `<rect class="fs-zone" x="${zoneX.toFixed(1)}" y="${zoneY.toFixed(1)}" width="${(padL + plotW - zoneX).toFixed(1)}" height="${(padT + plotH - zoneY).toFixed(1)}" rx="4"/>`
+    + `<text class="fs-zone-label" x="${(padL + plotW - 3).toFixed(1)}" y="${(padT + plotH - 5).toFixed(1)}" text-anchor="end">long + clean</text>`;
+
+  // Axis frame + tiny labels.
+  const axis =
+    `<line class="fs-axis-line" x1="${padL}" y1="${padT + plotH}" x2="${padL + plotW}" y2="${padT + plotH}"/>` +
+    `<line class="fs-axis-line" x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT + plotH}"/>` +
+    `<text class="fs-axis" x="${padL}" y="${H - 8}" text-anchor="start">${Math.round(xMin)}m</text>` +
+    `<text class="fs-axis" x="${padL + plotW}" y="${H - 8}" text-anchor="end">${Math.round(xMax)}m</text>` +
+    `<text class="fs-axis" x="${(padL + plotW / 2).toFixed(1)}" y="${H - 8}" text-anchor="middle">duration →</text>` +
+    `<text class="fs-axis" x="${padL - 6}" y="${(padT + 8).toFixed(1)}" text-anchor="end">${focusFmtRate(yTop)}</text>` +
+    `<text class="fs-axis" x="${padL - 6}" y="${(padT + plotH).toFixed(1)}" text-anchor="end">0</text>` +
+    `<text class="fs-axis fs-axis-y" x="10" y="${(padT + plotH / 2).toFixed(1)}" text-anchor="middle" transform="rotate(-90 10 ${(padT + plotH / 2).toFixed(1)})">lapses/hr</text>`;
+
+  // Dots: age-shaded pale-grey -> accent by rank; recent (<= 2 days old) ringed.
+  const c0 = [174, 174, 178], c1 = [10, 132, 255];
+  const n = pts.length;
+  const recentCut = addDays(today, -2);
+  let dots = '';
+  pts.forEach((p, i) => {
+    const t = n <= 1 ? 1 : i / (n - 1);
+    const col = c0.map((c, k) => Math.round(c + (c1[k] - c) * t));
+    const fill = `rgb(${col[0]},${col[1]},${col[2]})`;
+    const cx = x(p.min).toFixed(1), cy = y(p.rate).toFixed(1);
+    if (p.date >= recentCut) dots += `<circle class="fs-ring" cx="${cx}" cy="${cy}" r="7"/>`;
+    dots += `<circle class="fs-dot" cx="${cx}" cy="${cy}" r="4.5" fill="${fill}"/>`;
+  });
+
+  return `<svg class="focus-scatter-svg" viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Session length versus lapse rate scatter">${zone}${axis}${dots}</svg>`;
 }
 
 // Compact 7-day bedtime view. Null-safe — renders nothing if no bedtimes set.

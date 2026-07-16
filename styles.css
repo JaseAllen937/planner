@@ -1453,6 +1453,42 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
   border-radius: var(--r-pill);
 }
 
+/* ---------- Focus doorway — feedback (headline, tiles, scatter) ---------- */
+.focus-headline { display: flex; align-items: baseline; gap: 10px; margin: 2px 0 4px; }
+.focus-headline-num {
+  font-size: 44px; font-weight: 800; line-height: 1; color: var(--text-primary);
+  font-family: var(--font-mono); font-feature-settings: var(--num); letter-spacing: -0.03em;
+}
+.focus-headline-unit { font-size: 13px; color: var(--text-secondary); font-weight: 500; }
+.focus-nudge { font-size: 13px; color: var(--text-secondary); margin-bottom: 4px; font-weight: 600; }
+.focus-nudge.improving { color: var(--ok); }
+.focus-nudge.worse { color: var(--text-secondary); }
+
+.focus-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 14px 0 6px; }
+.focus-tile {
+  background: var(--surface-inset); border-radius: var(--r-card);
+  padding: 12px 8px; text-align: center;
+}
+.focus-tile-val {
+  font-size: 20px; font-weight: 700; color: var(--text-primary); line-height: 1.1;
+  font-family: var(--font-mono); font-feature-settings: var(--num);
+}
+.focus-tile-label { font-size: 11px; color: var(--text-secondary); margin-top: 4px; overflow-wrap: anywhere; }
+
+.focus-scatter-head, .focus-log-head {
+  margin: 18px 0 6px; font-size: 11px; color: var(--text-tertiary);
+  text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; font-family: var(--font-mono);
+}
+.focus-scatter-svg { display: block; width: 100%; height: auto; margin: 2px 0; touch-action: none; }
+.fs-zone { fill: var(--ok); opacity: 0.10; }
+.fs-zone-label { font-size: 9px; fill: var(--ok); font-family: var(--font-mono); opacity: 0.9; }
+.fs-axis-line { stroke: var(--separator); stroke-width: 1; }
+.fs-axis { font-size: 9px; fill: var(--text-tertiary); font-family: var(--font-mono); }
+.fs-dot { stroke: var(--card); stroke-width: 0.5; }
+.fs-ring { fill: none; stroke: var(--accent); stroke-width: 1.5; opacity: 0.85; }
+.focus-legend { font-size: 11px; color: var(--text-tertiary); margin: 6px 0 2px; line-height: 1.4; }
+.focus-scatter-empty { padding: 20px 0; }
+
 /* ---------- Off-track chip (top bar) ---------- */
 .off-track-chip {
   display: inline-flex;
