@@ -74,7 +74,6 @@
     <div id="stats-overview">
       <div id="stats-overview-tiles"></div>
       <div id="tally-home"><div id="tally-chart-wrap"></div></div>
-      <div id="sleep-home"><div id="sleep-stats-wrap"></div></div>
     </div>
     <!-- B) Doorways — tappable cards into full-screen stat overlays -->
     <div id="stats-doorways"></div>
@@ -443,14 +442,15 @@
   </div>
 </div>
 
-<!-- Stats doorway: Sleep — hosts the relocated renderSleepStats output -->
+<!-- Stats doorway: Sleep — permanently hosts #sleep-stats-wrap (renderSleepStats
+     target), like the Focus doorway. The overview shows only the Avg-sleep tile. -->
 <div class="modal vault-overlay-mode" id="sleepstats-overlay" role="dialog" aria-modal="true" aria-label="Sleep stats">
   <div class="vault-overlay-panel">
     <div class="vault-header">
       <h2 class="vault-title">☾ Sleep</h2>
       <button type="button" class="btn vault-close-btn" id="sleepstats-close-btn" aria-label="Close Sleep">Done</button>
     </div>
-    <div class="vault-body" id="sleepstats-body"></div>
+    <div class="vault-body" id="sleepstats-body"><div id="sleep-stats-wrap"></div></div>
   </div>
 </div>
 
@@ -3950,15 +3950,10 @@ function relocateStatWrap(wrapId, destId) {
 }
 
 function openSleepDoorway() {
-  relocateStatWrap('sleep-stats-wrap', 'sleepstats-body');
   renderSleepStats();
   sleepStatsOverlay.classList.add('open');
 }
-function closeSleepDoorway() {
-  sleepStatsOverlay.classList.remove('open');
-  relocateStatWrap('sleep-stats-wrap', 'sleep-home');
-  renderSleepStats();
-}
+function closeSleepDoorway() { sleepStatsOverlay.classList.remove('open'); }
 function openFrankDoorway() {
   relocateStatWrap('tally-chart-wrap', 'frankstats-slot');
   renderTallyChart();
@@ -3985,14 +3980,18 @@ function checkboxBlocksForSpace(spaceId) {
 }
 
 // Completion over the last 70 days: doneDays / dueDays, where a due day is one
-// isDueToday && date<=today. dueDays===0 -> null ("—"). READ-ONLY.
+// on-or-after the habit was created && date<=today && isDueToday. Clamping to
+// createdAt (mirrors blockStreak/longestBlockStreak) keeps pre-creation days —
+// which isDueToday reports as "due" for daily habits — from counting as missed.
+// dueDays===0 -> null ("—"). READ-ONLY (isDueToday itself is untouched).
 function habitWindow70Stats(block, today) {
   today = today || todayDate();
   let dueDays = 0, doneDays = 0;
   const checks = (block.checks && typeof block.checks === 'object') ? block.checks : {};
+  const createdYmd = block.createdAt ? String(block.createdAt).slice(0, 10) : null;
   for (let i = 0; i < 70; i++) {
     const d = addDays(today, -i);
-    if (d <= today && isDueToday(block, d)) {
+    if ((createdYmd == null || d >= createdYmd) && d <= today && isDueToday(block, d)) {
       dueDays++;
       if (checks[d]) doneDays++;
     }
@@ -4031,6 +4030,8 @@ function longestBlockStreak(block, today) {
 
 function heatCellClass(block, d, today) {
   if (d > today) return 'future';
+  const createdYmd = block.createdAt ? String(block.createdAt).slice(0, 10) : null;
+  if (createdYmd && d < createdYmd) return 'pre';   // before the habit existed — not applicable (blank)
   if (block.checks && block.checks[d]) return 'done';
   if (!isDueToday(block, d)) return 'notdue';
   return 'missed';

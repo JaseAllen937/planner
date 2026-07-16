@@ -2503,6 +2503,9 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 
 /* Habits doorway — back button in the overlay header */
 .habits-back-btn { margin-right: auto; }
+/* The `hidden` attribute must win over `.btn { display: inline-flex }`, otherwise
+   the Back button shows (and dead-ends) on the Habits list root. */
+.habits-back-btn[hidden] { display: none; }
 
 /* Space list rows */
 .habit-space { margin-bottom: 8px; }
@@ -2581,6 +2584,7 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 .heat-missed { background: transparent; border: 1px solid var(--separator); }
 .heat-notdue { background: transparent; border: 1px dashed var(--text-tertiary); opacity: 0.5; }
 .heat-future { background: transparent; }
+.heat-pre    { background: transparent; }   /* days before the habit existed — blank */
 
 .heat-legend {
   display: flex;
