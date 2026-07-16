@@ -70,13 +70,22 @@
   </section>
 
   <section class="tab-view" id="tab-history">
-    <div id="weekly-summary-wrap"></div>
-    <div id="daily-summary-wrap"></div>
-    <div id="focus-stats-wrap"></div>
-    <div id="tally-chart-wrap"></div>
-    <div id="sleep-stats-wrap"></div>
+    <!-- A) Overview — at-a-glance, always visible -->
+    <div id="stats-overview">
+      <div id="stats-overview-tiles"></div>
+      <div id="tally-home"><div id="tally-chart-wrap"></div></div>
+      <div id="sleep-home"><div id="sleep-stats-wrap"></div></div>
+    </div>
+    <!-- B) Doorways — tappable cards into full-screen stat overlays -->
+    <div id="stats-doorways"></div>
     <div id="insights-wrap"></div>
     <div id="history-wrap"></div>
+    <!-- Legacy summary panels kept alive (hidden) so their renderers never crash;
+         their figures are surfaced compactly in the overview tiles above. -->
+    <div id="legacy-summary-wraps" hidden>
+      <div id="weekly-summary-wrap"></div>
+      <div id="daily-summary-wrap"></div>
+    </div>
   </section>
 
   <section class="tab-view" id="tab-settings">
@@ -420,6 +429,54 @@
 <!-- My Code bottom-sheet — reused for add/edit rule + skill. -->
 <div class="modal vault-sheet-mode" id="code-sheet" role="dialog" aria-modal="true">
   <div class="modal-panel" id="code-sheet-panel"></div>
+</div>
+
+<!-- Stats doorway: Habits — Space list -> expand -> per-habit heatmap (reuses Vault overlay CSS) -->
+<div class="modal vault-overlay-mode" id="habits-overlay" role="dialog" aria-modal="true" aria-label="Habits">
+  <div class="vault-overlay-panel">
+    <div class="vault-header">
+      <button type="button" class="btn habits-back-btn" id="habits-back-btn" aria-label="Back to habit list" hidden>‹ Back</button>
+      <h2 class="vault-title" id="habits-title">✓ Habits</h2>
+      <button type="button" class="btn vault-close-btn" id="habits-close-btn" aria-label="Close Habits">Done</button>
+    </div>
+    <div class="vault-body" id="habits-body"></div>
+  </div>
+</div>
+
+<!-- Stats doorway: Sleep — hosts the relocated renderSleepStats output -->
+<div class="modal vault-overlay-mode" id="sleepstats-overlay" role="dialog" aria-modal="true" aria-label="Sleep stats">
+  <div class="vault-overlay-panel">
+    <div class="vault-header">
+      <h2 class="vault-title">☾ Sleep</h2>
+      <button type="button" class="btn vault-close-btn" id="sleepstats-close-btn" aria-label="Close Sleep">Done</button>
+    </div>
+    <div class="vault-body" id="sleepstats-body"></div>
+  </div>
+</div>
+
+<!-- Stats doorway: Franklin — hosts the relocated renderTallyChart (off-track trend) -->
+<div class="modal vault-overlay-mode" id="frankstats-overlay" role="dialog" aria-modal="true" aria-label="Franklin stats">
+  <div class="vault-overlay-panel">
+    <div class="vault-header">
+      <h2 class="vault-title">🔥 Franklin</h2>
+      <button type="button" class="btn vault-close-btn" id="frankstats-close-btn" aria-label="Close Franklin stats">Done</button>
+    </div>
+    <div class="vault-body" id="frankstats-body">
+      <div id="frankstats-slot"></div>
+      <p class="doorway-note">More coming soon.</p>
+    </div>
+  </div>
+</div>
+
+<!-- Stats doorway: Focus — permanently hosts #focus-stats-wrap (renderFocusStats target) -->
+<div class="modal vault-overlay-mode" id="focusstats-overlay" role="dialog" aria-modal="true" aria-label="Focus stats">
+  <div class="vault-overlay-panel">
+    <div class="vault-header">
+      <h2 class="vault-title">◎ Focus</h2>
+      <button type="button" class="btn vault-close-btn" id="focusstats-close-btn" aria-label="Close Focus">Done</button>
+    </div>
+    <div class="vault-body" id="focusstats-body"><div id="focus-stats-wrap"></div></div>
+  </div>
 </div>
 
 <!-- Spaces — full-screen Space view (modelled on the Vault overlay) -->
@@ -3809,12 +3866,260 @@ function render() {
   renderFocusStats();
   renderTallyChart();
   renderSleepStats();
+  renderStatsOverview();
+  renderStatsDoorways();
+  if (habitsOverlay && habitsOverlay.classList.contains('open')) renderHabitsDoorway();
   renderInsights();
   renderAllTime();
   renderCalendar();
   renderSettings();
   maybeShowMorningPopup();
 }
+
+// ---------------- Stats hub — overview tiles + doorways ----------------
+
+// Week % for the overview tile. weeklySummary().overall_pct is 0 both when the
+// week is empty AND when nothing's done, so we recompute weekExpected here (reusing
+// dailySummary) purely to decide the "—" (nothing scheduled) case. READ-ONLY.
+function statWeekPct() {
+  const ws = startOfWeek(todayDate());
+  const today = todayDate();
+  let expected = 0;
+  for (const d of weekDates(ws)) {
+    if (d > today) continue;
+    expected += dailySummary(d).expected;
+  }
+  if (expected === 0) return null;
+  return Math.round(weeklySummary(ws).overall_pct * 100);
+}
+
+function statTodayPct() {
+  const s = dailySummary(todayDate());
+  if (s.expected === 0) return null;
+  return Math.round(s.completion_pct * 100);
+}
+
+// 7-night average sleep — plausible-only, mirrors renderSleepStats' rule exactly.
+function avgSleep7() {
+  const last7 = buildSleepNights().slice(-7);
+  const usable = last7.map(n => n.hours).filter(isUsableSleep);
+  if (usable.length < 2) return null;
+  return hoursToHuman(usable.reduce((a, b) => a + b, 0) / usable.length);
+}
+
+function renderStatsOverview() {
+  const wrap = document.getElementById('stats-overview-tiles');
+  if (!wrap) return;
+  const wk = statWeekPct(), td = statTodayPct(), sl = avgSleep7();
+  const tile = (label, val) =>
+    `<div class="stat-tile"><div class="stat-tile-val">${val}</div><div class="stat-tile-label">${label}</div></div>`;
+  wrap.innerHTML = `<div class="stat-tiles">` +
+    tile('This week', wk == null ? '—' : wk + '%') +
+    tile('Today',     td == null ? '—' : td + '%') +
+    tile('Avg sleep', sl == null ? '—' : escapeHtml(sl)) +
+    `</div>`;
+}
+
+const STATS_DOORWAYS = [
+  { key: 'habits',   icon: '✓',  name: 'Habits',   sub: 'Streaks & heatmaps' },
+  { key: 'sleep',    icon: '☾',  name: 'Sleep',    sub: 'Bedtime & hours' },
+  { key: 'franklin', icon: '🔥', name: 'Franklin', sub: 'Off-track trend' },
+  { key: 'focus',    icon: '◎',  name: 'Focus',    sub: 'Sessions & lapses' },
+  { key: 'vault',    icon: '🏦', name: 'Vault',    sub: 'Money & goals' },
+  { key: 'journal',  icon: '📓', name: 'Journal',  sub: 'My Code & entries' }
+];
+
+function renderStatsDoorways() {
+  const wrap = document.getElementById('stats-doorways');
+  if (!wrap) return;
+  wrap.innerHTML = `<div class="doorway-grid">` + STATS_DOORWAYS.map(d =>
+    `<button type="button" class="doorway-card" data-doorway="${d.key}">
+       <span class="doorway-icon">${d.icon}</span>
+       <span class="doorway-name">${escapeHtml(d.name)}</span>
+       <span class="doorway-sub">${escapeHtml(d.sub)}</span>
+     </button>`).join('') + `</div>`;
+}
+
+// Move a stat wrap element between its overview home slot and a doorway body,
+// so a single renderer (renderSleepStats / renderTallyChart) can appear in both
+// places without duplication. No mutation of the stat data itself.
+function relocateStatWrap(wrapId, destId) {
+  const el = document.getElementById(wrapId);
+  const dest = document.getElementById(destId);
+  if (el && dest && el.parentNode !== dest) dest.appendChild(el);
+}
+
+function openSleepDoorway() {
+  relocateStatWrap('sleep-stats-wrap', 'sleepstats-body');
+  renderSleepStats();
+  sleepStatsOverlay.classList.add('open');
+}
+function closeSleepDoorway() {
+  sleepStatsOverlay.classList.remove('open');
+  relocateStatWrap('sleep-stats-wrap', 'sleep-home');
+  renderSleepStats();
+}
+function openFrankDoorway() {
+  relocateStatWrap('tally-chart-wrap', 'frankstats-slot');
+  renderTallyChart();
+  frankStatsOverlay.classList.add('open');
+}
+function closeFrankDoorway() {
+  frankStatsOverlay.classList.remove('open');
+  relocateStatWrap('tally-chart-wrap', 'tally-home');
+  renderTallyChart();
+}
+function openFocusDoorway() {
+  renderFocusStats();
+  focusStatsOverlay.classList.add('open');
+}
+function closeFocusDoorway() { focusStatsOverlay.classList.remove('open'); }
+
+// ---------------- Habits doorway — Space list -> expand -> per-habit heatmap ----------------
+
+let habitsExpanded = new Set();   // spaceIds currently expanded (in-memory, not persisted)
+let habitsHeatmapBlock = null;    // blockId whose heatmap is shown (null = list view)
+
+function checkboxBlocksForSpace(spaceId) {
+  return blocksForSpace(spaceId).filter(b => b.type === 'checkbox');
+}
+
+// Completion over the last 70 days: doneDays / dueDays, where a due day is one
+// isDueToday && date<=today. dueDays===0 -> null ("—"). READ-ONLY.
+function habitWindow70Stats(block, today) {
+  today = today || todayDate();
+  let dueDays = 0, doneDays = 0;
+  const checks = (block.checks && typeof block.checks === 'object') ? block.checks : {};
+  for (let i = 0; i < 70; i++) {
+    const d = addDays(today, -i);
+    if (d <= today && isDueToday(block, d)) {
+      dueDays++;
+      if (checks[d]) doneDays++;
+    }
+  }
+  return { dueDays, doneDays };
+}
+function habitRate70(block) {
+  const { dueDays, doneDays } = habitWindow70Stats(block);
+  if (dueDays === 0) return null;
+  return Math.round((doneDays / dueDays) * 100);
+}
+
+// Longest run of consecutive DUE days that were checked — same rule as blockStreak:
+// not-due days are skipped (neither add nor break), an unchecked past due day breaks
+// the run, and today (still open) being unchecked does not break it. Walks forward
+// from the block's creation (bounded to 400 days) so it can find historical peaks.
+function longestBlockStreak(block, today) {
+  today = today || todayDate();
+  if (!block || block.type !== 'checkbox') return 0;
+  const checks = (block.checks && typeof block.checks === 'object') ? block.checks : {};
+  let start = addDays(today, -400);
+  const created = block.createdAt ? String(block.createdAt).slice(0, 10) : null;
+  if (created && created > start) start = created;
+  let best = 0, run = 0, d = start;
+  for (let i = 0; i <= 400; i++) {
+    if (d > today) break;
+    if (isDueToday(block, d)) {
+      if (checks[d]) { run++; if (run > best) best = run; }
+      else if (d === today) { /* today still open — don't break */ }
+      else { run = 0; }
+    }
+    d = addDays(d, 1);
+  }
+  return best;
+}
+
+function heatCellClass(block, d, today) {
+  if (d > today) return 'future';
+  if (block.checks && block.checks[d]) return 'done';
+  if (!isDueToday(block, d)) return 'notdue';
+  return 'missed';
+}
+
+function habitRowHtml(b) {
+  const streak = blockStreak(b);
+  const rate = habitRate70(b);
+  return `<button type="button" class="habit-row" data-block="${escapeHtml(b.id)}">
+    <span class="habit-row-name">${escapeHtml(b.label || 'Habit')}</span>
+    <span class="habit-row-metrics">
+      <span class="habit-row-stat">🔥 ${streak}</span>
+      <span class="habit-row-stat">${rate == null ? '—' : rate + '%'}</span>
+    </span>
+  </button>`;
+}
+
+function renderHabitSpaceList() {
+  const spaces = spacesSorted();
+  if (spaces.length === 0) return `<p class="doorway-empty">No Spaces yet — add one to start tracking habits.</p>`;
+  let html = '';
+  for (const s of spaces) {
+    const habits = checkboxBlocksForSpace(s.id);
+    const open = habitsExpanded.has(s.id);
+    html += `<div class="habit-space">
+      <button type="button" class="habit-space-row" data-space="${escapeHtml(s.id)}">
+        <span class="habit-space-icon">${escapeHtml(s.icon || '📁')}</span>
+        <span class="habit-space-name">${escapeHtml(s.name || 'Space')}</span>
+        <span class="habit-space-count">${habits.length} habit${habits.length === 1 ? '' : 's'}</span>
+        <span class="habit-space-caret">${open ? '▾' : '▸'}</span>
+      </button>`;
+    if (open) {
+      html += habits.length === 0
+        ? `<div class="habit-space-empty">No checkbox habits here.</div>`
+        : habits.map(habitRowHtml).join('');
+    }
+    html += `</div>`;
+  }
+  return html;
+}
+
+function renderHabitHeatmap(block) {
+  const today = todayDate();
+  const streak = blockStreak(block);
+  const longest = longestBlockStreak(block);
+  const rate = habitRate70(block);
+  const dates = [];
+  for (let i = 69; i >= 0; i--) dates.push(addDays(today, -i));  // oldest -> newest
+  const cells = dates.map(d =>
+    `<span class="heat-cell heat-${heatCellClass(block, d, today)}" title="${d}"></span>`).join('');
+  return `<div class="habit-detail">
+    <div class="habit-detail-stats">
+      <div class="hd-stat"><div class="hd-val">${rate == null ? '—' : rate + '%'}</div><div class="hd-lbl">Rate</div></div>
+      <div class="hd-stat"><div class="hd-val">${streak}</div><div class="hd-lbl">Streak</div></div>
+      <div class="hd-stat"><div class="hd-val">${longest}</div><div class="hd-lbl">Longest</div></div>
+    </div>
+    <div class="heatmap-grid">${cells}</div>
+    <div class="heat-legend">
+      <span class="heat-legend-item"><span class="heat-cell heat-done"></span>Done</span>
+      <span class="heat-legend-item"><span class="heat-cell heat-missed"></span>Missed</span>
+      <span class="heat-legend-item"><span class="heat-cell heat-notdue"></span>Not due</span>
+    </div>
+  </div>`;
+}
+
+function renderHabitsDoorway() {
+  const body = document.getElementById('habits-body');
+  if (!body) return;
+  const title = document.getElementById('habits-title');
+  const back = document.getElementById('habits-back-btn');
+  if (habitsHeatmapBlock) {
+    const b = findBlock(habitsHeatmapBlock);
+    if (!b) { habitsHeatmapBlock = null; renderHabitsDoorway(); return; }
+    if (title) title.textContent = b.label || 'Habit';
+    if (back) back.hidden = false;
+    body.innerHTML = renderHabitHeatmap(b);
+  } else {
+    if (title) title.textContent = '✓ Habits';
+    if (back) back.hidden = true;
+    body.innerHTML = renderHabitSpaceList();
+  }
+}
+
+function openHabitsDoorway() {
+  habitsHeatmapBlock = null;
+  renderHabitsDoorway();
+  habitsOverlay.classList.add('open');
+}
+function closeHabitsDoorway() { habitsOverlay.classList.remove('open'); }
 
 // ---------------- calendar ----------------
 
@@ -6873,6 +7178,48 @@ spaceSheet.addEventListener('click', e => {
 });
 document.getElementById('block-menu').addEventListener('click', onBlockMenuClick);
 document.getElementById('block-menu-backdrop').addEventListener('click', closeBlockMenu);
+
+// ---- Stats hub — doorway overlays wiring ----
+const habitsOverlay     = document.getElementById('habits-overlay');
+const sleepStatsOverlay = document.getElementById('sleepstats-overlay');
+const frankStatsOverlay = document.getElementById('frankstats-overlay');
+const focusStatsOverlay = document.getElementById('focusstats-overlay');
+
+document.getElementById('stats-doorways').addEventListener('click', e => {
+  const card = e.target.closest('.doorway-card');
+  if (!card) return;
+  switch (card.dataset.doorway) {
+    case 'habits':   openHabitsDoorway(); break;
+    case 'sleep':    openSleepDoorway();  break;
+    case 'franklin': openFrankDoorway();  break;
+    case 'focus':    openFocusDoorway();  break;
+    case 'vault':    openVault();         break;
+    case 'journal':  openCode();          break;
+  }
+});
+
+document.getElementById('habits-close-btn').addEventListener('click', closeHabitsDoorway);
+document.getElementById('habits-back-btn').addEventListener('click', () => {
+  habitsHeatmapBlock = null;
+  renderHabitsDoorway();
+});
+document.getElementById('habits-body').addEventListener('click', e => {
+  const spaceRow = e.target.closest('.habit-space-row');
+  if (spaceRow) {
+    const id = spaceRow.dataset.space;
+    if (habitsExpanded.has(id)) habitsExpanded.delete(id); else habitsExpanded.add(id);
+    renderHabitsDoorway();
+    return;
+  }
+  const habitRow = e.target.closest('.habit-row');
+  if (habitRow) {
+    habitsHeatmapBlock = habitRow.dataset.block;
+    renderHabitsDoorway();
+  }
+});
+document.getElementById('sleepstats-close-btn').addEventListener('click', closeSleepDoorway);
+document.getElementById('frankstats-close-btn').addEventListener('click', closeFrankDoorway);
+document.getElementById('focusstats-close-btn').addEventListener('click', closeFocusDoorway);
 
 initWheelPickers();
 render();
