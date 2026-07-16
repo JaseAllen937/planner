@@ -454,17 +454,16 @@
   </div>
 </div>
 
-<!-- Stats doorway: Franklin — hosts the relocated renderTallyChart (off-track trend) -->
+<!-- Stats doorway: Franklin — bad-habits list + virtue-slip ranking; rows open a
+     per-habit detail page (days clean, counts, recent bars, all-time line). -->
 <div class="modal vault-overlay-mode" id="frankstats-overlay" role="dialog" aria-modal="true" aria-label="Franklin stats">
   <div class="vault-overlay-panel">
     <div class="vault-header">
-      <h2 class="vault-title">🔥 Franklin</h2>
+      <button type="button" class="btn habits-back-btn" id="frankstats-back-btn" aria-label="Back to Franklin" hidden>‹ Back</button>
+      <h2 class="vault-title" id="frankstats-title">🔥 Franklin</h2>
       <button type="button" class="btn vault-close-btn" id="frankstats-close-btn" aria-label="Close Franklin stats">Done</button>
     </div>
-    <div class="vault-body" id="frankstats-body">
-      <div id="frankstats-slot"></div>
-      <p class="doorway-note">More coming soon.</p>
-    </div>
+    <div class="vault-body" id="frankstats-body"></div>
   </div>
 </div>
 
@@ -2253,6 +2252,45 @@ function tallyChartSvg(points, xlabel) {
   return `<svg class="tally-chart-svg" viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Tally line chart">${grid}${vgrid}${line}${dots}${yLab}${xLab}</svg>`;
 }
 
+// Sibling bar chart — same geometry/visual language as tallyChartSvg (faint
+// gridlines, integer nice-ticks) but --danger bars. points: [{value, date}].
+function tallyBarChartSvg(points, xlabel) {
+  const W = 340, H = 160, padL = 30, padR = 10, padT = 12, padB = 22;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const n = points.length;
+  const maxV = Math.max(1, ...points.map(p => p.value)); // >= 1 guard (no /0)
+  const { ticks, top } = tallyNiceTicks(maxV);
+  const y = v => padT + plotH - (v / top) * plotH;
+
+  let grid = '', yLab = '';
+  for (const v of ticks) {
+    const yy = y(v).toFixed(1);
+    grid += `<line class="tc-grid" x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}"/>`;
+    yLab += `<text class="tc-axis" x="${padL - 5}" y="${(y(v) + 3).toFixed(1)}" text-anchor="end">${v}</text>`;
+  }
+
+  const slot = n > 0 ? plotW / n : plotW;
+  const gap = Math.min(4, slot * 0.2);
+  let bars = '';
+  for (let i = 0; i < n; i++) {
+    const v = points[i].value;
+    const x0 = padL + i * slot + gap / 2;
+    const w = Math.max(1, slot - gap);
+    const yy = y(v);
+    const h = Math.max(0, (padT + plotH) - yy);
+    bars += `<rect class="tc-bar" x="${x0.toFixed(1)}" y="${yy.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="1.5"/>`;
+  }
+
+  const idxs = n <= 1 ? [0] : [...new Set([0, Math.floor((n - 1) / 2), n - 1])];
+  let xLab = '';
+  for (const i of idxs) {
+    if (i < 0 || i >= n) continue;
+    const cx = padL + i * slot + slot / 2;
+    xLab += `<text class="tc-axis" x="${cx.toFixed(1)}" y="${H - 6}" text-anchor="middle">${escapeHtml(xlabel(points[i]))}</text>`;
+  }
+  return `<svg class="tally-chart-svg" viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Tally bar chart">${grid}${bars}${yLab}${xLab}</svg>`;
+}
+
 function renderTallyChart() {
   const wrap = document.getElementById('tally-chart-wrap');
   if (!wrap) return;
@@ -3869,6 +3907,7 @@ function render() {
   renderStatsOverview();
   renderStatsDoorways();
   if (habitsOverlay && habitsOverlay.classList.contains('open')) renderHabitsDoorway();
+  if (frankStatsOverlay && frankStatsOverlay.classList.contains('open')) renderFrankDoorway();
   renderInsights();
   renderAllTime();
   renderCalendar();
@@ -3954,16 +3993,221 @@ function openSleepDoorway() {
   sleepStatsOverlay.classList.add('open');
 }
 function closeSleepDoorway() { sleepStatsOverlay.classList.remove('open'); }
+// ---- Franklin doorway — bad-habits list + virtue ranking -> per-habit detail ----
+// All figures DERIVE from dated logs (tallyEvents / daily_state.offTrackCount /
+// virtueSlips). Nothing is stored; nav state is in-memory only.
+
+let frankSelectedTally = null;   // tallyId or '__offtrack' (detail) | null (main page)
+
+// Per-day count map for a "series" — a real bad-habit tally OR the synthetic
+// '__offtrack' series sourced from daily_state.offTrackCount (same path the tally
+// chart uses). Returns Map<'YYYY-MM-DD', count> holding only days with count > 0.
+function franklinDayCounts(seriesId) {
+  const m = new Map();
+  const f = franklinData();
+  if (seriesId === '__offtrack') {
+    for (const d of state.daily_state) {
+      if (!d || !d.date) continue;
+      const c = d.offTrackCount | 0;
+      if (c > 0) m.set(d.date, (m.get(d.date) || 0) + c);
+    }
+  } else {
+    for (const e of (f.tallyEvents || [])) {
+      if (e && e.tallyId === seriesId && e.date) m.set(e.date, (m.get(e.date) || 0) + 1);
+    }
+  }
+  return m;
+}
+function franklinSortedDates(map, today) {
+  return [...map.keys()].filter(d => d <= today).sort();
+}
+function franklinTotal(map) { let c = 0; for (const v of map.values()) c += v; return c; }
+function franklinWindowCount(map, dates) { let c = 0; for (const d of dates) c += (map.get(d) || 0); return c; }
+function franklinMonthCount(map, today) {
+  const mo = today.slice(0, 7); let c = 0;
+  for (const [k, v] of map) if (k <= today && k.slice(0, 7) === mo) c += v;
+  return c;
+}
+// Days since the most recent logged day (0 if logged today). null if never logged.
+function franklinDaysClean(map, today) {
+  const ds = franklinSortedDates(map, today);
+  if (ds.length === 0) return null;
+  return daysBetween(ds[ds.length - 1], today);
+}
+// Longest run of consecutive clean days ever: max gap between consecutive logged
+// days, plus the trailing run from the last logged day to today. null if none.
+function franklinLongestClean(map, today) {
+  const ds = franklinSortedDates(map, today);
+  if (ds.length === 0) return null;
+  let best = 0;
+  for (let i = 0; i + 1 < ds.length; i++) {
+    const gap = daysBetween(ds[i], ds[i + 1]) - 1; // clean days strictly between two slip days
+    if (gap > best) best = gap;
+  }
+  const trailing = daysBetween(ds[ds.length - 1], today);
+  if (trailing > best) best = trailing;
+  return best;
+}
+// How many focus turns virtue #i has had from anchor->today (inclusive of the
+// current in-progress cycle). Reuses the exact cycle math of franklinCycleInfo.
+function franklinVirtueFocusCycleCount(virtueIndex) {
+  const f = franklinData();
+  const n = f.virtues.length;
+  if (n === 0) return 0;
+  const cycleDays = Math.max(1, f.cycleDays | 0);
+  let diff = daysBetween(f.anchorDate, todayDate());
+  if (!isFinite(diff) || diff < 0) diff = 0;
+  const currentCycleIndex = Math.floor(diff / cycleDays);
+  const p = ((virtueIndex % n) + n) % n;
+  if (p > currentCycleIndex) return 0;
+  return Math.floor((currentCycleIndex - p) / n) + 1;
+}
+
+function frankTallyLabel(id) {
+  if (id === '__offtrack') return 'Off-track';
+  const t = (franklinData().tallies || []).find(x => x.id === id);
+  return t ? t.label : 'Habit';
+}
+
+// Main page: bad-habits list (A) + virtue-slips ranking (B).
+function renderFrankMain() {
+  const today = todayDate();
+  const f = franklinData();
+  const weekDatesArr = weekDates(startOfWeek(today));
+
+  // (A) bad-habits list — real tallies then the synthetic off-track row.
+  const rows = (f.tallies || []).map(t => ({ id: t.id, label: t.label }));
+  rows.push({ id: '__offtrack', label: 'Off-track' });
+  const listHtml = rows.map(r => {
+    const map = franklinDayCounts(r.id);
+    const clean = franklinDaysClean(map, today);
+    const week = franklinWindowCount(map, weekDatesArr);
+    const cleanStr = clean == null ? '—' : `${clean}d`;
+    return `<button type="button" class="frank-habit-row" data-tally="${escapeHtml(r.id)}">
+      <span class="frank-habit-name">${escapeHtml(r.label)}</span>
+      <span class="frank-habit-metrics">
+        <span class="frank-habit-stat"><span class="fh-num">${cleanStr}</span> clean</span>
+        <span class="frank-habit-stat"><span class="fh-num">${week}</span> this wk</span>
+      </span>
+    </button>`;
+  }).join('');
+
+  // (B) virtue-slips ranking — sort DESC by all-time total; avg per focus cycle.
+  const info = franklinCycleInfo();
+  const vrows = (f.virtues || []).map((v, i) => {
+    const total = virtueLifetimeSlips(v.id);
+    const cycles = franklinVirtueFocusCycleCount(i);
+    return { name: v.name, total, avg: cycles > 0 ? total / cycles : null };
+  });
+  vrows.sort((a, b) => b.total - a.total);
+  const maxTotal = Math.max(1, ...vrows.map(r => r.total));
+  const rankHtml = vrows.length === 0
+    ? `<p class="doorway-empty">No virtues yet.</p>`
+    : vrows.map(r => {
+        const w = Math.round((r.total / maxTotal) * 100);
+        const avgStr = r.avg == null ? '—' : (Math.round(r.avg * 10) / 10).toFixed(1);
+        return `<div class="frank-virtue-row">
+          <div class="frank-virtue-top">
+            <span class="frank-virtue-name">${escapeHtml(r.name)}</span>
+            <span class="frank-virtue-nums"><span class="fv-total">${r.total}</span><span class="fv-avg">${avgStr}/cyc</span></span>
+          </div>
+          <div class="frank-virtue-bar-track"><div class="frank-virtue-bar" style="width:${w}%"></div></div>
+        </div>`;
+      }).join('');
+  const focusName = info.virtue ? escapeHtml(info.virtue.name) : '—';
+
+  return `<div class="frank-main">
+    <section class="frank-section">
+      <h3 class="frank-h">Bad habits</h3>
+      <div class="frank-habit-list">${listHtml}</div>
+    </section>
+    <section class="frank-section">
+      <h3 class="frank-h">Virtue slips</h3>
+      <p class="frank-focus">In focus: <strong>${focusName}</strong></p>
+      <div class="frank-virtue-list">${rankHtml}</div>
+    </section>
+  </div>`;
+}
+
+// Detail page for one bad habit (or off-track): days clean, count tiles, recent
+// bar chart (last 10 complete days, today excluded), all-time daily line.
+function renderFrankDetail(seriesId) {
+  const today = todayDate();
+  const map = franklinDayCounts(seriesId);
+  const clean = franklinDaysClean(map, today);
+  const longest = franklinLongestClean(map, today);
+  const week = franklinWindowCount(map, weekDates(startOfWeek(today)));
+  const month = franklinMonthCount(map, today);
+  const all = franklinTotal(map);
+
+  // Recent bar: the last 10 COMPLETE days (yesterday back 10), today excluded.
+  const barPts = [];
+  for (let i = 10; i >= 1; i--) { const d = addDays(today, -i); barPts.push({ value: map.get(d) || 0, date: d }); }
+  const barLabel = p => parseYmd(p.date).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' });
+
+  // All-time line: first logged day -> yesterday (today excluded).
+  const ds = franklinSortedDates(map, today);
+  const yesterday = addDays(today, -1);
+  let lineHtml;
+  if (ds.length === 0 || ds[0] > yesterday) {
+    lineHtml = `<p class="tally-caption">No data yet — logged days will chart here.</p>`;
+  } else {
+    const linePts = [];
+    let d = ds[0];
+    for (let i = 0; i < 4000 && d <= yesterday; i++) { linePts.push({ value: map.get(d) || 0, startDate: d }); d = addDays(d, 1); }
+    const lineLabel = p => parseYmd(p.startDate).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' });
+    lineHtml = tallyChartSvg(linePts, lineLabel);
+  }
+
+  return `<div class="frank-detail">
+    <div class="frank-hero">
+      <div class="frank-hero-num">${clean == null ? '—' : clean}</div>
+      <div class="frank-hero-lbl">days clean</div>
+      <div class="frank-hero-sub">Longest clean streak: ${longest == null ? '—' : longest + 'd'}</div>
+    </div>
+    <div class="habit-detail-stats">
+      <div class="hd-stat"><div class="hd-val">${week}</div><div class="hd-lbl">This week</div></div>
+      <div class="hd-stat"><div class="hd-val">${month}</div><div class="hd-lbl">This month</div></div>
+      <div class="hd-stat"><div class="hd-val">${all}</div><div class="hd-lbl">All-time</div></div>
+    </div>
+    <section class="frank-section">
+      <h3 class="frank-h">Recent — last 10 days</h3>
+      ${tallyBarChartSvg(barPts, barLabel)}
+    </section>
+    <section class="frank-section">
+      <h3 class="frank-h">All time — daily</h3>
+      ${lineHtml}
+    </section>
+  </div>`;
+}
+
+function renderFrankDoorway() {
+  const body = document.getElementById('frankstats-body');
+  if (!body) return;
+  // Drop a stale selection if that tally was deleted (off-track always valid).
+  if (frankSelectedTally && frankSelectedTally !== '__offtrack'
+      && !(franklinData().tallies || []).some(t => t.id === frankSelectedTally)) {
+    frankSelectedTally = null;
+  }
+  const title = document.getElementById('frankstats-title');
+  const back = document.getElementById('frankstats-back-btn');
+  if (frankSelectedTally) {
+    if (title) title.textContent = frankTallyLabel(frankSelectedTally);
+    if (back) back.hidden = false;
+    body.innerHTML = renderFrankDetail(frankSelectedTally);
+  } else {
+    if (title) title.textContent = '🔥 Franklin';
+    if (back) back.hidden = true;
+    body.innerHTML = renderFrankMain();
+  }
+}
+
 function openFrankDoorway() {
-  relocateStatWrap('tally-chart-wrap', 'frankstats-slot');
-  renderTallyChart();
+  frankSelectedTally = null;
+  renderFrankDoorway();
   frankStatsOverlay.classList.add('open');
 }
-function closeFrankDoorway() {
-  frankStatsOverlay.classList.remove('open');
-  relocateStatWrap('tally-chart-wrap', 'tally-home');
-  renderTallyChart();
-}
+function closeFrankDoorway() { frankStatsOverlay.classList.remove('open'); }
 function openFocusDoorway() {
   renderFocusStats();
   focusStatsOverlay.classList.add('open');
@@ -7220,6 +7464,16 @@ document.getElementById('habits-body').addEventListener('click', e => {
 });
 document.getElementById('sleepstats-close-btn').addEventListener('click', closeSleepDoorway);
 document.getElementById('frankstats-close-btn').addEventListener('click', closeFrankDoorway);
+document.getElementById('frankstats-back-btn').addEventListener('click', () => {
+  frankSelectedTally = null;
+  renderFrankDoorway();
+});
+document.getElementById('frankstats-body').addEventListener('click', e => {
+  const row = e.target.closest('.frank-habit-row');
+  if (!row) return;
+  frankSelectedTally = row.dataset.tally;
+  renderFrankDoorway();
+});
 document.getElementById('focusstats-close-btn').addEventListener('click', closeFocusDoorway);
 
 initWheelPickers();

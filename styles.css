@@ -2586,6 +2586,55 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 .heat-future { background: transparent; }
 .heat-pre    { background: transparent; }   /* days before the habit existed — blank */
 
+/* ---- Franklin doorway: bad-habits list + virtue ranking + detail ---- */
+.frank-section { margin-bottom: 22px; }
+.frank-h {
+  font-size: 13px; font-weight: 600; letter-spacing: 0.02em;
+  color: var(--text-secondary); margin: 0 0 10px 2px;
+}
+
+.frank-habit-list { display: flex; flex-direction: column; gap: 8px; }
+.frank-habit-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  width: 100%; min-height: 52px; padding: 10px 14px;
+  background: var(--card); border: none; border-radius: var(--r-card);
+  box-shadow: var(--shadow-card); cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.frank-habit-row:active { transform: scale(0.99); }
+.frank-habit-name { font-size: 15px; font-weight: 600; color: var(--text-primary); text-align: left; }
+.frank-habit-metrics { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
+.frank-habit-stat { font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
+.fh-num { font-family: var(--font-mono); font-weight: 600; color: var(--text-primary); }
+
+.frank-focus { font-size: 13px; color: var(--text-secondary); margin: 0 0 12px 2px; }
+.frank-focus strong { color: var(--accent); }
+
+.frank-virtue-list { display: flex; flex-direction: column; gap: 12px; }
+.frank-virtue-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 5px; }
+.frank-virtue-name { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.frank-virtue-nums { display: flex; align-items: baseline; gap: 8px; font-family: var(--font-mono); }
+.fv-total { font-size: 14px; font-weight: 700; color: var(--text-primary); }
+.fv-avg { font-size: 11px; color: var(--text-tertiary); }
+.frank-virtue-bar-track {
+  height: 8px; border-radius: 4px; background: var(--surface-inset); overflow: hidden;
+}
+.frank-virtue-bar { height: 100%; border-radius: 4px; background: var(--danger); min-width: 0; }
+
+/* Detail page */
+.frank-hero { text-align: center; padding: 8px 0 20px; }
+.frank-hero-num {
+  font-family: var(--font-mono); font-size: 56px; font-weight: 700; line-height: 1;
+  color: var(--text-primary);
+}
+.frank-hero-lbl {
+  font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--text-secondary); margin-top: 6px;
+}
+.frank-hero-sub { font-size: 13px; color: var(--text-tertiary); margin-top: 10px; }
+
+.tc-bar { fill: var(--danger); }
+
 .heat-legend {
   display: flex;
   justify-content: center;
