@@ -994,6 +994,17 @@ function ensureShape(s) {
   if (!Array.isArray(s.franklin.virtues)) s.franklin.virtues = [];
   if (!Array.isArray(s.franklin.tallyEvents)) s.franklin.tallyEvents = [];
   if (!Array.isArray(s.franklin.virtueSlips)) s.franklin.virtueSlips = [];
+  // Backfill createdAt on tallies that predate the field (additive defensive
+  // guard, no schema bump — runs every load, no-op once set). ONLY adds to
+  // tallies missing createdAt; never overwrites, never touches events/slips, so
+  // it is idempotent. Smoking's real start was 7 days ago; all else -> today.
+  for (const t of s.franklin.tallies) {
+    if (t && typeof t === 'object' && !t.createdAt) {
+      t.createdAt = (t.id === 'tally-smoking' || t.label === 'Smoking')
+        ? addDays(todayDate(), -7)
+        : todayDate();
+    }
+  }
 
   // v9 -> v10: My Code — personal moral code (rules / virtue notes / skills /
   // journal). virtueNotes is keyed by the EXISTING franklin virtue ids (no
@@ -2650,9 +2661,9 @@ function seedFranklin() {
     anchorDate: todayDate(),
     cycleDays: 3,
     tallies: [
-      { id: 'tally-fapping', label: 'Fapping' },
-      { id: 'tally-smoking', label: 'Smoking' },
-      { id: 'tally-impulse', label: 'Impulse' }
+      { id: 'tally-fapping', label: 'Fapping', createdAt: todayDate() },
+      { id: 'tally-smoking', label: 'Smoking', createdAt: todayDate() },
+      { id: 'tally-impulse', label: 'Impulse', createdAt: todayDate() }
     ],
     virtues: [
       { id: 'virtue-comitas',    name: 'Comitas',    definition: 'An approachable, kind, and polite demeanor that fosters goodwill and sociability.' },
@@ -2756,7 +2767,7 @@ function addTally(label) {
   if (f.tallies.length >= FRANKLIN_TALLY_CAP) return;
   const name = (label || '').trim();
   if (!name) return;
-  f.tallies.push({ id: uuid(), label: name });
+  f.tallies.push({ id: uuid(), label: name, createdAt: todayDate() });
   saveState(); render();
 }
 function renameTally(id, label) {
@@ -4043,16 +4054,19 @@ function franklinMonthCount(map, today) {
   return c;
 }
 // Days since the most recent logged day (0 if logged today). null if never logged.
-function franklinDaysClean(map, today) {
+// createdAt (YMD, optional) is the fallback when a tally has NO logged events:
+// the whole span since creation has been clean. Missing createdAt -> null ("—").
+function franklinDaysClean(map, today, createdAt) {
   const ds = franklinSortedDates(map, today);
-  if (ds.length === 0) return null;
+  if (ds.length === 0) return createdAt ? daysBetween(String(createdAt).slice(0, 10), today) : null;
   return daysBetween(ds[ds.length - 1], today);
 }
 // Longest run of consecutive clean days ever: max gap between consecutive logged
-// days, plus the trailing run from the last logged day to today. null if none.
-function franklinLongestClean(map, today) {
+// days, plus the trailing run from the last logged day to today. With no events,
+// the whole span since createdAt is one clean run. null if neither exists.
+function franklinLongestClean(map, today, createdAt) {
   const ds = franklinSortedDates(map, today);
-  if (ds.length === 0) return null;
+  if (ds.length === 0) return createdAt ? daysBetween(String(createdAt).slice(0, 10), today) : null;
   let best = 0;
   for (let i = 0; i + 1 < ds.length; i++) {
     const gap = daysBetween(ds[i], ds[i + 1]) - 1; // clean days strictly between two slip days
@@ -4148,8 +4162,12 @@ function renderFrankMain() {
 function renderFrankDetail(seriesId) {
   const today = todayDate();
   const map = franklinDayCounts(seriesId);
-  const clean = franklinDaysClean(map, today);
-  const longest = franklinLongestClean(map, today);
+  // Real tallies carry a createdAt fallback for days-clean; '__offtrack' is
+  // synthetic (no createdAt) and keeps the old null -> "—" when it has no events.
+  const tally = (franklinData().tallies || []).find(t => t.id === seriesId);
+  const createdAt = tally ? tally.createdAt : null;
+  const clean = franklinDaysClean(map, today, createdAt);
+  const longest = franklinLongestClean(map, today, createdAt);
   const week = franklinWindowCount(map, weekDates(startOfWeek(today)));
   const month = franklinMonthCount(map, today);
   const all = franklinTotal(map);
