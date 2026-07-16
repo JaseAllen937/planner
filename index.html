@@ -478,6 +478,18 @@
   </div>
 </div>
 
+<!-- Stats doorway: Journal — READ-ONLY archive of code.journal + rating trend.
+     Writing/editing stays in My Code; this overlay only READS code.journal. -->
+<div class="modal vault-overlay-mode" id="journalstats-overlay" role="dialog" aria-modal="true" aria-label="Journal">
+  <div class="vault-overlay-panel">
+    <div class="vault-header">
+      <h2 class="vault-title">📓 Journal</h2>
+      <button type="button" class="btn vault-close-btn" id="journalstats-close-btn" aria-label="Close Journal">Done</button>
+    </div>
+    <div class="vault-body" id="journalstats-body"></div>
+  </div>
+</div>
+
 <!-- Spaces — full-screen Space view (modelled on the Vault overlay) -->
 <div class="modal space-overlay-mode" id="space-overlay" role="dialog" aria-modal="true" aria-label="Space">
   <div class="space-overlay-panel">
@@ -3326,15 +3338,16 @@ function renderCodeJournal(body) {
       <button type="button" class="btn btn-primary code-journal-save" data-cact="save-journal">Save entry</button>
     </div>
     <div class="vault-section">
-      <div class="vault-section-head"><span class="vault-section-title">Past entries</span></div>
-      ${past.length ? past.map(e => `
+      <div class="vault-section-head"><span class="vault-section-title">Recent entries</span></div>
+      ${past.length ? past.slice(0, 3).map(e => `
         <div class="code-journal-past">
           <div class="code-journal-past-head">
             <span class="code-journal-date">${escapeHtml(parseYmd(e.date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }))}</span>
             <span class="code-journal-rating rating-${escapeHtml(e.rating || 'none')}">${escapeHtml(codeRatingLabel(e.rating))}</span>
           </div>
           <div class="code-journal-past-text">${escapeHtml(e.text || '')}</div>
-        </div>`).join('') : `<div class="code-empty">No past entries yet.</div>`}
+        </div>`).join('') : `<div class="code-empty">Past entries will appear here.</div>`}
+      ${c.journal.length ? `<button type="button" class="btn btn-ghost code-journal-seeall" data-cact="see-all-journal">See all entries in Stats → Journal ›</button>` : ''}
     </div>`;
 }
 
@@ -3353,6 +3366,7 @@ function onCodeBodyClick(e) {
   else if (act === 'add-skill')    openCodeSkillSheet(null);
   else if (act === 'rate')         { codeJournalRating = el.dataset.rating; document.querySelectorAll('#code-rating button').forEach(b => b.classList.toggle('active', b.dataset.rating === codeJournalRating)); }
   else if (act === 'save-journal') saveJournalFromComposer();
+  else if (act === 'see-all-journal') { closeCode(); switchTab('history'); openJournalDoorway(); }
 }
 
 // ---- Rules: reorder / delete / sheet ----
@@ -4213,6 +4227,77 @@ function openFocusDoorway() {
   focusStatsOverlay.classList.add('open');
 }
 function closeFocusDoorway() { focusStatsOverlay.classList.remove('open'); }
+
+// ---- Journal doorway — READ-ONLY archive of code.journal + rating trend ----
+// Everything DERIVES from code.journal; no composer/editing here (writing lives
+// in My Code). Rating colors reuse the app's tokens: lived=green(--ok),
+// held=blue(--accent), short=red(--danger) — see the .jd-*/.rating-* CSS.
+const JOURNAL_TREND_N = 21;                 // trend strip shows the last N entries
+const JOURNAL_BAR_H  = { lived: 100, held: 66, short: 36 }; // taller = better rating
+
+function renderJournalDoorway() {
+  const body = document.getElementById('journalstats-body');
+  if (!body) return;
+  const entries = (codeData().journal || []).filter(e => e && e.date);
+
+  // 1) All-time rating counts (0 is fine).
+  const counts = { lived: 0, held: 0, short: 0 };
+  for (const e of entries) if (counts[e.rating] != null) counts[e.rating]++;
+  const tile = (id, label, n) =>
+    `<div class="jd-tile jd-tile-${id}"><div class="jd-tile-count">${n}</div><div class="jd-tile-label">${escapeHtml(label)}</div></div>`;
+
+  // 2) Trend: last N entries oldest->newest, one bar each, colored + height by rating.
+  const asc = entries.slice().sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  const trend = asc.slice(-JOURNAL_TREND_N);
+  const bars = trend.length
+    ? trend.map(e => {
+        const known = JOURNAL_BAR_H[e.rating] != null;
+        const r = known ? e.rating : 'none';
+        const h = known ? JOURNAL_BAR_H[e.rating] : 14;
+        const when = escapeHtml(parseYmd(e.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }));
+        return `<span class="jd-bar jd-bar-${r}" style="height:${h}%" title="${when} · ${escapeHtml(codeRatingLabel(e.rating) || 'No rating')}"></span>`;
+      }).join('')
+    : `<div class="jd-trend-empty">No entries to chart yet.</div>`;
+
+  // 3) Archive: newest first, full escaped text via pre-wrap; rating-only rows OK.
+  const desc = entries.slice().sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const archive = desc.length
+    ? desc.map(e => `
+        <div class="jd-entry">
+          <div class="jd-entry-head">
+            <span class="jd-entry-date">${escapeHtml(parseYmd(e.date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }))}</span>
+            <span class="jd-entry-rating rating-${escapeHtml(e.rating || 'none')}">${escapeHtml(codeRatingLabel(e.rating) || '—')}</span>
+          </div>
+          ${e.text ? `<div class="jd-entry-text">${escapeHtml(e.text)}</div>` : ''}
+        </div>`).join('')
+    : `<p class="doorway-empty">No journal entries yet — write tonight's in My Code.</p>`;
+
+  body.innerHTML = `
+    <div class="jd-tiles">
+      ${tile('lived', 'Lived it well', counts.lived)}
+      ${tile('held', 'Held the line', counts.held)}
+      ${tile('short', 'Fell short', counts.short)}
+    </div>
+    <div class="jd-section">
+      <div class="jd-section-head">Recent trend</div>
+      <div class="jd-trend">${bars}</div>
+      <div class="jd-legend">
+        <span class="jd-legend-item"><span class="jd-dot jd-bar-lived"></span>Lived it well</span>
+        <span class="jd-legend-item"><span class="jd-dot jd-bar-held"></span>Held the line</span>
+        <span class="jd-legend-item"><span class="jd-dot jd-bar-short"></span>Fell short</span>
+      </div>
+    </div>
+    <div class="jd-section">
+      <div class="jd-section-head">All entries</div>
+      ${archive}
+    </div>`;
+}
+
+function openJournalDoorway() {
+  renderJournalDoorway();
+  journalStatsOverlay.classList.add('open');
+}
+function closeJournalDoorway() { journalStatsOverlay.classList.remove('open'); }
 
 // ---------------- Habits doorway — Space list -> expand -> per-habit heatmap ----------------
 
@@ -7429,6 +7514,7 @@ const habitsOverlay     = document.getElementById('habits-overlay');
 const sleepStatsOverlay = document.getElementById('sleepstats-overlay');
 const frankStatsOverlay = document.getElementById('frankstats-overlay');
 const focusStatsOverlay = document.getElementById('focusstats-overlay');
+const journalStatsOverlay = document.getElementById('journalstats-overlay');
 
 document.getElementById('stats-doorways').addEventListener('click', e => {
   const card = e.target.closest('.doorway-card');
@@ -7439,7 +7525,7 @@ document.getElementById('stats-doorways').addEventListener('click', e => {
     case 'franklin': openFrankDoorway();  break;
     case 'focus':    openFocusDoorway();  break;
     case 'vault':    openVault();         break;
-    case 'journal':  openCode();          break;
+    case 'journal':  openJournalDoorway(); break;
   }
 });
 
@@ -7475,6 +7561,7 @@ document.getElementById('frankstats-body').addEventListener('click', e => {
   renderFrankDoorway();
 });
 document.getElementById('focusstats-close-btn').addEventListener('click', closeFocusDoorway);
+document.getElementById('journalstats-close-btn').addEventListener('click', closeJournalDoorway);
 
 initWheelPickers();
 render();

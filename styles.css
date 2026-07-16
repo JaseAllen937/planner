@@ -1737,9 +1737,61 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 .code-journal-date { font-size: 12px; color: var(--text-tertiary); font-family: var(--font-mono); }
 .code-journal-rating { font-size: 11px; font-weight: 700; color: var(--text-secondary); }
 .code-journal-rating.rating-lived { color: var(--ok); }
+.code-journal-rating.rating-held  { color: var(--accent); }
 .code-journal-rating.rating-short { color: var(--danger); }
 .code-journal-past-text {
   font-size: 14px; color: var(--text-primary); line-height: 1.45;
+  white-space: pre-wrap; word-break: break-word;
+}
+.code-journal-seeall { width: 100%; min-height: 44px; margin-top: 12px; font-weight: 600; }
+
+/* ---- Journal doorway (read-only archive + rating trend) ---- */
+.jd-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.jd-tile {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  background: var(--surface-inset); border-radius: var(--r-card); padding: 14px 8px;
+}
+.jd-tile-count {
+  font-size: 28px; font-weight: 800; line-height: 1;
+  font-family: var(--font-mono); font-feature-settings: var(--num);
+}
+.jd-tile-label { font-size: 12px; color: var(--text-secondary); text-align: center; overflow-wrap: anywhere; }
+.jd-tile-lived .jd-tile-count { color: var(--ok); }
+.jd-tile-held  .jd-tile-count { color: var(--accent); }
+.jd-tile-short .jd-tile-count { color: var(--danger); }
+
+.jd-section { margin-top: 20px; }
+.jd-section-head {
+  font-size: 13px; font-weight: 700; color: var(--text-secondary);
+  text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 10px;
+}
+.jd-trend {
+  display: flex; align-items: flex-end; gap: 4px;
+  height: 88px; padding: 8px 10px;
+  background: var(--surface-inset); border-radius: var(--r-card);
+}
+.jd-bar { flex: 1 1 0; min-width: 5px; border-radius: 3px 3px 0 0; background: var(--text-tertiary); }
+.jd-bar-lived { background: var(--ok); }
+.jd-bar-held  { background: var(--accent); }
+.jd-bar-short { background: var(--danger); }
+.jd-bar-none  { background: var(--text-tertiary); }
+.jd-trend-empty { margin: auto; font-size: 13px; color: var(--text-tertiary); }
+.jd-legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 10px; }
+.jd-legend-item { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); }
+.jd-dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+
+.jd-entry { padding: 12px 0; border-top: 1px solid var(--separator); }
+.jd-entry:first-of-type { border-top: none; }
+.jd-entry-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 5px;
+}
+.jd-entry-date { font-size: 12px; color: var(--text-tertiary); font-family: var(--font-mono); }
+.jd-entry-rating { font-size: 11px; font-weight: 700; color: var(--text-secondary); }
+.jd-entry-rating.rating-lived { color: var(--ok); }
+.jd-entry-rating.rating-held  { color: var(--accent); }
+.jd-entry-rating.rating-short { color: var(--danger); }
+.jd-entry-text {
+  font-size: 14px; color: var(--text-primary); line-height: 1.5;
   white-space: pre-wrap; word-break: break-word;
 }
 
