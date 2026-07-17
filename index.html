@@ -1978,10 +1978,23 @@ function focusFmtRate(r) {
   return r < 1 ? r.toFixed(1) : String(Math.round(r));
 }
 
+// In-memory list->detail nav for the Focus doorway (mirrors frankSelectedTally).
+// null = list/main view; a session id = that session's detail page. Not persisted.
+let focusSelectedSession = null;
+
 function renderFocusStats() {
   const wrap = document.getElementById('focus-stats-wrap');
   if (!wrap) return;
+  if (focusSelectedSession) {
+    const sess = (state.focusSessions || []).find(s => s && s.id === focusSelectedSession && s.start && s.end);
+    if (sess) { wrap.innerHTML = renderFocusDetail(sess); return; }
+    focusSelectedSession = null;   // stale id (e.g. wiped session) -> fall back to main
+  }
+  renderFocusMain(wrap);
+}
 
+// Main Focus view: headline rate + nudge, companion tiles, scatter, recent log.
+function renderFocusMain(wrap) {
   const today = todayDate();
   const sessionsAll = (state.focusSessions || []).filter(s => s && s.start && s.end);
 
@@ -2052,11 +2065,12 @@ function renderFocusStats() {
       : parseYmd(s.date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
     const durStr = hoursToHuman(focusSessHours(s)) || '0m';
     const laps = s.lapses | 0;
-    return `<div class="focus-session-row">
+    // Each row is a tappable button opening this session's detail page.
+    return `<button type="button" class="focus-session-row focus-session-row-btn" data-session-id="${escapeHtml(s.id || '')}" aria-label="Open session detail">
       <span class="focus-session-time">${escapeHtml(dLabel)}</span>
       <span class="focus-session-dur">${escapeHtml(durStr)}</span>
       <span class="focus-session-lapses">${laps} lapse${laps === 1 ? '' : 's'}</span>
-    </div>`;
+    </button>`;
   }).join('');
 
   wrap.innerHTML = `
@@ -2077,6 +2091,111 @@ function renderFocusStats() {
       <div class="focus-legend">faded = older · ringed = last 3 days · bottom-right = long &amp; clean</div>
       <div class="focus-log-head">Recent sessions</div>
       ${logRows}
+    </div>`;
+}
+
+// ---- Focus per-session detail — stats + within-session lapse timeline ----
+// READ-ONLY over one focusSessions record. Timeline derives from lapseOffsets
+// (v47+); older sessions lack the array and show a note instead.
+
+// Bucket width (minutes) scales with session length so bars stay readable:
+//   <= 40m -> 1-min buckets;  41-80m -> 2-min;  > 80m -> 5-min.
+function focusBucketMin(durMin) {
+  if (durMin <= 40) return 1;
+  if (durMin <= 80) return 2;
+  return 5;
+}
+
+// Per-minute lapse-density bars: bucket offsets (seconds) across the session and
+// draw one --danger bar per bucket, height = lapse count. Bursts within a single
+// bucket stack into one tall bar (both WHEN and HOW MANY are preserved).
+function focusLapseTimelineSvg(offsets, durMin) {
+  const bucketMin = focusBucketMin(durMin);
+  const nb = Math.max(1, Math.ceil(durMin / bucketMin));
+  const counts = new Array(nb).fill(0);
+  for (const off of (offsets || [])) {
+    if (typeof off !== 'number' || !isFinite(off) || off < 0) continue;
+    let bi = Math.floor((off / 60) / bucketMin);
+    if (bi < 0) bi = 0;
+    if (bi >= nb) bi = nb - 1;      // an offset at/after the end lands in the last bucket
+    counts[bi]++;
+  }
+
+  const W = 340, H = 152, padL = 26, padR = 10, padT = 12, padB = 28;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const maxV = Math.max(1, ...counts);          // >= 1 guard (no /0; all-zero stays flat)
+  const { ticks, top } = tallyNiceTicks(maxV);
+  const y = v => padT + plotH - (v / top) * plotH;
+
+  let grid = '', yLab = '';
+  for (const v of ticks) {
+    const yy = y(v).toFixed(1);
+    grid += `<line class="tc-grid" x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}"/>`;
+    yLab += `<text class="tc-axis" x="${padL - 5}" y="${(y(v) + 3).toFixed(1)}" text-anchor="end">${v}</text>`;
+  }
+
+  const slot = plotW / nb;
+  const gap = Math.min(3, slot * 0.25);
+  let bars = '';
+  for (let i = 0; i < nb; i++) {
+    const v = counts[i];
+    const x0 = padL + i * slot + gap / 2;
+    const w = Math.max(1, slot - gap);
+    const yy = y(v);
+    const h = Math.max(0, (padT + plotH) - yy);
+    const t0 = Math.round(i * bucketMin), t1 = Math.round((i + 1) * bucketMin);
+    bars += `<rect class="tc-bar focus-timeline-bar" x="${x0.toFixed(1)}" y="${yy.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="1"><title>${t0}–${t1}m: ${v} lapse${v === 1 ? '' : 's'}</title></rect>`;
+  }
+
+  const xLab =
+    `<text class="tc-axis" x="${padL}" y="${H - 6}" text-anchor="start">0m</text>` +
+    `<text class="tc-axis" x="${(padL + plotW / 2).toFixed(1)}" y="${H - 6}" text-anchor="middle">time into session · ${bucketMin}m buckets</text>` +
+    `<text class="tc-axis" x="${W - padR}" y="${H - 6}" text-anchor="end">${Math.round(durMin)}m</text>`;
+
+  return `<svg class="focus-timeline-svg" viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Per-minute lapse density timeline">${grid}${bars}${yLab}${xLab}</svg>`;
+}
+
+function renderFocusDetail(sess) {
+  const today = todayDate();
+  const dLabel = sess.date === today
+    ? 'Today'
+    : parseYmd(sess.date).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+  const hours = focusSessHours(sess);
+  const durMin = hours * 60;
+  const lapses = sess.lapses | 0;
+  const rate = hours > 0 ? lapses / hours : null;
+
+  const tile = (val, label) =>
+    `<div class="focus-tile"><div class="focus-tile-val">${escapeHtml(val)}</div><div class="focus-tile-label">${escapeHtml(label)}</div></div>`;
+  const tiles = `<div class="focus-tiles">
+    ${tile(hoursToHuman(hours) || '0m', 'duration')}
+    ${tile(String(lapses), lapses === 1 ? 'lapse' : 'lapses')}
+    ${tile(focusFmtRate(rate) + ' /hr', 'lapse rate')}
+  </div>`;
+
+  // Timeline vs. older-session note vs. clean-session note. Array presence — NOT
+  // count — decides: an empty array is a v47+ clean session; a missing array is
+  // an older session recorded before per-lapse capture.
+  let timeline;
+  if (!Array.isArray(sess.lapseOffsets)) {
+    timeline = `<p class="focus-detail-note muted">No per-lapse detail for this session (recorded before timeline tracking).</p>`;
+  } else if (durMin < 1) {
+    timeline = `<p class="focus-detail-note muted">Session too short to chart a timeline.</p>`;
+  } else {
+    const chart = focusLapseTimelineSvg(sess.lapseOffsets, durMin);
+    const note = sess.lapseOffsets.length === 0
+      ? `<p class="focus-detail-note clean">No lapses — clean session 🎯</p>` : '';
+    timeline = `<div class="focus-scatter-head">Lapse timeline</div>${chart}${note}`;
+  }
+
+  return `
+    <div class="summary-panel focus-stats-panel">
+      <div class="focus-detail-head">
+        <button type="button" class="focus-back" data-focus-back aria-label="Back to Focus">‹ Back</button>
+        <h3 class="focus-detail-title">${escapeHtml(dLabel)}</h3>
+      </div>
+      ${tiles}
+      ${timeline}
     </div>`;
 }
 
@@ -4323,6 +4442,7 @@ function openFrankDoorway() {
 }
 function closeFrankDoorway() { frankStatsOverlay.classList.remove('open'); }
 function openFocusDoorway() {
+  focusSelectedSession = null;   // always open on the main list, not a stale detail
   renderFocusStats();
   focusStatsOverlay.classList.add('open');
 }
@@ -7661,6 +7781,16 @@ document.getElementById('frankstats-body').addEventListener('click', e => {
   renderFrankDoorway();
 });
 document.getElementById('focusstats-close-btn').addEventListener('click', closeFocusDoorway);
+// Focus doorway list<->detail: tap a session row to open its detail, Back to return.
+document.getElementById('focus-stats-wrap').addEventListener('click', e => {
+  if (e.target.closest('[data-focus-back]')) { focusSelectedSession = null; renderFocusStats(); return; }
+  const row = e.target.closest('[data-session-id]');
+  if (!row) return;
+  const id = row.dataset.sessionId;
+  if (!id) return;
+  focusSelectedSession = id;
+  renderFocusStats();
+});
 document.getElementById('journalstats-close-btn').addEventListener('click', closeJournalDoorway);
 
 initWheelPickers();

@@ -1489,6 +1489,36 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 .focus-legend { font-size: 11px; color: var(--text-tertiary); margin: 6px 0 2px; line-height: 1.4; }
 .focus-scatter-empty { padding: 20px 0; }
 
+/* ---------- Focus: tappable session rows + per-session detail ---------- */
+.focus-session-row-btn {
+  width: 100%; min-height: 44px;
+  background: none; border: none; border-top: 1px solid var(--separator);
+  border-radius: 0; font: inherit; color: inherit; cursor: pointer;
+  text-align: left; -webkit-appearance: none; appearance: none;
+}
+.focus-session-row-btn:first-of-type { border-top: none; }
+.focus-session-row-btn:active { background: var(--surface-inset); }
+
+.focus-detail-head { display: flex; align-items: center; gap: 10px; margin: -2px 0 12px; }
+.focus-back {
+  min-height: 44px; min-width: 44px; padding: 0 6px 0 0;
+  background: none; border: none; cursor: pointer;
+  color: var(--accent); font-size: 15px; font-weight: 600;
+  display: inline-flex; align-items: center; -webkit-appearance: none; appearance: none;
+}
+.focus-detail-title {
+  margin: 0; font-size: 15px; font-weight: 700; color: var(--text-primary);
+  text-transform: none; letter-spacing: 0; font-family: inherit;
+}
+.focus-timeline-svg { display: block; width: 100%; height: auto; margin: 2px 0; }
+.focus-timeline-bar { fill: var(--danger); }
+.focus-detail-note {
+  margin: 10px 0 2px; font-size: 12px; line-height: 1.5;
+  padding: 10px 12px; background: var(--surface-inset); border-radius: var(--r-pill);
+}
+.focus-detail-note.muted { color: var(--text-secondary); }
+.focus-detail-note.clean { color: var(--ok); }
+
 /* ---------- Off-track chip (top bar) ---------- */
 .off-track-chip {
   display: inline-flex;
