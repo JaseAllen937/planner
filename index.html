@@ -1846,7 +1846,9 @@ function renderSleepCard() {
 }
 
 function startFocusSession() {
-  state.activeFocus = { start: nowIso(), lapses: 0 };
+  // lapseOffsets: seconds-from-start for each lapse (for a future timeline view).
+  // Optional/additive — older sessions have only the `lapses` total.
+  state.activeFocus = { start: nowIso(), lapses: 0, lapseOffsets: [] };
   saveState();
   openFocusOverlay();
 }
@@ -1860,7 +1862,8 @@ function endFocusSession() {
     date: todayDate(),
     start: af.start,
     end,
-    lapses: af.lapses | 0
+    lapses: af.lapses | 0,
+    lapseOffsets: Array.isArray(af.lapseOffsets) ? af.lapseOffsets.slice() : []
   });
   state.activeFocus = null;
   saveState();
@@ -1882,6 +1885,10 @@ function discardFocusSession() {
 function incrementFocusLapse() {
   if (!state.activeFocus) return;
   state.activeFocus.lapses = (state.activeFocus.lapses | 0) + 1;
+  // Record when (seconds from session start) this lapse happened.
+  if (!Array.isArray(state.activeFocus.lapseOffsets)) state.activeFocus.lapseOffsets = [];
+  const off = Math.max(0, Math.round((Date.now() - Date.parse(state.activeFocus.start)) / 1000));
+  state.activeFocus.lapseOffsets.push(off);
   saveState();
   refreshFocusOverlayDynamic();
   pulseFocusTap();
@@ -1890,6 +1897,8 @@ function incrementFocusLapse() {
 function undoFocusLapse() {
   if (!state.activeFocus) return;
   state.activeFocus.lapses = Math.max(0, (state.activeFocus.lapses | 0) - 1);
+  // Undo the most recent lapse's offset too, keeping length in sync with the total.
+  if (Array.isArray(state.activeFocus.lapseOffsets) && state.activeFocus.lapseOffsets.length) state.activeFocus.lapseOffsets.pop();
   saveState();
   refreshFocusOverlayDynamic();
 }
