@@ -36,6 +36,9 @@
   --danger-dim: rgba(255, 59, 48, 0.12);
   --ok:         #34c759;
   --ok-dim:     rgba(52, 199, 89, 0.12);
+  /* Focus session-type accent — purple for Reading. Must match the scatter's
+     JS target FOCUS_SCATTER_READING = rgb(138,92,224). */
+  --focus-reading: #8a5ce0;
 
   /* ---- Priority — DISTINCT from --accent so the amber bar won't clash if accent changes ---- */
   --prio-high:   #ff3b30;
@@ -1528,6 +1531,19 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
   -webkit-appearance: none; appearance: none;
 }
 .focus-delete-btn:hover { background: var(--danger-dim); }
+
+/* ---------- Focus session types (Work / Reading) ---------- */
+/* Picker on the Focus card — two tabs, so override .type-tabs' 3-col grid. */
+.focus-type-tabs { grid-template-columns: repeat(2, 1fr); margin: 4px 0 12px; }
+/* Small colored dot before a typed session's date in the recent-sessions log. */
+.focus-type-dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  margin-right: 6px; vertical-align: baseline;
+}
+.focus-type-work    { background: var(--accent); }
+.focus-type-reading { background: var(--focus-reading); }
+/* Muted type suffix on the detail page title (e.g. "· Reading"). */
+.focus-detail-type { color: var(--text-secondary); font-weight: 500; font-size: 0.9em; }
 
 /* ---------- Off-track chip (top bar) ---------- */
 .off-track-chip {

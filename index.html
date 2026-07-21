@@ -896,6 +896,9 @@ function ensureShape(s) {
   // Defensive defaults for fresh-v3 states (seedState already sets these).
   if (!Array.isArray(s.focusSessions)) s.focusSessions = [];
   if (typeof s.activeFocus === 'undefined') s.activeFocus = null;
+  // Sticky Focus session-type preference (NOT user data / not version-gated):
+  // default to 'work' and normalize any bad merged-in value. Additive.
+  if (s.focusLastType !== 'work' && s.focusLastType !== 'reading') s.focusLastType = 'work';
 
   // v3 -> v4: add meta.lastWipe marker (ISO timestamp of the most recent
   // history wipe, or null). Streak/miss math floors its look-back at this date
@@ -1836,12 +1839,26 @@ function renderFocusCard() {
   } else {
     summary = 'Tap to start a deep-work block. Log each time you notice your focus slipped.';
   }
+  // While a session runs, surface its type in the summary line (in place of the
+  // picker, which is hidden mid-session). Untyped (pre-deploy) sessions: no suffix.
+  if (active) {
+    const t = state.activeFocus.type;
+    if (t === 'work' || t === 'reading') summary += ` · ${focusTypeLabel(t)}`;
+  }
   const btnLabel = active ? 'Resume Focus Session' : 'Start Focus Session';
+
+  // Type picker: only when NO session is active (mid-session the type is fixed).
+  const typePicker = active ? '' : `
+      <div class="type-tabs focus-type-tabs" id="focus-type-tabs">
+        <button type="button" data-ftype="work" class="${state.focusLastType === 'work' ? 'active' : ''}">Work</button>
+        <button type="button" data-ftype="reading" class="${state.focusLastType === 'reading' ? 'active' : ''}">Reading</button>
+      </div>`;
 
   wrap.innerHTML = `
     <div class="focus-card" id="focus-card">
       <div class="focus-label">Focus</div>
       <div class="focus-summary">${escapeHtml(summary)}</div>
+      ${typePicker}
       <button type="button" class="btn btn-primary focus-start-btn" id="focus-start-btn">${escapeHtml(btnLabel)}</button>
     </div>
   `;
@@ -1849,7 +1866,20 @@ function renderFocusCard() {
     if (state.activeFocus) openFocusOverlay();
     else                   startFocusSession();
   });
+  const typeTabs = document.getElementById('focus-type-tabs');
+  if (typeTabs) typeTabs.addEventListener('click', e => {
+    const b = e.target.closest('[data-ftype]');
+    if (!b) return;
+    state.focusLastType = b.dataset.ftype;   // 'work' | 'reading' — stored preference, syncs
+    saveState();
+    render();
+  });
 }
+
+// Display label for a focus session type. Returns '' for absent/untagged.
+function focusTypeLabel(t) { return t === 'work' ? 'Work' : t === 'reading' ? 'Reading' : ''; }
+// Small colored dot for a typed session; '' for untagged (absence reads cleaner).
+function focusTypeDot(t) { return (t === 'work' || t === 'reading') ? `<span class="focus-type-dot focus-type-${t}"></span>` : ''; }
 
 // ---------------- sleep (bedtime) ----------------
 // The daily log already carries a `bedtime` field ("HH:MM" | null). This card
@@ -1905,7 +1935,8 @@ function renderSleepCard() {
 function startFocusSession() {
   // lapseOffsets: seconds-from-start for each lapse (for a future timeline view).
   // Optional/additive — older sessions have only the `lapses` total.
-  state.activeFocus = { start: nowIso(), lapses: 0, lapseOffsets: [] };
+  // type: sticky Work/Reading choice, captured at start (guarded to a valid value).
+  state.activeFocus = { start: nowIso(), type: state.focusLastType, lapses: 0, lapseOffsets: [] };
   saveState();
   openFocusOverlay();
 }
@@ -1914,14 +1945,18 @@ function endFocusSession() {
   if (!state.activeFocus) { closeFocusOverlay(); return; }
   const af = state.activeFocus;
   const end = nowIso();
-  state.focusSessions.push({
+  const rec = {
     id: uuid(),
     date: todayDate(),
     start: af.start,
     end,
     lapses: af.lapses | 0,
     lapseOffsets: Array.isArray(af.lapseOffsets) ? af.lapseOffsets.slice() : []
-  });
+  };
+  // type only when valid — a session started pre-deploy has no af.type, so the
+  // record stays untagged (absent field = old session, same as lapseOffsets).
+  if (af.type === 'work' || af.type === 'reading') rec.type = af.type;
+  state.focusSessions.push(rec);
   state.activeFocus = null;
   saveState();
   closeFocusOverlay();
@@ -2124,7 +2159,7 @@ function renderFocusMain(wrap) {
     const laps = s.lapses | 0;
     // Each row is a tappable button opening this session's detail page.
     return `<button type="button" class="focus-session-row focus-session-row-btn" data-session-id="${escapeHtml(s.id || '')}" aria-label="Open session detail">
-      <span class="focus-session-time">${escapeHtml(dLabel)}</span>
+      <span class="focus-session-time">${focusTypeDot(s.type)}${escapeHtml(dLabel)}</span>
       <span class="focus-session-dur">${escapeHtml(durStr)}</span>
       <span class="focus-session-lapses">${laps} lapse${laps === 1 ? '' : 's'}</span>
     </button>`;
@@ -2145,7 +2180,7 @@ function renderFocusMain(wrap) {
       </div>
       <div class="focus-scatter-head">Length vs lapse rate</div>
       ${scatter}
-      <div class="focus-legend">faded = older · ringed = last 3 days · bottom-right = long &amp; clean</div>
+      <div class="focus-legend">faded = older · ringed = last 3 days · bottom-right = long &amp; clean · blue = work · purple = reading · grey = untagged</div>
       <div class="focus-log-head">Recent sessions</div>
       ${logRows}
     </div>`;
@@ -2249,7 +2284,7 @@ function renderFocusDetail(sess) {
     <div class="summary-panel focus-stats-panel">
       <div class="focus-detail-head">
         <button type="button" class="focus-back" data-focus-back aria-label="Back to Focus">‹ Back</button>
-        <h3 class="focus-detail-title">${escapeHtml(dLabel)}</h3>
+        <h3 class="focus-detail-title">${escapeHtml(dLabel)}${focusTypeLabel(sess.type) ? `<span class="focus-detail-type"> · ${focusTypeLabel(sess.type)}</span>` : ''}</h3>
       </div>
       ${tiles}
       ${timeline}
@@ -2279,6 +2314,13 @@ function deleteFocusSession(id) {
 // Scatter: x = duration (minutes), y = lapse rate (lapses/hr, 0 at BOTTOM), so the
 // desirable corner is BOTTOM-RIGHT (long + clean). Dots shade oldest(pale)->newest
 // (--accent); sessions within the last 3 days get a ring. READ-ONLY; no target line.
+// Scatter age-ramp TARGET colors by session type. The ramp START is the shared
+// pale-grey c0 inside focusScatterSvg, so age-fade reads identically across
+// types; only the target hue differs. These must visually match the CSS:
+// FOCUS_SCATTER_READING <-> --focus-reading / .focus-type-reading (purple).
+const FOCUS_SCATTER_READING = [138, 92, 224];    // purple — unclaimed hue in this app's charts
+const FOCUS_SCATTER_UNTAGGED = [150, 155, 162];  // neutral grey — quiet pre-feature history
+
 function focusScatterSvg(sessions, today) {
   const W = 340, H = 184, padL = 34, padR = 14, padT = 14, padB = 30;
   const plotW = W - padL - padR, plotH = H - padT - padB;
@@ -2287,7 +2329,8 @@ function focusScatterSvg(sessions, today) {
     .map(s => {
       const h = focusSessHours(s);
       if (h <= 0) return null;
-      return { min: h * 60, rate: (s.lapses | 0) / h, date: s.date || '' };
+      const type = s.type === 'reading' ? 'reading' : s.type === 'work' ? 'work' : null;
+      return { min: h * 60, rate: (s.lapses | 0) / h, date: s.date || '', type };
     })
     .filter(Boolean)
     .sort((a, b) => a.date.localeCompare(b.date)); // oldest -> newest for age rank
@@ -2323,14 +2366,19 @@ function focusScatterSvg(sessions, today) {
     `<text class="fs-axis" x="${padL - 6}" y="${(padT + plotH).toFixed(1)}" text-anchor="end">0</text>` +
     `<text class="fs-axis fs-axis-y" x="10" y="${(padT + plotH / 2).toFixed(1)}" text-anchor="middle" transform="rotate(-90 10 ${(padT + plotH / 2).toFixed(1)})">lapses/hr</text>`;
 
-  // Dots: age-shaded pale-grey -> accent by rank; recent (<= 2 days old) ringed.
+  // Dots: age-shaded pale-grey -> type-target by rank; recent (<= 2 days old) ringed.
+  // c1 (accent blue) is the WORK target; reading/untagged swap only the target hue,
+  // so work-only input renders byte-identically to the pre-type-encoding scatter.
   const c0 = [174, 174, 178], c1 = [10, 132, 255];
   const n = pts.length;
   const recentCut = addDays(today, -2);
   let dots = '';
   pts.forEach((p, i) => {
     const t = n <= 1 ? 1 : i / (n - 1);
-    const col = c0.map((c, k) => Math.round(c + (c1[k] - c) * t));
+    const target = p.type === 'reading' ? FOCUS_SCATTER_READING
+                 : p.type === null ? FOCUS_SCATTER_UNTAGGED
+                 : c1; // 'work' -> accent (byte-identical to old behavior)
+    const col = c0.map((c, k) => Math.round(c + (target[k] - c) * t));
     const fill = `rgb(${col[0]},${col[1]},${col[2]})`;
     const cx = x(p.min).toFixed(1), cy = y(p.rate).toFixed(1);
     if (p.date >= recentCut) dots += `<circle class="fs-ring" cx="${cx}" cy="${cy}" r="7"/>`;
