@@ -1861,6 +1861,56 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
   white-space: pre-wrap; word-break: break-word;
 }
 
+/* ---- v49: Code-practice card, read-dots, reading sub-block ---- */
+.jd-practice {
+  display: flex; gap: 10px; margin-top: 12px;
+  background: var(--surface-inset); border-radius: var(--r-card); padding: 14px 12px;
+}
+.jd-practice-stat { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.jd-practice-num {
+  font-size: 28px; font-weight: 800; line-height: 1; color: var(--text-primary);
+  font-family: var(--font-mono); font-feature-settings: var(--num);
+}
+.jd-practice-denom { font-size: 15px; font-weight: 600; color: var(--text-tertiary); }
+.jd-practice-label { font-size: 12px; color: var(--text-secondary); text-align: center; overflow-wrap: anywhere; }
+.jd-practice-empty { flex: 1; font-size: 13px; color: var(--text-tertiary); text-align: center; }
+
+/* Read-dots row — mirrors .jd-trend's flex + gap + horizontal padding so each
+   dot centers under its bar column. */
+.jd-readdots { display: flex; gap: 4px; padding: 6px 10px 0; }
+.jd-dot-cell { flex: 1 1 0; min-width: 5px; display: flex; justify-content: center; }
+.jd-dot-read, .jd-dot-unread {
+  width: 6px; height: 6px; border-radius: 50%; display: inline-block; box-sizing: border-box;
+}
+.jd-dot-read { background: var(--text-secondary); }
+.jd-dot-unread { border: 1px solid var(--text-tertiary); background: transparent; }
+.jd-legend .jd-dot-read { width: 8px; height: 8px; }
+
+.jd-entry-read {
+  font-size: 12px; color: var(--text-tertiary);
+  font-family: var(--font-mono); margin-bottom: 5px;
+}
+.jd-reading {
+  margin-top: 8px; padding: 4px 0 4px 10px;
+  border-left: 2px solid var(--separator);
+}
+.jd-reading-label {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.06em;
+  color: var(--text-tertiary); font-family: var(--font-mono); margin-bottom: 3px;
+}
+.jd-reading-text {
+  font-size: 13px; color: var(--text-secondary); line-height: 1.5;
+  white-space: pre-wrap; word-break: break-word;
+}
+
+/* ---- v49: gated read-slice card in the journal composer ---- */
+.code-readslice-virtue { margin-bottom: 4px; }
+.code-readslice-vn { margin-top: 10px; }
+.code-readslice-empty { font-size: 13px; color: var(--text-tertiary); margin-top: 8px; }
+.code-readslice-rule { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--separator); }
+.code-readslice-done { margin-top: 16px; }
+.code-summary-add { align-self: flex-start; margin: 2px 0 6px; padding-left: 0; }
+
 /* ---- The Benjamin Franklin overlay body ---- */
 .fr-tallies { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .fr-tally {

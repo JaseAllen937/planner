@@ -780,7 +780,7 @@ function loadState() {
   if (raw) {
     try {
       const parsed = JSON.parse(raw);
-      if (parsed && parsed.meta && (parsed.meta.version >= 1 && parsed.meta.version <= 10)) {
+      if (parsed && parsed.meta && (parsed.meta.version >= 1 && parsed.meta.version <= 11)) {
         return ensureShape(parsed);
       }
     } catch (e) {
@@ -1019,6 +1019,18 @@ function ensureShape(s) {
   if (!s.code.virtueNotes || typeof s.code.virtueNotes !== 'object') s.code.virtueNotes = {};
   if (!Array.isArray(s.code.skills)) s.code.skills = [];
   if (!Array.isArray(s.code.journal)) s.code.journal = [];
+  // Always-run guard so a merged-in blob can never leave the array missing.
+  if (!Array.isArray(s.code.codeReads)) s.code.codeReads = [];
+
+  // ---- v11: gated Code read-through (dated event log) + reading summaries.
+  // Idempotent — runs only if meta.version < 11. Adds structure only; never
+  // seeds, refills, or rewrites existing user data. readingSummary on journal
+  // entries needs no migration (absent field = old entry; render handles it).
+  if ((s.meta.version || 1) < 11) {
+    if (!s.code || typeof s.code !== 'object') s.code = { rules: [], virtueNotes: {}, skills: [], journal: [] };
+    if (!Array.isArray(s.code.codeReads)) s.code.codeReads = [];
+    s.meta.version = 11;
+  }
 
   // Cloud-sync uses meta.updated_at as the conflict-resolution timestamp.
   // Backfill it for pre-sync states.
@@ -1043,7 +1055,7 @@ function removeSampleHabits(s) {
 function seedState() {
   const now = nowIso();
   return {
-    meta: { version: 10, created_at: now, updated_at: now, last_export_at: null, lastWipe: null, tombstones: {} },
+    meta: { version: 11, created_at: now, updated_at: now, last_export_at: null, lastWipe: null, tombstones: {} },
     // No sample habits — habits are now created only as checkbox blocks in Spaces.
     habits: [],
     items: [],
@@ -1057,7 +1069,7 @@ function seedState() {
     spaces: [],
     blocks: [],
     franklin: seedFranklin(),
-    code: { rules: [], virtueNotes: {}, skills: [], journal: [] }
+    code: { rules: [], virtueNotes: {}, skills: [], journal: [], codeReads: [] }
   };
 }
 
@@ -3310,14 +3322,16 @@ let codeVirtueId = null;      // (legacy — virtue detail page removed; kept to
 let codeRuleScope = 'public'; // narrow-screen Public|Private toggle
 let codeForm = null;          // sheet form state
 let codeJournalRating = '';   // composer rating (in-memory)
+let codeSummaryOpen = false;  // composer: reading-summary textarea revealed (in-memory)
 
 function codeData() {
-  if (!state.code || typeof state.code !== 'object') state.code = { rules: [], virtueNotes: {}, skills: [], journal: [] };
+  if (!state.code || typeof state.code !== 'object') state.code = { rules: [], virtueNotes: {}, skills: [], journal: [], codeReads: [] };
   const c = state.code;
   if (!Array.isArray(c.rules)) c.rules = [];
   if (!c.virtueNotes || typeof c.virtueNotes !== 'object') c.virtueNotes = {};
   if (!Array.isArray(c.skills)) c.skills = [];
   if (!Array.isArray(c.journal)) c.journal = [];
+  if (!Array.isArray(c.codeReads)) c.codeReads = [];
   return c;
 }
 function codeVirtues() { return (state.franklin && Array.isArray(state.franklin.virtues)) ? state.franklin.virtues : []; }
@@ -3354,6 +3368,7 @@ function toggleCodeJournal() {
   if (codeView === 'journal') { codeView = 'main'; }
   else {
     codeView = 'journal'; codeVirtueId = null;
+    codeSummaryOpen = false; // don't leak the reading-summary reveal across nights
     const e = codeData().journal.find(x => x.date === todayDate());
     codeJournalRating = e ? (e.rating || '') : '';
   }
@@ -3366,7 +3381,7 @@ function renderCode() {
   const body = document.getElementById('code-body');
   if (!body) return;
   const ae = document.activeElement;
-  if (ae && ae.id === 'code-journal-text') return; // don't clobber the composer
+  if (ae && (ae.id === 'code-journal-text' || ae.id === 'code-journal-reading')) return; // don't clobber the composer
   if (codeView === 'journal') return renderCodeJournal(body);
   renderCodeMain(body);
 }
@@ -3535,16 +3550,110 @@ function saveVirtueEditor() {
   closeCodeSheet();
 }
 
+// Pure derivation of tonight's "read slice" — nothing is stored. Returns
+// { virtue, notes, rule, ruleNumber } or null when there is nothing to read
+// (no virtues AND no rules -> no gate). virtue/notes/rule may each be null.
+function codeReadSlice() {
+  const info = franklinCycleInfo();
+  const virtue = info.virtue; // may be null (no virtues at all)
+  const c = codeData();
+  // Full rule ordering the user sees: public scope first, then private, each
+  // in its stored `order`.
+  const orderedRules = [...codeRulesByScope('public'), ...codeRulesByScope('private')];
+  if (!virtue && orderedRules.length === 0) return null; // nothing to read
+  const notes = (virtue && c.virtueNotes[virtue.id]) || null;
+  // Rule pool: rules serving the focus virtue in page order; else fall back to
+  // all rules. Empty only when there are no rules at all -> virtue-only slice.
+  let pool = virtue ? orderedRules.filter(r => r.virtueId === virtue.id) : [];
+  if (pool.length === 0) pool = orderedRules;
+  let rule = null, ruleNumber = null;
+  if (pool.length) {
+    let dayInCycle = daysBetween(info.cycleStart, todayDate());
+    if (!isFinite(dayInCycle) || dayInCycle < 0) dayInCycle = 0;
+    rule = pool[dayInCycle % pool.length];
+    // 1-based position within its own scope list (matches My Code numbering).
+    ruleNumber = codeRulesByScope(rule.scope).findIndex(r => r.id === rule.id) + 1;
+  }
+  return { virtue, notes, rule, ruleNumber };
+}
+
+// Log tonight's read-through: at most one record per date (edit on re-log,
+// never duplicate — mirrors the journal's find-by-date pattern).
+function logCodeRead() {
+  const c = codeData();
+  const today = todayDate();
+  const slice = codeReadSlice();
+  const virtueId = slice && slice.virtue ? slice.virtue.id : null;
+  const ruleId = slice && slice.rule ? slice.rule.id : null;
+  const rec = c.codeReads.find(e => e.date === today);
+  if (rec) { rec.virtueId = virtueId; rec.ruleId = ruleId; rec.at = nowIso(); }
+  else c.codeReads.push({ id: uuid(), date: today, virtueId, ruleId, at: nowIso() });
+  saveState();
+  render();
+  if (codeOverlay.classList.contains('open')) renderCode();
+}
+
+// The gate card shown before the composer until tonight's read is logged.
+function renderCodeReadSlice(body, slice) {
+  const v = slice.virtue;
+  const n = slice.notes || {};
+  const why = (n.why || '').trim();
+  const manifest = (n.manifest || '').trim();
+  const title = v
+    ? `Tonight's read · ${escapeHtml(v.name)}`
+    : (slice.rule ? `Tonight's read · Rule ${slice.ruleNumber}` : `Tonight's read`);
+  let virtueBlock = '';
+  if (v) {
+    let inner;
+    if (!why && !manifest) {
+      inner = `<div class="code-readslice-empty">You haven't written this virtue yet — add it in My Virtues.</div>`;
+    } else {
+      inner =
+        (why ? `<div class="code-readslice-vn"><div class="code-vn-label">Why it matters</div><div class="code-vn-text">${escapeHtml(why)}</div></div>` : '') +
+        (manifest ? `<div class="code-readslice-vn"><div class="code-vn-label">What it looks like</div><div class="code-vn-text">${escapeHtml(manifest)}</div></div>` : '');
+    }
+    virtueBlock = `
+      <div class="code-readslice-virtue">
+        <div class="code-virtue-name">${escapeHtml(v.name)}</div>
+        <div class="code-virtue-def">${escapeHtml(v.definition)}</div>
+        ${inner}
+      </div>`;
+  }
+  const ruleBlock = slice.rule ? `
+    <div class="code-rule-row code-readslice-rule">
+      <span class="code-rule-num">${slice.ruleNumber}</span>
+      <div class="code-rule-body"><div class="code-rule-text">${escapeHtml(slice.rule.text)}</div></div>
+    </div>` : '';
+  body.innerHTML = `
+    <button type="button" class="code-back" data-cact="journal-back">‹ Back</button>
+    <div class="vault-section code-readslice">
+      <div class="vault-section-head"><span class="vault-section-title">${title}</span></div>
+      ${virtueBlock}
+      ${ruleBlock}
+      <button type="button" class="btn btn-primary code-readslice-done" data-cact="code-read-done">I've read it</button>
+    </div>`;
+}
+
 function renderCodeJournal(body) {
   const c = codeData();
   const today = todayDate();
+  // Gate: show tonight's read slice until it's logged for the night.
+  const readToday = c.codeReads.some(e => e.date === today);
+  const slice = readToday ? null : codeReadSlice();
+  if (slice) return renderCodeReadSlice(body, slice);
   const todayEntry = c.journal.find(e => e.date === today) || { text: '', rating: '' };
   const past = c.journal.filter(e => e.date !== today).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const summaryShown = !!(todayEntry.readingSummary && todayEntry.readingSummary.trim()) || codeSummaryOpen;
+  const readingBlock = summaryShown
+    ? `<label class="code-field-label" for="code-journal-reading">Reading summary</label>
+       <textarea class="code-textarea" id="code-journal-reading" placeholder="What did you read tonight, and what stuck?">${escapeHtml(todayEntry.readingSummary || '')}</textarea>`
+    : `<button type="button" class="btn btn-ghost code-summary-add" data-cact="toggle-reading-summary">+ Add reading summary</button>`;
   body.innerHTML = `
     <button type="button" class="code-back" data-cact="journal-back">‹ Back</button>
     <div class="vault-section">
       <div class="vault-section-head"><span class="vault-section-title">Tonight's entry · ${escapeHtml(parseYmd(today).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }))}</span></div>
       <textarea class="code-textarea" id="code-journal-text" placeholder="How did today go? What did you learn?">${escapeHtml(todayEntry.text || '')}</textarea>
+      ${readingBlock}
       <div class="type-tabs code-rating" id="code-rating">${CODE_RATINGS.map(r =>
         `<button type="button" data-cact="rate" data-rating="${r.id}" class="${codeJournalRating === r.id ? 'active' : ''}">${escapeHtml(r.label)}</button>`).join('')}</div>
       <button type="button" class="btn btn-primary code-journal-save" data-cact="save-journal">Save entry</button>
@@ -3578,6 +3687,8 @@ function onCodeBodyClick(e) {
   else if (act === 'add-skill')    openCodeSkillSheet(null);
   else if (act === 'rate')         { codeJournalRating = el.dataset.rating; document.querySelectorAll('#code-rating button').forEach(b => b.classList.toggle('active', b.dataset.rating === codeJournalRating)); }
   else if (act === 'save-journal') saveJournalFromComposer();
+  else if (act === 'code-read-done') logCodeRead();
+  else if (act === 'toggle-reading-summary') { codeSummaryOpen = true; renderCode(); }
   else if (act === 'see-all-journal') { closeCode(); switchTab('history'); openJournalDoorway(); }
 }
 
@@ -3723,12 +3834,14 @@ function saveCodeSkillForm() {
 function saveJournalFromComposer() {
   const text = (document.getElementById('code-journal-text').value || '').trim();
   const rating = codeJournalRating || '';
-  if (!text && !rating) return;
+  const readingSummary = (document.getElementById('code-journal-reading')?.value || '').trim();
+  if (!text && !rating && !readingSummary) return;
   const c = codeData();
   const today = todayDate();
   const e = c.journal.find(x => x.date === today);
-  if (e) { e.text = text; e.rating = rating; e.at = nowIso(); } // edit, never duplicate
-  else c.journal.push({ id: uuid(), date: today, text, rating, at: nowIso() });
+  // Empty readingSummary deliberately clears the field — it's the user's to empty.
+  if (e) { e.text = text; e.rating = rating; e.readingSummary = readingSummary; e.at = nowIso(); } // edit, never duplicate
+  else c.journal.push({ id: uuid(), date: today, text, rating, readingSummary, at: nowIso() });
   saveState();
   render();
   if (codeOverlay.classList.contains('open')) renderCode();
@@ -4455,16 +4568,64 @@ function closeFocusDoorway() { focusStatsOverlay.classList.remove('open'); }
 const JOURNAL_TREND_N = 21;                 // trend strip shows the last N entries
 const JOURNAL_BAR_H  = { lived: 100, held: 66, short: 36 }; // taller = better rating
 
+// A single archive read-line for a codeReads record, resolved against LIVE
+// virtues/rules (skip whatever was tombstoned). All names escaped.
+function codeReadArchiveLine(rd) {
+  const vName = rd.virtueId ? virtueNameById(rd.virtueId) : null;
+  let ruleNum = null;
+  if (rd.ruleId) {
+    const rule = codeData().rules.find(r => r.id === rd.ruleId);
+    if (rule) ruleNum = codeRulesByScope(rule.scope).findIndex(r => r.id === rule.id) + 1;
+  }
+  if (vName && ruleNum) return `Read: ${escapeHtml(vName)} · Rule ${ruleNum}`;
+  if (vName) return `Read: ${escapeHtml(vName)}`;
+  if (ruleNum) return `Read: Rule ${ruleNum}`;
+  return `Read the Code`;
+}
+
 function renderJournalDoorway() {
   const body = document.getElementById('journalstats-body');
   if (!body) return;
   const entries = (codeData().journal || []).filter(e => e && e.date);
+  const reads = (codeData().codeReads || []).filter(r => r && r.date);
+  const readDates = new Set(reads.map(r => r.date));
+  const readByDate = {};
+  for (const r of reads) readByDate[r.date] = r; // newest-wins is fine (one/date)
+  const today = todayDate();
 
   // 1) All-time rating counts (0 is fine).
   const counts = { lived: 0, held: 0, short: 0 };
   for (const e of entries) if (counts[e.rating] != null) counts[e.rating]++;
   const tile = (id, label, n) =>
     `<div class="jd-tile jd-tile-${id}"><div class="jd-tile-count">${n}</div><div class="jd-tile-label">${escapeHtml(label)}</div></div>`;
+
+  // 1b) Code practice: read streak + nights-read over a clamped 30-day window.
+  let practice;
+  if (!readDates.size) {
+    practice = `<div class="jd-practice"><div class="jd-practice-empty">No read-throughs logged yet.</div></div>`;
+  } else {
+    // Streak: walk back from today (or yesterday if tonight isn't read yet).
+    let streak = 0;
+    let cursor = readDates.has(today) ? today : addDays(today, -1);
+    while (readDates.has(cursor)) { streak++; cursor = addDays(cursor, -1); }
+    // Nights read: window = last 30 days, clamped to the earliest read date.
+    const earliest = [...readDates].sort()[0];
+    const span = daysBetween(earliest, today) + 1; // inclusive of both ends
+    const D = Math.min(30, Math.max(1, span));
+    const windowStart = addDays(today, -(D - 1));
+    let nights = 0;
+    for (const d of readDates) if (d >= windowStart && d <= today) nights++;
+    practice = `<div class="jd-practice">
+      <div class="jd-practice-stat">
+        <div class="jd-practice-num">${streak}</div>
+        <div class="jd-practice-label">${streak === 1 ? 'night' : 'nights'} streak</div>
+      </div>
+      <div class="jd-practice-stat">
+        <div class="jd-practice-num">${nights}<span class="jd-practice-denom">/${D}</span></div>
+        <div class="jd-practice-label">nights read</div>
+      </div>
+    </div>`;
+  }
 
   // 2) Trend: last N entries oldest->newest, one bar each, colored + height by rating.
   const asc = entries.slice().sort((a, b) => (a.date || '').localeCompare(b.date || ''));
@@ -4478,18 +4639,32 @@ function renderJournalDoorway() {
         return `<span class="jd-bar jd-bar-${r}" style="height:${h}%" title="${when} · ${escapeHtml(codeRatingLabel(e.rating) || 'No rating')}"></span>`;
       }).join('')
     : `<div class="jd-trend-empty">No entries to chart yet.</div>`;
+  // 2b) Read-dots: one dot per trend bar, aligned to the same columns.
+  const readDots = trend.length
+    ? `<div class="jd-readdots">${trend.map(e =>
+        `<span class="jd-dot-cell"><span class="${readDates.has(e.date) ? 'jd-dot-read' : 'jd-dot-unread'}"></span></span>`).join('')}</div>`
+    : '';
 
   // 3) Archive: newest first, full escaped text via pre-wrap; rating-only rows OK.
   const desc = entries.slice().sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   const archive = desc.length
-    ? desc.map(e => `
+    ? desc.map(e => {
+        const rd = readByDate[e.date];
+        const readLine = rd ? `<div class="jd-entry-read">${codeReadArchiveLine(rd)}</div>` : '';
+        const reading = (typeof e.readingSummary === 'string' && e.readingSummary.trim())
+          ? `<div class="jd-reading"><div class="jd-reading-label">READING</div><div class="jd-reading-text">${escapeHtml(e.readingSummary)}</div></div>`
+          : '';
+        return `
         <div class="jd-entry">
           <div class="jd-entry-head">
             <span class="jd-entry-date">${escapeHtml(parseYmd(e.date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }))}</span>
             <span class="jd-entry-rating rating-${escapeHtml(e.rating || 'none')}">${escapeHtml(codeRatingLabel(e.rating) || '—')}</span>
           </div>
+          ${readLine}
           ${e.text ? `<div class="jd-entry-text">${escapeHtml(e.text)}</div>` : ''}
-        </div>`).join('')
+          ${reading}
+        </div>`;
+      }).join('')
     : `<p class="doorway-empty">No journal entries yet — write tonight's in My Code.</p>`;
 
   body.innerHTML = `
@@ -4498,14 +4673,17 @@ function renderJournalDoorway() {
       ${tile('held', 'Held the line', counts.held)}
       ${tile('short', 'Fell short', counts.short)}
     </div>
+    ${practice}
     <div class="jd-section">
       <div class="jd-section-head">Recent trend</div>
       <div class="jd-trend">${bars}</div>
+      ${readDots}
       <div class="jd-legend">
         <span class="jd-legend-item"><span class="jd-dot jd-bar-lived"></span>Lived it well</span>
         <span class="jd-legend-item"><span class="jd-dot jd-bar-held"></span>Held the line</span>
         <span class="jd-legend-item"><span class="jd-dot jd-bar-short"></span>Fell short</span>
       </div>
+      ${trend.length ? `<div class="jd-legend"><span class="jd-legend-item"><span class="jd-dot-read"></span>Code read that night</span></div>` : ''}
     </div>
     <div class="jd-section">
       <div class="jd-section-head">All entries</div>
@@ -6915,7 +7093,9 @@ const MERGE_COLLECTIONS = [
   { key: 'code.skills',  get: s => s.code && s.code.skills,
     set: (s, v) => { if (!s.code || typeof s.code !== 'object') s.code = {}; s.code.skills = v; } },
   { key: 'code.journal', get: s => s.code && s.code.journal,
-    set: (s, v) => { if (!s.code || typeof s.code !== 'object') s.code = {}; s.code.journal = v; } }
+    set: (s, v) => { if (!s.code || typeof s.code !== 'object') s.code = {}; s.code.journal = v; } },
+  { key: 'code.codeReads', get: s => s.code && s.code.codeReads,
+    set: (s, v) => { if (!s.code || typeof s.code !== 'object') s.code = {}; s.code.codeReads = v; } }
 ];
 
 function blobUpdatedAt(s) {
