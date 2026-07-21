@@ -1518,6 +1518,16 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 }
 .focus-detail-note.muted { color: var(--text-secondary); }
 .focus-detail-note.clean { color: var(--ok); }
+/* Quiet full-width destructive action — matches .action-btn.danger language. */
+.focus-delete-btn {
+  display: block; width: 100%; margin-top: 18px;
+  min-height: 44px; padding: 12px;
+  background: transparent; border: none; cursor: pointer;
+  color: var(--danger); font-size: 15px; font-weight: 600;
+  border-radius: var(--r-card);
+  -webkit-appearance: none; appearance: none;
+}
+.focus-delete-btn:hover { background: var(--danger-dim); }
 
 /* ---------- Off-track chip (top bar) ---------- */
 .off-track-chip {

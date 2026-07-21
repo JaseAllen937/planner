@@ -2208,7 +2208,27 @@ function renderFocusDetail(sess) {
       </div>
       ${tiles}
       ${timeline}
+      <button type="button" class="focus-delete-btn" data-focus-delete="${escapeHtml(sess.id || '')}">Delete session</button>
     </div>`;
+}
+
+// Delete one focus session. Tombstoned FIRST so the deletion survives sync
+// (focusSessions is a merged collection — a plain splice would be resurrected
+// by the other device on the next merge). All Focus stats derive from the
+// array, so the scatter/tiles/log clean up with no further work.
+function deleteFocusSession(id) {
+  if (!id) return;
+  const sess = (state.focusSessions || []).find(s => s && s.id === id);
+  if (!sess) return;
+  const durStr = hoursToHuman(focusSessHours(sess)) || '0m';
+  const laps = sess.lapses | 0;
+  if (!confirm(`Delete this ${durStr} session (${laps} lapse${laps === 1 ? '' : 's'})?\n\nIt will be removed from all Focus stats — the scatter, rates, and its timeline. This can't be undone.`)) return;
+  tombstone('focusSessions', id);              // stays deleted across sync
+  state.focusSessions = state.focusSessions.filter(s => !s || s.id !== id);
+  focusSelectedSession = null;                 // back to the main Focus list
+  saveState();
+  render();
+  toast('Session deleted');
 }
 
 // Scatter: x = duration (minutes), y = lapse rate (lapses/hr, 0 at BOTTOM), so the
@@ -7964,6 +7984,8 @@ document.getElementById('focusstats-close-btn').addEventListener('click', closeF
 // Focus doorway list<->detail: tap a session row to open its detail, Back to return.
 document.getElementById('focus-stats-wrap').addEventListener('click', e => {
   if (e.target.closest('[data-focus-back]')) { focusSelectedSession = null; renderFocusStats(); return; }
+  const del = e.target.closest('[data-focus-delete]');
+  if (del) { deleteFocusSession(del.getAttribute('data-focus-delete')); return; }
   const row = e.target.closest('[data-session-id]');
   if (!row) return;
   const id = row.dataset.sessionId;
