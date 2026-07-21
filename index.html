@@ -578,6 +578,17 @@ function ymd(d) {
 function todayDate() { return ymd(new Date()); }
 function todayDayCode() { return DAY_CODES[new Date().getDay()]; }
 
+// The nightly journal + Code read gate key records to the NIGHT, not the
+// calendar date: before 06:00, "tonight" is the day that started yesterday
+// evening (same reframe as the sleep strip — a night belongs to the day it
+// starts; 06:00 matches the plausible-bedtime window's upper bound).
+// Used ONLY by code.journal / code.codeReads paths — nothing else.
+function codeNightDate() {
+  const d = new Date();
+  if (d.getHours() < 6) d.setDate(d.getDate() - 1);
+  return ymd(d);
+}
+
 function fmt12(hhmm) {
   if (!hhmm) return '';
   const [h, m] = hhmm.split(':').map(Number);
@@ -780,7 +791,7 @@ function loadState() {
   if (raw) {
     try {
       const parsed = JSON.parse(raw);
-      if (parsed && parsed.meta && (parsed.meta.version >= 1 && parsed.meta.version <= 11)) {
+      if (parsed && parsed.meta && (parsed.meta.version >= 1 && parsed.meta.version <= 12)) {
         return ensureShape(parsed);
       }
     } catch (e) {
@@ -1032,6 +1043,40 @@ function ensureShape(s) {
     s.meta.version = 11;
   }
 
+  // ---- v12: one-time repair for the split night of 2026-07-20 (pre-night-date
+  // bug): a Code read logged at 11:59pm Jul 20 and a second read + the journal
+  // entry logged after midnight under Jul 21 — one night stored as two dates.
+  // Guards: only touches records CREATED before 06:00 local on Jul 21 (i.e.
+  // genuinely that night's post-midnight records), only re-dates the entry if
+  // the Jul 20 slot is free, and tombstones the removed read so sync can't
+  // resurrect it. Idempotent; a fresh install or already-repaired state is a
+  // no-op. Runs only if meta.version < 12.
+  if ((s.meta.version || 1) < 12) {
+    const earlyMorning = at => {
+      const d = new Date(at || 0);
+      return d.getFullYear() === 2026 && d.getMonth() === 6 && d.getDate() === 21 && d.getHours() < 6;
+    };
+    const code = (s.code && typeof s.code === 'object') ? s.code : null;
+    if (code) {
+      // Remove the duplicate post-midnight read (the 11:59pm Jul 20 read stays).
+      if (Array.isArray(code.codeReads)) {
+        const dup = code.codeReads.find(e => e && e.date === '2026-07-21' && earlyMorning(e.at));
+        if (dup && code.codeReads.some(e => e && e.date === '2026-07-20')) {
+          if (!s.meta.tombstones || typeof s.meta.tombstones !== 'object') s.meta.tombstones = {};
+          s.meta.tombstones['code.codeReads:' + dup.id] = new Date().toISOString();
+          code.codeReads = code.codeReads.filter(e => !e || e.id !== dup.id);
+        }
+      }
+      // Re-date the post-midnight entry to the night it belongs to.
+      if (Array.isArray(code.journal)) {
+        const j = code.journal.find(e => e && e.date === '2026-07-21' && earlyMorning(e.at));
+        const jul20Taken = code.journal.some(e => e && e.date === '2026-07-20');
+        if (j && !jul20Taken) { j.date = '2026-07-20'; j.at = new Date().toISOString(); }
+      }
+    }
+    s.meta.version = 12;
+  }
+
   // Cloud-sync uses meta.updated_at as the conflict-resolution timestamp.
   // Backfill it for pre-sync states.
   if (!s.meta.updated_at) s.meta.updated_at = s.meta.created_at || nowIso();
@@ -1055,7 +1100,7 @@ function removeSampleHabits(s) {
 function seedState() {
   const now = nowIso();
   return {
-    meta: { version: 11, created_at: now, updated_at: now, last_export_at: null, lastWipe: null, tombstones: {} },
+    meta: { version: 12, created_at: now, updated_at: now, last_export_at: null, lastWipe: null, tombstones: {} },
     // No sample habits — habits are now created only as checkbox blocks in Spaces.
     habits: [],
     items: [],
@@ -3389,7 +3434,7 @@ function toggleCodeJournal() {
   else {
     codeView = 'journal'; codeVirtueId = null;
     codeSummaryOpen = false; // don't leak the reading-summary reveal across nights
-    const e = codeData().journal.find(x => x.date === todayDate());
+    const e = codeData().journal.find(x => x.date === codeNightDate());
     codeJournalRating = e ? (e.rating || '') : '';
   }
   renderCode();
@@ -3601,7 +3646,7 @@ function codeReadSlice() {
 // never duplicate — mirrors the journal's find-by-date pattern).
 function logCodeRead() {
   const c = codeData();
-  const today = todayDate();
+  const today = codeNightDate();
   const slice = codeReadSlice();
   const virtueId = slice && slice.virtue ? slice.virtue.id : null;
   const ruleId = slice && slice.rule ? slice.rule.id : null;
@@ -3656,7 +3701,7 @@ function renderCodeReadSlice(body, slice) {
 
 function renderCodeJournal(body) {
   const c = codeData();
-  const today = todayDate();
+  const today = codeNightDate();
   // Gate: show tonight's read slice until it's logged for the night.
   const readToday = c.codeReads.some(e => e.date === today);
   const slice = readToday ? null : codeReadSlice();
@@ -3708,7 +3753,16 @@ function onCodeBodyClick(e) {
   else if (act === 'rate')         { codeJournalRating = el.dataset.rating; document.querySelectorAll('#code-rating button').forEach(b => b.classList.toggle('active', b.dataset.rating === codeJournalRating)); }
   else if (act === 'save-journal') saveJournalFromComposer();
   else if (act === 'code-read-done') logCodeRead();
-  else if (act === 'toggle-reading-summary') { codeSummaryOpen = true; renderCode(); }
+  else if (act === 'toggle-reading-summary') {
+    // Reveal in place — NO re-render. A rebuild here refills the journal
+    // textarea from the saved entry and destroys an unsaved draft (real bug,
+    // shipped v49). Mirror the 'rate' handler's in-place pattern instead.
+    codeSummaryOpen = true;   // keeps the field present across later renders
+    el.outerHTML = `<label class="code-field-label" for="code-journal-reading">Reading summary</label>
+       <textarea class="code-textarea" id="code-journal-reading" placeholder="What did you read tonight, and what stuck?"></textarea>`;
+    const t = document.getElementById('code-journal-reading');
+    if (t) t.focus();
+  }
   else if (act === 'see-all-journal') { closeCode(); switchTab('history'); openJournalDoorway(); }
 }
 
@@ -3857,7 +3911,7 @@ function saveJournalFromComposer() {
   const readingSummary = (document.getElementById('code-journal-reading')?.value || '').trim();
   if (!text && !rating && !readingSummary) return;
   const c = codeData();
-  const today = todayDate();
+  const today = codeNightDate();
   const e = c.journal.find(x => x.date === today);
   // Empty readingSummary deliberately clears the field — it's the user's to empty.
   if (e) { e.text = text; e.rating = rating; e.readingSummary = readingSummary; e.at = nowIso(); } // edit, never duplicate
@@ -4611,7 +4665,7 @@ function renderJournalDoorway() {
   const readDates = new Set(reads.map(r => r.date));
   const readByDate = {};
   for (const r of reads) readByDate[r.date] = r; // newest-wins is fine (one/date)
-  const today = todayDate();
+  const today = codeNightDate();   // streak/window anchor to the NIGHT (see codeNightDate)
 
   // 1) All-time rating counts (0 is fine).
   const counts = { lived: 0, held: 0, short: 0 };

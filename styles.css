@@ -1895,6 +1895,11 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 .jd-dot-read { background: var(--text-secondary); }
 .jd-dot-unread { border: 1px solid var(--text-tertiary); background: transparent; }
 .jd-legend .jd-dot-read { width: 8px; height: 8px; }
+/* v51: cap trend bar + read-dot column width so one entry doesn't stretch
+   wall-to-wall; bars and dots share the cap to stay column-aligned. Additive —
+   the existing flex 1 1 0 still governs shrink at 10+ entries. */
+.jd-bar { max-width: 38px; }
+.jd-dot-cell { max-width: 38px; }
 
 .jd-entry-read {
   font-size: 12px; color: var(--text-tertiary);
