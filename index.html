@@ -3382,6 +3382,7 @@ function renderFranklin() {
             <span class="fr-edit-actions">
               <button type="button" class="space-arrow" data-fact="virtue-up" data-id="${escapeHtml(v.id)}"${i === 0 ? ' disabled' : ''} aria-label="Move up">▲</button>
               <button type="button" class="space-arrow" data-fact="virtue-down" data-id="${escapeHtml(v.id)}"${i === f.virtues.length - 1 ? ' disabled' : ''} aria-label="Move down">▼</button>
+              <button type="button" class="space-arrow" data-fact="virtue-focus" data-id="${escapeHtml(v.id)}"${(ci.virtue && v.id === ci.virtue.id) ? ' disabled' : ''} aria-label="Start focus here" title="Start focus here">◎</button>
               <button type="button" class="space-arrow" data-fact="virtue-edit" data-id="${escapeHtml(v.id)}" aria-label="Edit">✎</button>
               <button type="button" class="space-arrow" data-fact="virtue-del" data-id="${escapeHtml(v.id)}" aria-label="Delete">✕</button>
             </span>
@@ -3451,6 +3452,7 @@ function onFranklinBodyClick(e) {
   else if (act === 'virtue-del')  deleteVirtue(id);
   else if (act === 'virtue-up')   moveVirtue(id, -1);
   else if (act === 'virtue-down') moveVirtue(id, 1);
+  else if (act === 'virtue-focus') startFocusAt(id);
   else if (act === 'cycle-dec')   setFranklinCycleDays((franklinData().cycleDays | 0) - 1);
   else if (act === 'cycle-inc')   setFranklinCycleDays((franklinData().cycleDays | 0) + 1);
 }
@@ -3467,6 +3469,24 @@ function setFranklinCycleDays(v) {
   f.cycleDays = clamped;
   saveState();
   render();
+}
+
+// Re-anchor the rotation so `virtueId`'s focus cycle starts TODAY, with the
+// sequence proceeding from it in the existing id-order. Derivation stays pure:
+// we move the single anchor scalar; franklinCycleInfo's math does the rest.
+// anchorDate = today - (position * cycleDays) makes diff/cycleDays land exactly
+// on `position` with cycleStart === today. anchorDate is a newer-wins scalar in
+// the merge, so no schema/migration work. Standard mutation convention.
+function startFocusAt(virtueId) {
+  const seq = rotationVirtues();
+  const p = seq.findIndex(v => v.id === virtueId);
+  if (p < 0) return;                            // unknown id -> no-op
+  const f = franklinData();
+  const cycleDays = Math.max(1, f.cycleDays | 0);
+  f.anchorDate = addDays(todayDate(), -(p * cycleDays));
+  saveState();
+  render();
+  toast('Focus set');
 }
 
 // ============================================================================
@@ -4987,22 +5007,69 @@ function renderHabitSpaceList() {
   return html;
 }
 
+// Monday-anchored week start. The habit calendar reads Monday-first (matching
+// the app's M T W R F S U day-code order); startOfWeek() is Sunday-anchored and
+// belongs to the weekly summary, so it stays untouched.
+function startOfWeekMon(date) {
+  const d = parseYmd(date);
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7));  // Mon=0 … Sun=6
+  return ymd(d);
+}
+
+const HEAT_DAY_LETTERS = ['M', 'T', 'W', 'R', 'F', 'S', 'U'];
+
+// Calendar-aligned habit heatmap: weekday letters across the top, one row per
+// week (oldest at top, same reading order as the sleep strip), the week's start
+// date on the left, today ringed. PRESENTATION ONLY — every done/missed/notdue
+// verdict still comes from heatCellClass, and the tiles from the untouched
+// blockStreak / longestBlockStreak / habitRate70.
 function renderHabitHeatmap(block) {
   const today = todayDate();
   const streak = blockStreak(block);
   const longest = longestBlockStreak(block);
   const rate = habitRate70(block);
-  const dates = [];
-  for (let i = 69; i >= 0; i--) dates.push(addDays(today, -i));  // oldest -> newest
-  const cells = dates.map(d =>
-    `<span class="heat-cell heat-${heatCellClass(block, d, today)}" title="${d}"></span>`).join('');
+  const createdYmd = block.createdAt ? String(block.createdAt).slice(0, 10) : null;
+
+  // Rows: from the LATER of (the habit's first week, the week 8 weeks back)
+  // through this week — at most 9 rows, fewer for a young habit.
+  let firstWeek = startOfWeekMon(addDays(today, -56));
+  if (createdYmd) {
+    const createdWeek = startOfWeekMon(createdYmd);
+    if (createdWeek > firstWeek) firstWeek = createdWeek;
+  }
+  const lastWeek = startOfWeekMon(today);
+
+  const head = `<div class="heat-cal-head"><span class="heat-cal-wklbl"></span>${
+    HEAT_DAY_LETTERS.map(l => `<span class="heat-cal-daylbl">${l}</span>`).join('')}</div>`;
+
+  const rows = [];
+  for (let w = firstWeek; w <= lastWeek; w = addDays(w, 7)) {
+    const cells = [];
+    let anyReal = false;
+    for (let i = 0; i < 7; i++) {
+      const d = addDays(w, i);                       // Monday … Sunday
+      // Outside the habit's life or in the future: a transparent spacer that
+      // holds the column, NOT a state (never rendered as "missed").
+      if ((createdYmd && d < createdYmd) || d > today) {
+        cells.push(`<span class="heat-cell heat-blank"></span>`);
+        continue;
+      }
+      anyReal = true;
+      const cls = 'heat-' + heatCellClass(block, d, today) + (d === today ? ' heat-today' : '');
+      cells.push(`<span class="heat-cell ${cls}" title="${d}"></span>`);
+    }
+    if (!anyReal) continue;                          // fully-blank row — don't render
+    const label = escapeHtml(parseYmd(w).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }));
+    rows.push(`<div class="heat-cal-week"><span class="heat-cal-wklbl">${label}</span>${cells.join('')}</div>`);
+  }
+
   return `<div class="habit-detail">
     <div class="habit-detail-stats">
       <div class="hd-stat"><div class="hd-val">${rate == null ? '—' : rate + '%'}</div><div class="hd-lbl">Rate</div></div>
       <div class="hd-stat"><div class="hd-val">${streak}</div><div class="hd-lbl">Streak</div></div>
       <div class="hd-stat"><div class="hd-val">${longest}</div><div class="hd-lbl">Longest</div></div>
     </div>
-    <div class="heatmap-grid">${cells}</div>
+    <div class="heat-cal">${head}${rows.join('')}</div>
     <div class="heat-legend">
       <span class="heat-legend-item"><span class="heat-cell heat-done"></span>Done</span>
       <span class="heat-legend-item"><span class="heat-cell heat-missed"></span>Missed</span>
