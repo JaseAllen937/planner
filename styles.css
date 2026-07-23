@@ -1958,6 +1958,10 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 }
 .fr-ctrls { display: flex; gap: 6px; justify-content: center; }
 .fr-ctrls-wide { margin-top: 12px; }
+/* Rotation-length stepper row (edit mode): label left, ±1 buttons right. */
+.fr-cycle-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.fr-cycle-label { font-size: 14px; color: var(--text-secondary); }
+.fr-cycle-val { font-weight: 700; color: var(--text-primary); font-family: var(--font-mono); }
 .fr-btn {
   min-width: 44px; min-height: 44px; padding: 8px 12px;
   border: none; border-radius: var(--r-pill); cursor: pointer;
