@@ -1123,7 +1123,14 @@ function seedState() {
 
 function saveState() {
   state.meta.updated_at = nowIso();
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch (err) {
+    // Storage full / private-mode quota. In-memory state is intact and sync
+    // still pushes it; the user must know the DISK copy is stale.
+    console.error('saveState failed:', err);
+    toast('⚠️ Save to device failed — export your data now');
+  }
   // Schedule a debounced background push to Supabase (no-op if not signed in).
   triggerSync();
 }
@@ -1131,7 +1138,12 @@ function saveState() {
 // Like saveState but doesn't bump meta.updated_at and doesn't trigger a sync.
 // Used when applying a remote pull (the remote's updated_at is authoritative).
 function saveStateLocalOnly() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch (err) {
+    console.error('saveStateLocalOnly failed:', err);
+    toast('⚠️ Save to device failed — export your data now');
+  }
 }
 
 function yesterdayDate() {
@@ -4389,7 +4401,11 @@ function switchTab(tab) {
 
 // ---------------- main render ----------------
 
+// Date the UI was last built for; used to detect an overnight day rollover.
+let lastRenderDate = null;
+
 function render() {
+  lastRenderDate = todayDate();
   renderTopbar();
   renderBanner();
   renderIntentionCard();
@@ -7684,6 +7700,16 @@ async function initialSync() {
 window.addEventListener('online', () => {
   if (getSession() && _pendingPush) triggerSync();
 });
+
+// Re-render when the app becomes visible on a NEW day. Without this, a PWA
+// resumed after midnight shows yesterday's screen (due items, timeline, focus
+// virtue) while taps compute against the new date. Idempotent and cheap; only
+// fires a render when the date actually changed.
+function rerenderIfDayChanged() {
+  if (lastRenderDate && todayDate() !== lastRenderDate) render();
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) rerenderIfDayChanged(); });
+window.addEventListener('focus', rerenderIfDayChanged);
 
 // ---- UI render for the Account & Backup settings section ----
 
