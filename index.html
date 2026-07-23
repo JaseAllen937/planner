@@ -6603,13 +6603,22 @@ function openBlockMenuFor(btn) {
   const attrs = `data-menu-kind="${kind}" data-menu-id="${bid}"`;
   const upDis = index === 0 ? ' disabled' : '';
   const downDis = index === total - 1 ? ' disabled' : '';
+  // "Edit past days" is a checkbox-block correction tool only (not counter/cycle/
+  // goal/notes, not My Code rows) — sits between Edit and Delete when applicable.
+  let pastDaysItem = '';
+  if (kind === 'block') {
+    const blk = findBlock(bid);
+    if (blk && blk.type === 'checkbox') {
+      pastDaysItem = `\n      <button type="button" class="block-menu-item" data-menu-act="past-days" ${attrs} role="menuitem">Edit past days</button>`;
+    }
+  }
   if (kind === 'virtue') {
     menu.innerHTML = `<button type="button" class="block-menu-item" data-menu-act="edit" ${attrs} role="menuitem">Edit</button>`;
   } else {
     menu.innerHTML = `
       <button type="button" class="block-menu-item" data-menu-act="up" ${attrs}${upDis} role="menuitem">Move up</button>
       <button type="button" class="block-menu-item" data-menu-act="down" ${attrs}${downDis} role="menuitem">Move down</button>
-      <button type="button" class="block-menu-item" data-menu-act="edit" ${attrs} role="menuitem">Edit</button>
+      <button type="button" class="block-menu-item" data-menu-act="edit" ${attrs} role="menuitem">Edit</button>${pastDaysItem}
       <button type="button" class="block-menu-item danger" data-menu-act="delete" ${attrs} role="menuitem">Delete</button>`;
   }
 
@@ -6647,6 +6656,7 @@ function onBlockMenuClick(e) {
     if      (act === 'up')     moveBlock(id, -1);
     else if (act === 'down')   moveBlock(id, 1);
     else if (act === 'edit')   { const b = findBlock(id); if (b) openBlockSheet(b); }
+    else if (act === 'past-days') openPastDaysSheet(id);
     else if (act === 'delete') deleteBlockById(id);
   } else if (kind === 'rule') {
     if      (act === 'up')     moveCodeRule(id, -1);
@@ -7019,6 +7029,86 @@ function saveBlockForm() {
 }
 
 // ---- Counter block: log a value (overwrite per day) ----
+
+// ---- Checkbox block: correct past DUE days done-but-not-logged ----
+// A deliberate correction tool, kept OFF the daily screen (no past-day
+// checkboxes there). Offers up to 7 genuinely due days (scanning back from
+// yesterday over 14 calendar days, clamped to createdAt like the heatmap) and
+// writes the EXACT checks['YYYY-MM-DD'] entries the daily flow writes — so
+// streaks/heatmaps/rates resurrect by derivation. Newest first.
+const PAST_DAYS_LOOKBACK = 14;   // calendar days to scan back from yesterday
+const PAST_DAYS_MAX = 7;         // max eligible rows offered
+
+// Eligible past due days for a checkbox block: yesterday backward, only days
+// isDueToday reports due, only days >= createdAt. Returns newest-first YMDs.
+function pastDueDaysFor(block) {
+  const out = [];
+  const createdYmd = block.createdAt ? String(block.createdAt).slice(0, 10) : null;
+  let d = yesterdayDate();
+  for (let i = 0; i < PAST_DAYS_LOOKBACK && out.length < PAST_DAYS_MAX; i++) {
+    if ((createdYmd == null || d >= createdYmd) && isDueToday(block, d)) out.push(d);
+    d = addDays(d, -1);
+  }
+  return out;
+}
+
+function openPastDaysSheet(blockId) {
+  const b = findBlock(blockId);
+  if (!b || b.type !== 'checkbox') return;
+  spaceForm = { mode: 'past-days', blockId };
+  buildPastDaysSheet();
+  openSpaceSheetOverlay();
+}
+
+// Rebuilt from state on open AND after every toggle, so rows never show a stale
+// check. The sheet lives in #space-sheet (outside the render() tree), so it
+// survives render(); we only refresh its own panel.
+function buildPastDaysSheet() {
+  const b = findBlock(spaceForm && spaceForm.blockId);
+  const panel = document.getElementById('space-sheet-panel');
+  if (!b || !panel) { closeSpaceSheet(); return; }
+  const checks = (b.checks && typeof b.checks === 'object') ? b.checks : {};
+  const days = pastDueDaysFor(b);
+  const rows = days.length
+    ? days.map(d => {
+        const on = !!checks[d];
+        const label = parseYmd(d).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+        return `<button type="button" class="past-days-row" data-past-date="${d}" aria-pressed="${on ? 'true' : 'false'}" aria-label="Toggle ${escapeHtml(label)}">
+          <span class="space-tick${on ? ' on' : ''}" aria-hidden="true"><span class="space-tick-mark">${on ? '&check;' : ''}</span></span>
+          <span class="past-days-label">${escapeHtml(label)}</span>
+        </button>`;
+      }).join('')
+    : `<div class="past-days-empty">No past due days to edit.</div>`;
+  panel.innerHTML = `
+    <h2>${escapeHtml(b.label || 'Habit')}</h2>
+    <p class="past-days-sub">Fix days you did but forgot to log.</p>
+    <div class="past-days-list" id="past-days-list">${rows}</div>
+    <div class="form-actions">
+      <div class="spacer"></div>
+      <button type="button" class="btn btn-primary" id="past-days-done">Done</button>
+    </div>`;
+  const list = document.getElementById('past-days-list');
+  if (list) list.addEventListener('click', onPastDayClick);
+  const done = document.getElementById('past-days-done');
+  if (done) done.addEventListener('click', closeSpaceSheet);
+}
+
+// Toggle one past day. Writes checks EXACTLY as the daily flow (toggleBlockToday):
+// true on, delete-the-key off — no `false` ever stored. Then save + render (which
+// refreshes the space view under the sheet) + rebuild rows from state.
+function onPastDayClick(e) {
+  const row = e.target.closest('[data-past-date]');
+  if (!row) return;
+  const b = findBlock(spaceForm && spaceForm.blockId);
+  const date = row.dataset.pastDate;
+  if (!b || !date) return;
+  if (!b.checks || typeof b.checks !== 'object') b.checks = {};
+  if (b.checks[date]) delete b.checks[date];
+  else b.checks[date] = true;
+  saveState();
+  render();
+  buildPastDaysSheet();
+}
 
 function openCounterLogSheet(blockId) {
   const b = findBlock(blockId);

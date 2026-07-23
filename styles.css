@@ -2429,6 +2429,15 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 }
 .space-tick.on { background: var(--accent); border-color: var(--accent); }
 .space-tick-mark { line-height: 1; }
+/* Edit-past-days sheet (checkbox correction tool). Reuses .space-tick visual. */
+.past-days-sub { margin: -4px 0 14px; font-size: 13px; color: var(--text-tertiary); }
+.past-days-list { display: flex; flex-direction: column; gap: 2px; margin-bottom: 10px; }
+.past-days-row {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  padding: 4px; background: transparent; border: none; cursor: pointer; text-align: left;
+}
+.past-days-label { font-size: 15px; color: var(--text-primary); }
+.past-days-empty { padding: 14px 4px; font-size: 14px; color: var(--text-tertiary); }
 .space-block-mid { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 /* Labels wrap freely (no truncation) now that the controls collapsed into ⋯. */
 .space-block-label {
