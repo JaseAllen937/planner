@@ -2831,6 +2831,33 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 .heat-blank { background: transparent; border: none; box-shadow: none; }
 .heat-today { box-shadow: 0 0 0 2px var(--accent); }
 
+/* Calendar colour language — THREE states, zero decoding. Scoped to the grid
+   so the base .heat-* rules (and anything else using them) stay as they were.
+   Green = done (quiet, the default texture). Red = missed (the rare state —
+   this is the information, it must pop). White = everything else: not-due,
+   pre-creation and future days are all one silent empty cell, so every row is
+   a solid 7-cell rectangle. */
+.heat-cal-week .heat-done {
+  background: rgba(52, 199, 89, 0.30);              /* soft --ok tint, no border */
+  border: none;
+  opacity: 1;
+}
+.heat-cal-week .heat-missed {
+  background: rgba(255, 59, 48, 0.85);              /* --danger tint — loud */
+  border: none;
+  opacity: 1;
+}
+.heat-cal-week .heat-notdue,
+.heat-cal-week .heat-empty {
+  background: var(--card);                          /* plain faint empty cell */
+  border: 1px solid var(--separator);               /* hairline, no dash */
+  opacity: 1;
+}
+/* Legend chips read the same green/red as the grid (the base .heat-missed is a
+   pale outline, which would not read as "missed" here). */
+.heat-legend-item .heat-done   { background: rgba(52, 199, 89, 0.30); border: none; opacity: 1; }
+.heat-legend-item .heat-missed { background: rgba(255, 59, 48, 0.85); border: none; opacity: 1; }
+
 /* ---- Franklin doorway: bad-habits list + virtue ranking + detail ---- */
 .frank-section { margin-bottom: 22px; }
 .frank-h {

@@ -5048,17 +5048,18 @@ function renderHabitHeatmap(block) {
     let anyReal = false;
     for (let i = 0; i < 7; i++) {
       const d = addDays(w, i);                       // Monday … Sunday
-      // Outside the habit's life or in the future: a transparent spacer that
-      // holds the column, NOT a state (never rendered as "missed").
+      // Outside the habit's life or in the future: a plain empty cell, NOT a
+      // state (never rendered as "missed"). Visible, so every row is a solid
+      // 7-cell rectangle — no holes, no ragged first row.
       if ((createdYmd && d < createdYmd) || d > today) {
-        cells.push(`<span class="heat-cell heat-blank"></span>`);
+        cells.push(`<span class="heat-cell heat-empty"></span>`);
         continue;
       }
       anyReal = true;
       const cls = 'heat-' + heatCellClass(block, d, today) + (d === today ? ' heat-today' : '');
       cells.push(`<span class="heat-cell ${cls}" title="${d}"></span>`);
     }
-    if (!anyReal) continue;                          // fully-blank row — don't render
+    if (!anyReal) continue;                          // no in-range days — don't render
     const label = escapeHtml(parseYmd(w).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }));
     rows.push(`<div class="heat-cal-week"><span class="heat-cal-wklbl">${label}</span>${cells.join('')}</div>`);
   }
@@ -5073,7 +5074,6 @@ function renderHabitHeatmap(block) {
     <div class="heat-legend">
       <span class="heat-legend-item"><span class="heat-cell heat-done"></span>Done</span>
       <span class="heat-legend-item"><span class="heat-cell heat-missed"></span>Missed</span>
-      <span class="heat-legend-item"><span class="heat-cell heat-notdue"></span>Not due</span>
     </div>
   </div>`;
 }
