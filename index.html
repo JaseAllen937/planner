@@ -7853,6 +7853,33 @@ async function initialSync() {
   }
 }
 
+// Pull-on-return: when the app becomes visible again, refresh from the cloud
+// (pushes are save-time, but pulls only ever ran at boot — so a change on the
+// other device never appeared until a full reload). Throttled, and skipped
+// while a push is pending/in flight so we never merge against our own
+// not-yet-uploaded state. The merge makes concurrent edits safe by design.
+let _lastReturnPull = 0;
+const RETURN_PULL_MIN_MS = 60 * 1000;
+
+async function pullOnReturn() {
+  if (!getSession() || !supaConfigured() || !navigator.onLine) return;
+  if (_pendingPush || _syncTimer) return;          // our own edits go up first
+  const now = Date.now();
+  if (now - _lastReturnPull < RETURN_PULL_MIN_MS) return;
+  _lastReturnPull = now;
+  try {
+    const remote = await supaPull();
+    if (!remote || !remote.data) return;
+    const merged = mergeStates(state, remote.data);
+    state = merged;
+    saveStateLocalOnly();
+    render();
+    setSyncStatus('synced');
+  } catch (e) {
+    console.warn('Return pull failed:', e);       // silent — boot sync still covers us
+  }
+}
+
 // Retry pending sync when connection comes back.
 window.addEventListener('online', () => {
   if (getSession() && _pendingPush) triggerSync();
@@ -7865,8 +7892,10 @@ window.addEventListener('online', () => {
 function rerenderIfDayChanged() {
   if (lastRenderDate && todayDate() !== lastRenderDate) render();
 }
-document.addEventListener('visibilitychange', () => { if (!document.hidden) rerenderIfDayChanged(); });
-window.addEventListener('focus', rerenderIfDayChanged);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) { rerenderIfDayChanged(); pullOnReturn(); }
+});
+window.addEventListener('focus', () => { rerenderIfDayChanged(); pullOnReturn(); });
 
 // ---- UI render for the Account & Backup settings section ----
 
