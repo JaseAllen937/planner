@@ -3506,6 +3506,7 @@ let codeTab = 'rules';        // 'rules' | 'virtues' | 'skills'
 let codeView = 'main';        // 'main' | 'journal'
 let codeVirtueId = null;      // (legacy — virtue detail page removed; kept to avoid churn)
 let codeRuleScope = 'public'; // narrow-screen Public|Private toggle
+let codeRulesEdit = false;    // session-only: Rules read/edit split (⋯ menus hidden in read mode)
 let codeForm = null;          // sheet form state
 let codeJournalRating = '';   // composer rating (in-memory)
 let codeSummaryOpen = false;  // composer: reading-summary textarea revealed (in-memory)
@@ -3545,7 +3546,7 @@ function renderCodeCard() {
 const codeOverlay = document.getElementById('code-overlay');
 const codeSheet   = document.getElementById('code-sheet');
 
-function openCode() { codeView = 'main'; codeVirtueId = null; renderCode(); codeOverlay.classList.add('open'); }
+function openCode() { codeView = 'main'; codeVirtueId = null; codeRulesEdit = false; renderCode(); codeOverlay.classList.add('open'); }
 function closeCode() { codeOverlay.classList.remove('open'); closeCodeSheet(); }
 function openCodeSheet() { codeSheet.classList.add('open'); }
 function closeCodeSheet() { codeSheet.classList.remove('open'); codeForm = null; }
@@ -3582,15 +3583,17 @@ function renderCodeMain(body) {
   body.innerHTML = html;
 }
 
-// A single tight, numbered row with one ⋯ menu (rules + skills share it).
-function codeNumberedRow(kind, item, i, total, text, tag) {
+// A single numbered row with one ⋯ menu (rules + skills share it). `showMenu`
+// gates the ⋯: Rules pass codeRulesEdit so read mode is text-only, full width;
+// Skills default to true (they have no separate edit toggle).
+function codeNumberedRow(kind, item, i, total, text, tag, showMenu = true) {
   return `<div class="code-rule-row">
     <span class="code-rule-num">${i + 1}</span>
     <div class="code-rule-body">
       <div class="code-rule-text">${escapeHtml(text)}</div>
       ${tag ? `<span class="code-virtue-tag">${escapeHtml(tag)}</span>` : ''}
     </div>
-    <button type="button" class="space-menu-btn code-menu-btn" data-cact="open-menu" data-menu-kind="${kind}" data-menu-id="${item.id}" data-index="${i}" data-total="${total}" aria-label="Actions" aria-haspopup="menu">⋯</button>
+    ${showMenu ? `<button type="button" class="space-menu-btn code-menu-btn" data-cact="open-menu" data-menu-kind="${kind}" data-menu-id="${item.id}" data-index="${i}" data-total="${total}" aria-label="Actions" aria-haspopup="menu">⋯</button>` : ''}
   </div>`;
 }
 
@@ -3598,15 +3601,15 @@ function renderCodeRules() {
   const col = (scope, label) => {
     const rules = codeRulesByScope(scope);
     const rows = rules.length
-      ? rules.map((r, i) => codeNumberedRow('rule', r, i, rules.length, r.text, r.virtueId ? virtueNameById(r.virtueId) : null)).join('')
+      ? rules.map((r, i) => codeNumberedRow('rule', r, i, rules.length, r.text, r.virtueId ? virtueNameById(r.virtueId) : null, codeRulesEdit)).join('')
       : `<div class="code-empty">No rules yet.</div>`;
     return `<div class="code-rule-col code-rule-col-${scope}">
-      <div class="vault-section-head"><span class="vault-section-title">${label}</span><button type="button" class="vault-mini-btn" data-cact="add-rule" data-scope="${scope}">+ Add</button></div>
+      <div class="vault-section-head"><span class="vault-section-title">${label}</span><span class="code-rule-head-actions"><button type="button" class="vault-mini-btn" data-cact="rules-edit" aria-pressed="${codeRulesEdit ? 'true' : 'false'}">${codeRulesEdit ? 'Done' : 'Edit'}</button><button type="button" class="vault-mini-btn" data-cact="add-rule" data-scope="${scope}">+ Add</button></span></div>
       <div class="code-rule-list">${rows}</div>
     </div>`;
   };
   // Narrow: segmented toggle picks one scope (CSS hides toggle + shows both cols at >=700px).
-  return `<div class="vault-section code-rules-section">
+  return `<div class="vault-section code-rules-section${codeRulesEdit ? ' code-rules-editing' : ''}">
     <div class="type-tabs code-rule-toggle">
       <button type="button" data-cact="rule-scope" data-scope="public" class="${codeRuleScope === 'public' ? 'active' : ''}">Public</button>
       <button type="button" data-cact="rule-scope" data-scope="private" class="${codeRuleScope === 'private' ? 'active' : ''}">Private</button>
@@ -3871,6 +3874,7 @@ function onCodeBodyClick(e) {
   // (open-menu -> openBlockMenuFor -> onBlockMenuClick -> the existing fns).
   if      (act === 'tab')          { codeTab = el.dataset.tab; renderCode(); }
   else if (act === 'rule-scope')   { codeRuleScope = el.dataset.scope; renderCode(); }
+  else if (act === 'rules-edit')   { codeRulesEdit = !codeRulesEdit; renderCode(); }
   else if (act === 'open-menu')    openBlockMenuFor(el);
   else if (act === 'journal-back') { codeView = 'main'; renderCode(); }
   else if (act === 'add-rule')     openCodeRuleSheet(null, el.dataset.scope);
