@@ -65,9 +65,10 @@
   /* ---- Typography ---- */
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
-  /* Reading serif for My Code content — resolves to New York on iOS/macOS.
-     No web-font dependency (system stack only). */
-  --font-reading: ui-serif, Georgia, 'Times New Roman', serif;
+  /* Reading font for My Code content — Verdana for its large x-height and open
+     apertures (maximal small-screen legibility). System font everywhere; no
+     web-font dependency. */
+  --font-reading: Verdana, Geneva, Tahoma, sans-serif;
   --num: "tnum";
 }
 
@@ -1791,7 +1792,7 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 }
 .code-rule-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
 .code-rule-text {
-  font-size: 15px; line-height: 1.55; color: var(--text-primary);  /* was 14/1.45 */
+  font-size: 14px; line-height: 1.6; color: var(--text-primary);  /* Verdana reading size */
   white-space: pre-wrap; word-break: break-word;
 }
 .code-menu-btn { flex-shrink: 0; }
@@ -1807,11 +1808,11 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
    state (hook for any edit-only row spacing). */
 .code-rules-editing .code-rule-row { gap: 8px; }
 
-/* ---- My Code reads as a document: reading serif for CONTENT text only ----
+/* ---- My Code reads as a document: reading font (Verdana) for CONTENT only ----
    Scoped to the My Code page (#code-body) and the Stats journal archive
    (#journalstats-body). Chrome — section labels, buttons, rule numbers,
    virtue tags, rating chips, dates, stat tiles — is deliberately NOT selected
-   and stays in the app sans/mono. No new web font (system serif stack). */
+   and stays in the app sans/mono. System font stack; no new web font. */
 #code-body .code-rule-text,
 #code-body .code-linked-rule,
 #code-body .code-virtue-name,
@@ -1823,14 +1824,18 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 #journalstats-body .jd-reading-text {
   font-family: var(--font-reading);
 }
-/* Free prose breathes at 16/1.6; rule text keeps its column-tight 15/1.55. */
+/* Body-size content at Verdana 14/1.6 — 14px is deliberate: Verdana's wide
+   x-height reads like Inter at 15–16px without adding line wrap. Virtue NAMES
+   are intentionally excluded here so they keep their larger heading sizes. */
+#code-body .code-rule-text,
+#code-body .code-linked-rule,
 #code-body .code-virtue-def,
 #code-body .code-vn-text,
 #code-body .code-journal-past-text,
 #code-body .code-textarea,
 #journalstats-body .jd-entry-text,
 #journalstats-body .jd-reading-text {
-  font-size: 16px; line-height: 1.6;
+  font-size: 14px; line-height: 1.6;
 }
 
 /* ---- Virtues: all expanded inline ---- */
