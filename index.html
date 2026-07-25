@@ -1846,6 +1846,7 @@ function renderFocusCard() {
     const b = e.target.closest('[data-ftype]');
     if (!b) return;
     state.focusLastType = b.dataset.ftype;   // 'work' | 'reading' — stored preference, syncs
+    state.focusLastTypeAt = nowIso();         // field stamp -> per-field newest-wins merge
     saveState();
     render();
   });
@@ -3335,6 +3336,7 @@ function setFranklinCycleDays(v) {
   const f = franklinData();
   if (f.cycleDays === clamped) return;          // no-op keeps renders stable
   f.cycleDays = clamped;
+  f.cycleDaysAt = nowIso();                      // field stamp -> per-field newest-wins merge
   saveState();
   render();
 }
@@ -3352,6 +3354,7 @@ function startFocusAt(virtueId) {
   const f = franklinData();
   const cycleDays = Math.max(1, f.cycleDays | 0);
   f.anchorDate = addDays(todayDate(), -(p * cycleDays));
+  f.anchorDateAt = nowIso();                     // field stamp -> per-field newest-wins merge
   saveState();
   render();
   toast('Focus set');
@@ -7746,6 +7749,36 @@ function mergeVirtueNotes(localState, remoteState, remoteIsNewer) {
   return out;
 }
 
+// Field-timestamped scalars: per-FIELD newest-wins, independent of which whole
+// blob is newer. An edit on one device can no longer be reverted by an
+// unrelated save on the other. Absent stamp = legacy value; it loses to any
+// stamped value, and when neither side is stamped the newer-blob value stands
+// (today's behavior, unchanged). `get` returns the container (may be undefined
+// on a side that lacks it).
+const SCALAR_MERGES = [
+  { get: s => s.franklin, field: 'anchorDate',    at: 'anchorDateAt'    },
+  { get: s => s.franklin, field: 'cycleDays',     at: 'cycleDaysAt'     },
+  { get: s => s,          field: 'focusLastType', at: 'focusLastTypeAt' },
+];
+
+// Resolve one field-timestamped scalar into `merged`. Later `at` wins; a single
+// stamped side beats an unstamped side; neither stamped -> leave merged's
+// newer-base value untouched. Missing containers are handled without throwing.
+function mergeScalarField(merged, localState, remoteState, spec) {
+  const lc = spec.get(localState);
+  const rc = spec.get(remoteState);
+  const lAt = lc && lc[spec.at];
+  const rAt = rc && rc[spec.at];
+  if (!lAt && !rAt) return;                 // neither stamped -> keep newer-base value
+  let winner;
+  if (lAt && rAt) winner = (String(rAt) > String(lAt)) ? rc : lc;  // later ISO stamp wins
+  else            winner = lAt ? lc : rc;                          // the only stamped side
+  const dest = spec.get(merged);
+  if (!dest || typeof dest !== 'object') return;                  // merged lacks container -> skip
+  dest[spec.field] = winner[spec.field];
+  dest[spec.at]    = winner[spec.at];
+}
+
 function mergeStates(localState, remoteState) {
   const localAt = blobUpdatedAt(localState);
   const remoteAt = blobUpdatedAt(remoteState);
@@ -7794,6 +7827,11 @@ function mergeStates(localState, remoteState) {
   // written on either device survives the scalar whole-object copy.
   if (!merged.code || typeof merged.code !== 'object') merged.code = {};
   merged.code.virtueNotes = mergeVirtueNotes(localState, remoteState, remoteIsNewer);
+
+  // 3c. Field-timestamped settings scalars: per-field newest-wins, so an edit
+  // to one setting is never reverted by an unrelated newer save on the other
+  // device. Independent of the newer-base clone.
+  for (const spec of SCALAR_MERGES) mergeScalarField(merged, localState, remoteState, spec);
 
   // 4. meta.updated_at = MAX of the two.
   merged.meta.updated_at = new Date(Math.max(localAt, remoteAt)).toISOString();
