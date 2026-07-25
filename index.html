@@ -39,9 +39,10 @@
     <div id="three-day-wrap"></div>      <!-- "Next 3 days" — glance -->
     <div id="spaces-hub-wrap"></div>     <!-- do -->
     <div id="focus-card-wrap"></div>     <!-- do -->
-    <div class="today-squares">          <!-- consult -->
+    <div class="today-squares today-squares-3">   <!-- consult -->
       <div id="vault-card-wrap"></div>
       <div id="franklin-card-wrap"></div>
+      <div id="goals-card-wrap"></div>
     </div>
     <div id="code-card-wrap"></div>      <!-- foundation, page base -->
   </section>
@@ -427,6 +428,23 @@
   <div class="modal-panel" id="code-sheet-panel"></div>
 </div>
 
+<!-- Goals — full-screen direction-layer overlay (reuses Vault overlay CSS) -->
+<div class="modal vault-overlay-mode" id="goals-overlay" role="dialog" aria-modal="true" aria-label="Goals">
+  <div class="vault-overlay-panel">
+    <div class="vault-header">
+      <button type="button" class="btn goals-back-btn" id="goals-back-btn" aria-label="Back to goals" hidden>‹ Goals</button>
+      <h2 class="vault-title" id="goals-title">🎯 Goals</h2>
+      <button type="button" class="btn vault-close-btn" id="goals-close-btn" aria-label="Close Goals">Done</button>
+    </div>
+    <div class="vault-body" id="goals-body"></div>
+  </div>
+</div>
+
+<!-- Goals bottom-sheet — habit picker (grouped checkbox blocks). -->
+<div class="modal vault-sheet-mode" id="goals-sheet" role="dialog" aria-modal="true">
+  <div class="modal-panel" id="goals-sheet-panel"></div>
+</div>
+
 <!-- Stats doorway: Habits — Space list -> expand -> per-habit heatmap (reuses Vault overlay CSS) -->
 <div class="modal vault-overlay-mode" id="habits-overlay" role="dialog" aria-modal="true" aria-label="Habits">
   <div class="vault-overlay-panel">
@@ -788,7 +806,7 @@ function loadState() {
   if (raw) {
     try {
       const parsed = JSON.parse(raw);
-      if (parsed && parsed.meta && (parsed.meta.version >= 1 && parsed.meta.version <= 12)) {
+      if (parsed && parsed.meta && (parsed.meta.version >= 1 && parsed.meta.version <= 13)) {
         return ensureShape(parsed);
       }
     } catch (e) {
@@ -1077,6 +1095,20 @@ function ensureShape(s) {
     s.meta.version = 12;
   }
 
+  // ---- v13: Goals (direction layer). Add-only; no seeding — a fresh Goals
+  // page starts empty with an "add your first" prompt. goals hold links to
+  // existing habit blocks + a written why; goalMilestones is its OWN union-
+  // merged collection (keyed by goalId) so a milestone added on one device is
+  // never dropped by a whole-record merge of its goal.
+  if ((s.meta.version || 1) < 13) {
+    if (!Array.isArray(s.goals)) s.goals = [];
+    if (!Array.isArray(s.goalMilestones)) s.goalMilestones = [];
+    s.meta.version = 13;
+  }
+  // Always-run guards so a merged-in blob can never leave these missing.
+  if (!Array.isArray(s.goals)) s.goals = [];
+  if (!Array.isArray(s.goalMilestones)) s.goalMilestones = [];
+
   // Cloud-sync uses meta.updated_at as the conflict-resolution timestamp.
   // Backfill it for pre-sync states.
   if (!s.meta.updated_at) s.meta.updated_at = s.meta.created_at || nowIso();
@@ -1100,7 +1132,7 @@ function removeSampleHabits(s) {
 function seedState() {
   const now = nowIso();
   return {
-    meta: { version: 12, created_at: now, updated_at: now, last_export_at: null, lastWipe: null, tombstones: {} },
+    meta: { version: 13, created_at: now, updated_at: now, last_export_at: null, lastWipe: null, tombstones: {} },
     // No sample habits — habits are now created only as checkbox blocks in Spaces.
     habits: [],
     items: [],
@@ -1114,7 +1146,9 @@ function seedState() {
     spaces: [],
     blocks: [],
     franklin: seedFranklin(),
-    code: { rules: [], virtueNotes: {}, skills: [], journal: [], codeReads: [] }
+    code: { rules: [], virtueNotes: {}, skills: [], journal: [], codeReads: [] },
+    goals: [],
+    goalMilestones: []
   };
 }
 
@@ -4257,6 +4291,289 @@ function switchTab(tab) {
   if (tab === 'history') requestAnimationFrame(scrollSleepStripToNewest);
 }
 
+// ============================================================================
+// Goals — long-term direction layer (schema v13). Big goals, each with an
+// optional written "why", links to EXISTING habit blocks (consistency derived,
+// never stored), and check-once milestones stored as dated events in their OWN
+// union-merged collection. DESIGN LAW: no deadlines, due-dates, percentages,
+// streaks, or miss-states anywhere. Consulted deliberately, not a daily nag.
+// ============================================================================
+
+function goalsList() { if (!Array.isArray(state.goals)) state.goals = []; return state.goals; }
+function goalMilestonesList() { if (!Array.isArray(state.goalMilestones)) state.goalMilestones = []; return state.goalMilestones; }
+function milestonesForGoal(goalId) { return goalMilestonesList().filter(m => m.goalId === goalId); }
+function findGoal(id) { return goalsList().find(g => g.id === id) || null; }
+function findMilestone(id) { return goalMilestonesList().find(m => m.id === id) || null; }
+
+// Pure derived consistency: done-count over due-count for `block` across the
+// last 30 days, clamped to createdAt. Reads existing checks + isDueToday only —
+// NO new state, NO streak, NO percentage. Returns { done, due }.
+function blockConsistency30(block) {
+  if (!block || block.type !== 'checkbox') return { done: 0, due: 0 };
+  const today = todayDate();
+  const createdYmd = block.createdAt ? String(block.createdAt).slice(0, 10) : null;
+  const checks = (block.checks && typeof block.checks === 'object') ? block.checks : {};
+  let done = 0, due = 0;
+  for (let i = 0; i < 30; i++) {
+    const d = addDays(today, -i);
+    if (createdYmd && d < createdYmd) continue;   // clamp to creation
+    if (!isDueToday(block, d)) continue;          // count ONLY due days
+    due++;
+    if (checks[d]) done++;
+  }
+  return { done, due };
+}
+
+function goalsMonthDay(ymdStr) {
+  return parseYmd(ymdStr).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+// ---- Today square: quiet, no counts of incomplete anything ----
+function renderGoalsCard() {
+  const wrap = document.getElementById('goals-card-wrap');
+  if (!wrap) return;
+  const n = goalsList().length;
+  const sub = n ? `${n} goal${n === 1 ? '' : 's'}` : 'Set your direction';
+  wrap.innerHTML = `
+    <button type="button" class="vault-entry-card vault-entry-square" id="goals-entry-card" aria-label="Open Goals">
+      <span class="vault-entry-icon" aria-hidden="true">🎯</span>
+      <span class="vault-entry-title">Goals</span>
+      <span class="vault-entry-sub">${escapeHtml(sub)}</span>
+    </button>`;
+  document.getElementById('goals-entry-card').addEventListener('click', openGoals);
+}
+
+// ---- Full-page overlay (mirrors Vault/Franklin open/close) ----
+const goalsOverlay = document.getElementById('goals-overlay');
+const goalsSheet   = document.getElementById('goals-sheet');
+let goalsView = 'list';        // 'list' | 'detail'
+let goalsSelectedId = null;
+
+function openGoals() { goalsView = 'list'; goalsSelectedId = null; renderGoals(); goalsOverlay.classList.add('open'); }
+function closeGoals() { goalsOverlay.classList.remove('open'); closeGoalsSheet(); }
+function closeGoalsSheet() { goalsSheet.classList.remove('open'); }
+
+function renderGoals() {
+  const body = document.getElementById('goals-body');
+  if (!body) return;
+  // Don't clobber the Why field mid-edit.
+  if (document.activeElement && document.activeElement.id === 'goals-why-input') return;
+  const back = document.getElementById('goals-back-btn');
+  const g = goalsView === 'detail' ? findGoal(goalsSelectedId) : null;
+  if (g) {
+    if (back) back.hidden = false;
+    renderGoalDetail(body, g);
+  } else {
+    goalsView = 'list'; goalsSelectedId = null;
+    if (back) back.hidden = true;
+    renderGoalsList(body);
+  }
+}
+
+function renderGoalsList(body) {
+  const goals = goalsList();
+  const head = `<div class="vault-section-head"><span class="vault-section-title">Goals</span><button type="button" class="vault-mini-btn" data-gact="add-goal">+ Add goal</button></div>`;
+  if (!goals.length) {
+    body.innerHTML = `<div class="vault-section">${head}<div class="goals-empty">Add your first goal — something long-term worth walking toward.</div></div>`;
+    return;
+  }
+  const rows = goals.map(g => {
+    const links = (g.habitIds || []).length;
+    const ms = milestonesForGoal(g.id);
+    const doneM = ms.filter(m => m.doneDate).length;
+    const msLine = ms.length ? `${doneM} of ${ms.length} milestone${ms.length === 1 ? '' : 's'}` : 'No milestones yet';
+    const linkLine = `${links} linked habit${links === 1 ? '' : 's'}`;
+    return `
+      <div class="goals-row">
+        <div class="goals-row-main" data-gact="open-goal" data-id="${escapeHtml(g.id)}">
+          <div class="goals-row-name">${escapeHtml(g.name)}</div>
+          <div class="goals-row-meta">${escapeHtml(linkLine + ' · ' + msLine)}</div>
+        </div>
+        <span class="goals-row-actions">
+          <button type="button" class="space-arrow" data-gact="rename-goal" data-id="${escapeHtml(g.id)}" aria-label="Rename goal">✎</button>
+          <button type="button" class="space-arrow" data-gact="delete-goal" data-id="${escapeHtml(g.id)}" aria-label="Delete goal">✕</button>
+        </span>
+      </div>`;
+  }).join('');
+  body.innerHTML = `<div class="vault-section">${head}<div class="goals-list">${rows}</div></div>`;
+}
+
+function renderGoalDetail(body, g) {
+  const links = (g.habitIds || []);
+  const linkedHtml = links.length
+    ? links.map(bid => {
+        const b = findBlock(bid);
+        if (!b) return ''; // link points at a deleted block — skip render, keep the id
+        const sp = findSpace(b.spaceId);
+        const spName = sp ? (sp.name || 'Space') : '—';
+        const c = blockConsistency30(b);
+        return `
+          <div class="goals-habit-row">
+            <div class="goals-habit-main">
+              <div class="goals-habit-label">${escapeHtml(b.label || 'Habit')}</div>
+              <div class="goals-habit-space">${escapeHtml(spName)}</div>
+            </div>
+            <span class="goals-habit-consistency">${c.done}/${c.due} days</span>
+            <button type="button" class="space-arrow" data-gact="unlink-habit" data-id="${escapeHtml(g.id)}" data-block="${escapeHtml(bid)}" aria-label="Unlink habit">✕</button>
+          </div>`;
+      }).join('')
+    : `<div class="goals-empty">No linked habits yet.</div>`;
+
+  const ms = milestonesForGoal(g.id);
+  const openMs = ms.filter(m => !m.doneDate);   // unchecked first (add order)
+  const doneMs = ms.filter(m => m.doneDate);    // completed below
+  const msRow = (m, done) => `
+    <div class="goals-ms-row${done ? ' done' : ''}">
+      <button type="button" class="goals-ms-check${done ? ' checked' : ''}" data-gact="toggle-ms" data-id="${escapeHtml(m.id)}" aria-label="Toggle milestone" aria-pressed="${done ? 'true' : 'false'}"><span class="goals-ms-dot">${done ? '&check;' : ''}</span></button>
+      <div class="goals-ms-text">${escapeHtml(m.text)}${done ? ` <span class="goals-ms-date">✓ ${escapeHtml(goalsMonthDay(m.doneDate))}</span>` : ''}</div>
+      <button type="button" class="space-arrow" data-gact="edit-ms" data-id="${escapeHtml(m.id)}" aria-label="Edit milestone">✎</button>
+      <button type="button" class="space-arrow" data-gact="delete-ms" data-id="${escapeHtml(m.id)}" aria-label="Delete milestone">✕</button>
+    </div>`;
+  const msHtml = (openMs.map(m => msRow(m, false)).join('') + doneMs.map(m => msRow(m, true)).join(''))
+    || `<div class="goals-empty">No milestones yet.</div>`;
+
+  body.innerHTML = `
+    <div class="vault-section">
+      <div class="goals-detail-name">${escapeHtml(g.name)}</div>
+      <label class="goals-why-label" for="goals-why-input">Why</label>
+      <textarea class="code-textarea goals-why" id="goals-why-input" placeholder="Why does this matter to you?">${escapeHtml(g.why || '')}</textarea>
+    </div>
+    <div class="vault-section">
+      <div class="vault-section-head"><span class="vault-section-title">Linked habits</span><button type="button" class="vault-mini-btn" data-gact="open-picker" data-id="${escapeHtml(g.id)}">+ Link habit</button></div>
+      ${linkedHtml}
+    </div>
+    <div class="vault-section">
+      <div class="vault-section-head"><span class="vault-section-title">Milestones</span><button type="button" class="vault-mini-btn" data-gact="add-ms" data-id="${escapeHtml(g.id)}">+ Add</button></div>
+      ${msHtml}
+    </div>`;
+
+  const whyEl = document.getElementById('goals-why-input');
+  if (whyEl) {
+    whyEl.addEventListener('blur', () => setGoalWhy(g.id, whyEl.value.trim()));
+  }
+}
+
+// ---- Delegated actions inside the Goals body ----
+function onGoalsBodyClick(e) {
+  const el = e.target.closest('[data-gact]');
+  if (!el) return;
+  const act = el.dataset.gact;
+  const id = el.dataset.id;
+  if      (act === 'add-goal')     addGoal();
+  else if (act === 'open-goal')    { goalsSelectedId = id; goalsView = 'detail'; renderGoals(); }
+  else if (act === 'rename-goal')  renameGoal(id);
+  else if (act === 'delete-goal')  deleteGoal(id);
+  else if (act === 'open-picker')  openHabitPicker(id);
+  else if (act === 'unlink-habit') unlinkHabit(id, el.dataset.block);
+  else if (act === 'add-ms')       addMilestone(id);
+  else if (act === 'toggle-ms')    toggleMilestone(id);
+  else if (act === 'edit-ms')      editMilestone(id);
+  else if (act === 'delete-ms')    deleteMilestone(id);
+}
+
+// ---- Mutations (every one: mutate -> saveState -> render) ----
+function addGoal() {
+  const name = (prompt('New goal name:') || '').trim();
+  if (!name) return;
+  goalsList().push({ id: uuid(), name, why: '', habitIds: [], createdAt: todayDate() });
+  saveState(); render();
+}
+function renameGoal(id) {
+  const g = findGoal(id); if (!g) return;
+  const name = (prompt('Rename goal:', g.name) || '').trim();
+  if (!name || name === g.name) return;
+  g.name = name; saveState(); render();
+}
+function deleteGoal(id) {
+  const g = findGoal(id); if (!g) return;
+  const ms = milestonesForGoal(id);
+  const links = (g.habitIds || []).length;
+  const msg = `Delete "${g.name}"?\n\nThis removes the goal and its ${ms.length} milestone${ms.length === 1 ? '' : 's'}. Your ${links} linked habit${links === 1 ? '' : 's'} will NOT be touched — links are only pointers. This can't be undone.`;
+  if (!confirm(msg)) return;
+  // Lesson 4: tombstone EACH milestone (its own union-merged collection), then
+  // the goal — so neither resurrects from the other device on the next merge.
+  ms.forEach(m => tombstone('goalMilestones', m.id));
+  state.goalMilestones = goalMilestonesList().filter(m => m.goalId !== id);
+  tombstone('goals', id);
+  state.goals = goalsList().filter(x => x.id !== id);
+  goalsView = 'list'; goalsSelectedId = null;
+  saveState(); render();
+}
+function setGoalWhy(id, text) {
+  const g = findGoal(id); if (!g) return;
+  if ((g.why || '') === text) return; // no-op
+  g.why = text; saveState(); render();
+}
+function linkHabit(goalId, blockId) {
+  const g = findGoal(goalId); if (!g) return;
+  if (!Array.isArray(g.habitIds)) g.habitIds = [];
+  if (!g.habitIds.includes(blockId)) g.habitIds.push(blockId);
+  saveState(); render();
+}
+function unlinkHabit(goalId, blockId) {
+  const g = findGoal(goalId); if (!g) return;
+  g.habitIds = (g.habitIds || []).filter(x => x !== blockId); // pointer removed; block untouched
+  saveState(); render();
+}
+function addMilestone(goalId) {
+  const text = (prompt('New milestone:') || '').trim();
+  if (!text) return;
+  goalMilestonesList().push({ id: uuid(), goalId, text, doneDate: null, createdAt: todayDate() });
+  saveState(); render();
+}
+function toggleMilestone(id) {
+  const m = findMilestone(id); if (!m) return;
+  m.doneDate = m.doneDate ? null : todayDate();  // one-shot completion, record-level newer-wins
+  saveState(); render();
+}
+function editMilestone(id) {
+  const m = findMilestone(id); if (!m) return;
+  const text = (prompt('Edit milestone:', m.text) || '').trim();
+  if (!text || text === m.text) return;
+  m.text = text; saveState(); render();
+}
+function deleteMilestone(id) {
+  const m = findMilestone(id); if (!m) return;
+  if (!confirm(`Delete milestone "${m.text}"? This can't be undone.`)) return;
+  tombstone('goalMilestones', id);
+  state.goalMilestones = goalMilestonesList().filter(x => x.id !== id);
+  saveState(); render();
+}
+
+// ---- Habit picker (bottom-sheet): all checkbox blocks grouped by Space ----
+function openHabitPicker(goalId) {
+  const panel = document.getElementById('goals-sheet-panel');
+  const g = findGoal(goalId);
+  if (!g || !panel) return;
+  const linked = new Set(g.habitIds || []);
+  let html = `<div class="goals-sheet-head"><h3 class="goals-sheet-title">Link a habit</h3><button type="button" class="btn" data-gact="picker-close">Done</button></div>`;
+  let any = false;
+  for (const sp of spacesSorted()) {
+    const blocks = checkboxBlocksForSpace(sp.id);
+    if (!blocks.length) continue;
+    any = true;
+    html += `<div class="goals-pick-space">${escapeHtml(sp.name || 'Space')}</div>`;
+    html += blocks.map(b => {
+      const on = linked.has(b.id);
+      return `<button type="button" class="goals-pick-row${on ? ' linked' : ''}" data-gact="pick-habit" data-id="${escapeHtml(goalId)}" data-block="${escapeHtml(b.id)}"${on ? ' disabled' : ''}>
+        <span class="goals-pick-label">${escapeHtml(b.label || 'Habit')}</span>
+        <span class="goals-pick-state">${on ? 'Linked' : '+ Link'}</span>
+      </button>`;
+    }).join('');
+  }
+  if (!any) html += `<div class="goals-empty">No checkbox habits yet — create one in a Space first.</div>`;
+  panel.innerHTML = html;
+  goalsSheet.classList.add('open');
+  // Sheet is outside #goals-body, so wire its clicks directly.
+  panel.querySelectorAll('[data-gact]').forEach(node => {
+    node.addEventListener('click', () => {
+      const a = node.dataset.gact;
+      if (a === 'picker-close') closeGoalsSheet();
+      else if (a === 'pick-habit') { linkHabit(node.dataset.id, node.dataset.block); openHabitPicker(node.dataset.id); }
+    });
+  });
+}
+
 // ---------------- main render ----------------
 
 // Date the UI was last built for; used to detect an overnight day rollover.
@@ -4270,9 +4587,11 @@ function render() {
   renderCodeCard();
   renderVaultCard();
   renderFranklinCard();
+  renderGoalsCard();
   if (vaultOverlay && vaultOverlay.classList.contains('open')) renderVault();
   if (franklinOverlay && franklinOverlay.classList.contains('open')) renderFranklin();
   if (codeOverlay && codeOverlay.classList.contains('open')) renderCode();
+  if (goalsOverlay && goalsOverlay.classList.contains('open')) renderGoals();
   renderThreeDayTimeline();
   renderSpacesHub();
   if (spaceOverlay && spaceOverlay.classList.contains('open')) renderSpaceView();
@@ -7275,7 +7594,12 @@ const MERGE_COLLECTIONS = [
   { key: 'code.journal', get: s => s.code && s.code.journal,
     set: (s, v) => { if (!s.code || typeof s.code !== 'object') s.code = {}; s.code.journal = v; } },
   { key: 'code.codeReads', get: s => s.code && s.code.codeReads,
-    set: (s, v) => { if (!s.code || typeof s.code !== 'object') s.code = {}; s.code.codeReads = v; } }
+    set: (s, v) => { if (!s.code || typeof s.code !== 'object') s.code = {}; s.code.codeReads = v; } },
+  // Goals (direction layer) — flat top-level collections, union-by-id +
+  // tombstones like focusSessions. goalMilestones is SEPARATE (not nested in
+  // goal records) so a milestone added on one device survives a merge.
+  { key: 'goals',          get: s => s.goals,          set: (s, v) => { s.goals = v; } },
+  { key: 'goalMilestones', get: s => s.goalMilestones, set: (s, v) => { s.goalMilestones = v; } }
 ];
 
 function blobUpdatedAt(s) {
@@ -8113,6 +8437,12 @@ document.getElementById('code-close-btn').addEventListener('click', closeCode);
 document.getElementById('code-journal-btn').addEventListener('click', toggleCodeJournal);
 document.getElementById('code-body').addEventListener('click', onCodeBodyClick);
 codeSheet.addEventListener('click', e => { if (e.target === codeSheet) closeCodeSheet(); });
+
+// ---- Goals wiring ----
+document.getElementById('goals-close-btn').addEventListener('click', closeGoals);
+document.getElementById('goals-back-btn').addEventListener('click', () => { goalsView = 'list'; goalsSelectedId = null; renderGoals(); });
+document.getElementById('goals-body').addEventListener('click', onGoalsBodyClick);
+goalsSheet.addEventListener('click', e => { if (e.target === goalsSheet) closeGoalsSheet(); });
 
 // ---- Spaces wiring ----
 document.getElementById('space-close-btn').addEventListener('click', closeSpace);
