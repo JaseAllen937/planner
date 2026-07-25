@@ -4416,23 +4416,26 @@ function renderGoalDetail(body, g) {
         const sp = findSpace(b.spaceId);
         const spName = sp ? (sp.name || 'Space') : '—';
         const c = blockConsistency30(b);
-        // No due day in the window yet (young weekly habit): show a muted line,
-        // no strip and no "0/0".
-        const strip = c.due > 0
-          ? `<span class="goal-strip">${c.cells.map(cell => `<span class="goal-strip-cell ${cell.cls}" title="${escapeHtml(cell.d)}"></span>`).join('')}</span>`
-          : '';
-        const count = c.due > 0
+        // Two-line row at all widths: line 1 = name + Space (left), count + ✕
+        // (right, nowrap); line 2 = the 14-day strip full-width. When no due day
+        // has elapsed yet, the muted line takes the strip's slot (no count, no
+        // "0/0") so rows stay visually consistent.
+        const stripSlot = c.due > 0
+          ? `<div class="goal-strip">${c.cells.map(cell => `<span class="goal-strip-cell ${cell.cls}" title="${escapeHtml(cell.d)}"></span>`).join('')}</div>`
+          : `<div class="goal-strip-empty">no due days yet</div>`;
+        const countHtml = c.due > 0
           ? `<span class="goals-habit-consistency">${c.done}/${c.due} days</span>`
-          : `<span class="goals-habit-consistency goals-habit-nodue">no due days yet</span>`;
+          : '';
         return `
-          <div class="goals-habit-row">
-            <div class="goals-habit-main">
-              <div class="goals-habit-label">${escapeHtml(b.label || 'Habit')}</div>
-              <div class="goals-habit-space">${escapeHtml(spName)}</div>
+          <div class="goal-habit-row">
+            <div class="goal-habit-top">
+              <span class="goal-habit-name">
+                <span class="goal-habit-label">${escapeHtml(b.label || 'Habit')}</span>
+                <span class="goal-habit-space">${escapeHtml(spName)}</span>
+              </span>
+              <span class="goal-habit-meta">${countHtml}<button type="button" class="space-arrow" data-gact="unlink-habit" data-id="${escapeHtml(g.id)}" data-block="${escapeHtml(bid)}" aria-label="Unlink habit">✕</button></span>
             </div>
-            ${strip}
-            ${count}
-            <button type="button" class="space-arrow" data-gact="unlink-habit" data-id="${escapeHtml(g.id)}" data-block="${escapeHtml(bid)}" aria-label="Unlink habit">✕</button>
+            ${stripSlot}
           </div>`;
       }).join('')
     : `<div class="goals-empty">No linked habits yet.</div>`;
@@ -4468,7 +4471,19 @@ function renderGoalDetail(body, g) {
   const whyEl = document.getElementById('goals-why-input');
   if (whyEl) {
     whyEl.addEventListener('blur', () => setGoalWhy(g.id, whyEl.value.trim()));
+    // Autogrow: pure style mutation, NO render() on keystroke (the blur save
+    // path is unchanged). Size after layout so a not-yet-visible textarea (which
+    // reports scrollHeight 0) is measured correctly — the sleep-strip lesson.
+    whyEl.addEventListener('input', () => autoGrowGoalWhy(whyEl));
+    requestAnimationFrame(() => autoGrowGoalWhy(whyEl));
   }
+}
+
+// Grow the Why textarea to fit its content — no inner scrollbar, no clipping.
+function autoGrowGoalWhy(el) {
+  if (!el) return;
+  el.style.height = 'auto';
+  el.style.height = el.scrollHeight + 'px';
 }
 
 // ---- Delegated actions inside the Goals body ----

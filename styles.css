@@ -1719,7 +1719,10 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 .goals-detail-name { font-size: 20px; font-weight: 800; color: var(--text-primary); letter-spacing: -0.01em; margin-bottom: 10px; overflow-wrap: anywhere; }
 .goals-why-label { display: block; font-size: 12px; font-weight: 600; color: var(--text-secondary); margin: 4px 0 6px; }
 /* Reading-font treatment for the user's own writing (matches My Code). */
-#goals-body .goals-why { font-family: var(--font-reading); font-size: 14px; line-height: 1.6; }
+#goals-body .goals-why {
+  font-family: var(--font-reading); font-size: 14px; line-height: 1.6;
+  min-height: 72px; overflow: hidden; resize: none;   /* autogrows to content — no inner scrollbar */
+}
 
 .goals-habit-row {
   display: flex; align-items: center; gap: 10px;
@@ -1738,13 +1741,32 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 /* 14-day mini-strip on a linked-habit row. Same three-state palette as the
    Habits heatmap (own small-scale classes — the heatmap's rules are untouched).
    Can shrink + wrap its own cells on narrow screens without touching the ✕. */
-.goal-strip {
-  display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px;
-  flex-shrink: 1; min-width: 0;
+/* ---- Goal linked-habit row: two lines at all widths ---- */
+.goal-habit-row {
+  padding: 10px 0; border-top: 1px solid var(--separator);
 }
-.goal-strip-cell { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+.goal-habit-row:first-of-type { border-top: none; }
+.goal-habit-top {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+}
+.goal-habit-name { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+/* Word-boundary wrapping only — long multi-word names wrap at spaces, never
+   per-character (no break-all / overflow-wrap: anywhere). */
+.goal-habit-label { font-size: 14px; font-weight: 600; color: var(--text-primary); overflow-wrap: break-word; }
+.goal-habit-space { font-size: 11px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.04em; margin-top: 1px; }
+.goal-habit-meta {
+  flex-shrink: 0; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px;
+}
+
+/* 14-day strip: its own full-width second line; cells flex to fill it, capped
+   so they stay small on wide screens. Same three-state palette as the heatmap. */
+.goal-strip {
+  display: flex; align-items: center; gap: 3px; margin-top: 6px; width: 100%;
+}
+.goal-strip-cell { flex: 1 1 0; max-width: 14px; height: 11px; border-radius: 2px; }
+.goal-strip-empty { margin-top: 6px; font-size: 13px; font-style: italic; color: var(--text-tertiary); }
 .gs-done   { background: rgba(52, 199, 89, 0.30); }               /* heatmap quiet green */
-.gs-missed { background: rgba(255, 59, 48, 0.90); }               /* danger tint, nudged for 8px visibility */
+.gs-missed { background: rgba(255, 59, 48, 0.90); }               /* danger tint, nudged for small-scale visibility */
 .gs-off    { background: var(--card); border: 1px solid var(--separator); }  /* near-white empty */
 
 .goals-ms-row {
