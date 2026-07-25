@@ -4325,9 +4325,10 @@ function blockConsistency30(block) {
     const d = addDays(today, -i);
     const state = heatCellClass(block, d, today);          // done|missed|notdue|pre|future
     if (state === 'pre') continue;                         // clamp: no cell before createdAt
-    if (state === 'done')        { cells.push({ d, cls: 'gs-done'   }); done++; due++; }
-    else if (state === 'missed') { cells.push({ d, cls: 'gs-missed' }); due++; }
-    else if (state === 'notdue') { cells.push({ d, cls: 'gs-off'    }); }
+    if (state === 'done')         { cells.push({ d, cls: 'gs-done'    }); done++; due++; }
+    else if (state === 'missed')  { cells.push({ d, cls: 'gs-missed'  }); due++; }
+    else if (state === 'notdue')  { cells.push({ d, cls: 'gs-off'     }); }
+    else if (state === 'pending') { cells.push({ d, cls: 'gs-pending' }); }  // today, in play — not counted yet
     // 'future' cannot occur — the window ends today.
   }
   return { done, due, cells };
@@ -5114,6 +5115,10 @@ function habitWindow70Stats(block, today) {
   for (let i = 0; i < 70; i++) {
     const d = addDays(today, -i);
     if ((createdYmd == null || d >= createdYmd) && d <= today && isDueToday(block, d)) {
+      // Today isn't over: a due-but-unchecked today is pending, not a miss —
+      // exclude it from the denominator until it's checked (same chart law as
+      // heatCellClass 'pending'). Once checked, it counts in both.
+      if (d === today && !checks[d]) continue;
       dueDays++;
       if (checks[d]) doneDays++;
     }
@@ -5156,6 +5161,11 @@ function heatCellClass(block, d, today) {
   if (createdYmd && d < createdYmd) return 'pre';   // before the habit existed — not applicable (blank)
   if (block.checks && block.checks[d]) return 'done';
   if (!isDueToday(block, d)) return 'notdue';
+  // Today isn't over. A due-but-unchecked TODAY is pending, not missed — same
+  // law as streaks (today never breaks one) and the Stats charts (exclude
+  // today; a partial day reads as false progress). Checked-today is 'done'
+  // above, so only the still-open case lands here.
+  if (d === today) return 'pending';
   return 'missed';
 }
 

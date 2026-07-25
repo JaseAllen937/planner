@@ -1,7 +1,7 @@
 // AgendaAI service worker.
 // BUMP THIS VERSION when you ship changes, otherwise the iPhone keeps the
 // old cached files forever.
-const VERSION = 'v65';
+const VERSION = 'v66';
 const CACHE = `agendaai-${VERSION}`;
 const ASSETS = [
   './',

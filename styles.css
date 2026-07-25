@@ -1768,6 +1768,7 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 .gs-done   { background: rgba(52, 199, 89, 0.30); }               /* heatmap quiet green */
 .gs-missed { background: rgba(255, 59, 48, 0.90); }               /* danger tint, nudged for small-scale visibility */
 .gs-off    { background: var(--card); border: 1px solid var(--separator); }  /* near-white empty */
+.gs-pending{ background: var(--card); border: 1px solid var(--accent); }      /* today, open — accent outline, not failed */
 
 .goals-ms-row {
   display: flex; align-items: flex-start; gap: 8px;
@@ -3022,7 +3023,8 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
   opacity: 1;
 }
 .heat-cal-week .heat-notdue,
-.heat-cal-week .heat-empty {
+.heat-cal-week .heat-empty,
+.heat-cal-week .heat-pending {                      /* today, still open — never red */
   background: var(--card);                          /* plain faint empty cell */
   border: 1px solid var(--separator);               /* hairline, no dash */
   opacity: 1;
