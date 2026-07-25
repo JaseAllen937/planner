@@ -1733,6 +1733,19 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
   flex-shrink: 0; font-size: 13px; color: var(--text-secondary);
   font-family: var(--font-mono); font-feature-settings: var(--num);
 }
+.goals-habit-nodue { font-family: inherit; font-style: italic; color: var(--text-tertiary); }
+
+/* 14-day mini-strip on a linked-habit row. Same three-state palette as the
+   Habits heatmap (own small-scale classes — the heatmap's rules are untouched).
+   Can shrink + wrap its own cells on narrow screens without touching the ✕. */
+.goal-strip {
+  display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px;
+  flex-shrink: 1; min-width: 0;
+}
+.goal-strip-cell { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+.gs-done   { background: rgba(52, 199, 89, 0.30); }               /* heatmap quiet green */
+.gs-missed { background: rgba(255, 59, 48, 0.90); }               /* danger tint, nudged for 8px visibility */
+.gs-off    { background: var(--card); border: 1px solid var(--separator); }  /* near-white empty */
 
 .goals-ms-row {
   display: flex; align-items: flex-start; gap: 8px;

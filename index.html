@@ -4311,20 +4311,26 @@ function findMilestone(id) { return goalMilestonesList().find(m => m.id === id) 
 // Pure derived consistency: done-count over due-count for `block` across the
 // last 30 days, clamped to createdAt. Reads existing checks + isDueToday only —
 // NO new state, NO streak, NO percentage. Returns { done, due }.
+// 14-day recency window (today inclusive), clamped to createdAt. Per-day state
+// comes from heatCellClass (reused, not reimplemented). Returns { done, due,
+// cells } — cells oldest->newest so the RIGHT edge is now; pre-creation days
+// produce NO cell (no filler). due counts only due days, done the checked ones.
+// (Name kept to avoid a rename; the window is 14, not 30.)
 function blockConsistency30(block) {
-  if (!block || block.type !== 'checkbox') return { done: 0, due: 0 };
-  const today = todayDate();
-  const createdYmd = block.createdAt ? String(block.createdAt).slice(0, 10) : null;
-  const checks = (block.checks && typeof block.checks === 'object') ? block.checks : {};
+  const cells = [];
   let done = 0, due = 0;
-  for (let i = 0; i < 30; i++) {
+  if (!block || block.type !== 'checkbox') return { done, due, cells };
+  const today = todayDate();
+  for (let i = 13; i >= 0; i--) {                          // oldest -> newest
     const d = addDays(today, -i);
-    if (createdYmd && d < createdYmd) continue;   // clamp to creation
-    if (!isDueToday(block, d)) continue;          // count ONLY due days
-    due++;
-    if (checks[d]) done++;
+    const state = heatCellClass(block, d, today);          // done|missed|notdue|pre|future
+    if (state === 'pre') continue;                         // clamp: no cell before createdAt
+    if (state === 'done')        { cells.push({ d, cls: 'gs-done'   }); done++; due++; }
+    else if (state === 'missed') { cells.push({ d, cls: 'gs-missed' }); due++; }
+    else if (state === 'notdue') { cells.push({ d, cls: 'gs-off'    }); }
+    // 'future' cannot occur — the window ends today.
   }
-  return { done, due };
+  return { done, due, cells };
 }
 
 function goalsMonthDay(ymdStr) {
@@ -4410,13 +4416,22 @@ function renderGoalDetail(body, g) {
         const sp = findSpace(b.spaceId);
         const spName = sp ? (sp.name || 'Space') : '—';
         const c = blockConsistency30(b);
+        // No due day in the window yet (young weekly habit): show a muted line,
+        // no strip and no "0/0".
+        const strip = c.due > 0
+          ? `<span class="goal-strip">${c.cells.map(cell => `<span class="goal-strip-cell ${cell.cls}" title="${escapeHtml(cell.d)}"></span>`).join('')}</span>`
+          : '';
+        const count = c.due > 0
+          ? `<span class="goals-habit-consistency">${c.done}/${c.due} days</span>`
+          : `<span class="goals-habit-consistency goals-habit-nodue">no due days yet</span>`;
         return `
           <div class="goals-habit-row">
             <div class="goals-habit-main">
               <div class="goals-habit-label">${escapeHtml(b.label || 'Habit')}</div>
               <div class="goals-habit-space">${escapeHtml(spName)}</div>
             </div>
-            <span class="goals-habit-consistency">${c.done}/${c.due} days</span>
+            ${strip}
+            ${count}
             <button type="button" class="space-arrow" data-gact="unlink-habit" data-id="${escapeHtml(g.id)}" data-block="${escapeHtml(bid)}" aria-label="Unlink habit">✕</button>
           </div>`;
       }).join('')
