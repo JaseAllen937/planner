@@ -560,6 +560,9 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 // Sync-related localStorage keys (separate from agendaai_v1).
 const SESSION_KEY   = 'agendaai_session';     // { access_token, refresh_token, user_id, email }
 const SYNCED_AT_KEY = 'agendaai_synced_at';   // ISO timestamp of last successful pull/push
+// Account-switch guard (device-side only — NEVER written into the synced blob):
+const OWNER_KEY = 'agendaai_owner';                 // user_id this device's data belongs to
+const stashKeyFor = uid => 'agendaai_stash_' + uid; // per-account stashed blob (shared-computer safety)
 
 // ---- Push notifications ----
 // VAPID public key is safe to commit (it's the application server identity,
@@ -8082,6 +8085,10 @@ async function initialSync() {
       await supaPush(state);
     }
     localStorage.setItem(SYNCED_AT_KEY, nowIso());
+    // This device's data now belongs to the signed-in user. Single write point
+    // covering every successful sign-in/boot sync (device-side only).
+    const _sess = getSession();
+    if (_sess && _sess.user_id) localStorage.setItem(OWNER_KEY, _sess.user_id);
     setSyncStatus('synced');
     // Flush any pending push that happened mid-sync
     if (_pendingPush) triggerSync();
@@ -8089,6 +8096,71 @@ async function initialSync() {
     console.warn('Initial sync failed:', e);
     setSyncStatus(navigator.onLine ? 'error' : 'offline');
   }
+}
+
+// Account-switch guard + shared-computer auto-restore. Runs on an explicit
+// sign-in/sign-up success, BEFORE the merge-on-login. A DIFFERENT user signing
+// in over this device's real data must never silently absorb it into their
+// account: they get an explicit choice, defaulting to a fresh start with the
+// old data stashed locally (and auto-restored when its owner returns).
+const ACCOUNT_SWITCH_MSG =
+  'This device holds data from a different account.\n\n' +
+  'OK = Start fresh here (recommended). The existing data is kept safely on this device and returns automatically when its owner signs back in.\n' +
+  "Cancel = Merge this device's data into YOUR account permanently (cannot be undone).";
+
+function meaningfulLocalData() {
+  // Data worth protecting: any real user content, not a fresh seed.
+  const s = state;
+  return !!((s.blocks && s.blocks.length) || (s.items && s.items.length) ||
+    (s.code && ((s.code.journal || []).length || (s.code.rules || []).length)) ||
+    (s.franklin && ((s.franklin.tallyEvents || []).length || (s.franklin.virtueSlips || []).length)) ||
+    (s.goals && s.goals.length) || (s.focusSessions && s.focusSessions.length));
+}
+
+// Restore a stashed blob for `uid` if one exists and the device holds no
+// meaningful data (fresh/seeded). Corrupt stash -> discarded with a warn,
+// never thrown. The stash key is consumed either way.
+function tryRestoreStash(uid) {
+  const key = stashKeyFor(uid);
+  const raw = localStorage.getItem(key);
+  if (!raw || meaningfulLocalData()) return;
+  try {
+    const blob = JSON.parse(raw);
+    if (blob && typeof blob === 'object') {
+      state = ensureShape(blob);
+      saveStateLocalOnly();
+    }
+  } catch (e) {
+    console.warn('Stash restore failed (discarding corrupt stash):', e);
+  }
+  localStorage.removeItem(key);
+}
+
+async function guardedInitialSync() {
+  const session = getSession();
+  if (!session || !session.user_id) { await initialSync(); return; }
+  const uid = session.user_id;
+  const owner = localStorage.getItem(OWNER_KEY);
+
+  // Guard: a DIFFERENT user is signing in over this device's meaningful data.
+  // (owner absent = legacy device or fresh install -> adopt silently, no prompt.)
+  if (owner && owner !== uid && meaningfulLocalData()) {
+    const startFresh = confirm(ACCOUNT_SWITCH_MSG);
+    if (startFresh) {
+      // Stash the current owner's blob byte-for-byte, then start fresh.
+      try { localStorage.setItem(stashKeyFor(owner), JSON.stringify(state)); }
+      catch (e) { console.warn('Stash of previous owner failed:', e); }
+      state = seedState();
+      saveStateLocalOnly();
+    }
+    // Cancel -> deliberate, informed merge: leave state as-is (today's behavior).
+  }
+
+  // Auto-restore THIS user's stash onto a fresh/seeded device — including right
+  // after the fresh-start swap above. No-op when local data is meaningful.
+  tryRestoreStash(uid);
+
+  await initialSync();   // records OWNER_KEY = uid on success
 }
 
 // Pull-on-return: when the app becomes visible again, refresh from the cloud
@@ -8403,7 +8475,7 @@ document.getElementById('reset-btn').addEventListener('click', resetData);
       await supaSignIn(email, pw);
       pwEl.value = '';
       renderSettings();
-      await initialSync();
+      await guardedInitialSync();
     } catch (e) {
       showErr(escapeHtml(e.message || 'Sign-in failed.'));
       setSyncStatus('idle');
@@ -8422,7 +8494,7 @@ document.getElementById('reset-btn').addEventListener('click', resetData);
       pwEl.value = '';
       if (confirmed) {
         renderSettings();
-        await initialSync();
+        await guardedInitialSync();
       } else {
         showErr('Check your email to confirm, then sign in.');
         setSyncStatus('idle');
