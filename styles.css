@@ -2336,6 +2336,42 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
   font-size: 12px; color: var(--text-tertiary); text-align: center;
 }
 
+/* ---- Next 3 days (vertical Today-tab section) ---- */
+.next3-card {
+  background: var(--card); border: 1px solid var(--separator);
+  border-radius: var(--r-card); padding: 16px;
+  box-shadow: var(--shadow-card); margin-bottom: 14px;
+}
+.next3-title {
+  font-size: 11px; color: var(--text-tertiary);
+  text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600;
+  margin-bottom: 12px;
+}
+.next3-day {
+  padding-top: 12px; margin-top: 12px;
+  border-top: 1px solid var(--separator);
+}
+.next3-day:first-of-type { padding-top: 0; margin-top: 0; border-top: none; }
+.next3-day-label {
+  font-size: 12px; font-weight: 700; color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+.next3-row {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 5px 0; min-width: 0;
+}
+.next3-tappable { cursor: pointer; border-radius: var(--r-pill); }
+.next3-tappable:active { background: var(--surface-inset); }
+.next3-time {
+  flex-shrink: 0; font-size: 11px; color: var(--accent);
+  font-family: var(--font-mono); font-feature-settings: var(--num);
+}
+.next3-item-title {
+  font-size: 14px; line-height: 1.3; color: var(--text-primary);
+  overflow-wrap: anywhere; word-break: break-word; min-width: 0;
+}
+.next3-empty { font-size: 13px; color: var(--text-tertiary); }
+
 .spaces-hub { margin-bottom: 14px; }
 .spaces-empty {
   font-size: 13px; color: var(--text-secondary);

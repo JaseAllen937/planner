@@ -36,16 +36,14 @@
 <main>
   <section class="tab-view active" id="tab-today">
     <div id="banner-wrap"></div>
-    <div id="intention-card-wrap"></div>
-    <div id="focus-card-wrap"></div>
-    <div id="code-card-wrap"></div>
-    <div class="today-squares">
+    <div id="three-day-wrap"></div>      <!-- "Next 3 days" — glance -->
+    <div id="spaces-hub-wrap"></div>     <!-- do -->
+    <div id="focus-card-wrap"></div>     <!-- do -->
+    <div class="today-squares">          <!-- consult -->
       <div id="vault-card-wrap"></div>
       <div id="franklin-card-wrap"></div>
     </div>
-    <div id="three-day-wrap"></div>
-    <div id="spaces-hub-wrap"></div>
-    <div id="timeline"></div>
+    <div id="code-card-wrap"></div>      <!-- foundation, page base -->
   </section>
 
   <section class="tab-view" id="tab-upcoming">
@@ -360,7 +358,6 @@
 
 <div class="modal focus-overlay-mode" id="focus-overlay" role="dialog" aria-modal="true" aria-label="Focus session">
   <div class="focus-overlay-panel">
-    <div class="focus-overlay-intention" id="focus-overlay-intention" hidden></div>
     <button type="button" class="focus-tap-zone" id="focus-tap-zone" aria-label="Tap to log a focus lapse">
       <div class="focus-count" id="focus-count">0</div>
       <div class="focus-count-label">lapses</div>
@@ -1740,85 +1737,17 @@ function submitMorningPopup() {
   render();
 }
 
-// ---------------- focus & daily intention ----------------
+// ---------------- focus sessions ----------------
 //
-// Two pieces, intentionally independent:
-//   1) Daily intention — a single string + done flag, stored on today's
-//      daily_state entry (lazily added on first write).
-//   2) Focus sessions — tap-to-log lapses, tally + lapse rate over time.
-//      state.activeFocus holds the in-progress session so a reload resumes it.
+// Focus sessions — tap-to-log lapses, tally + lapse rate over time.
+// state.activeFocus holds the in-progress session so a reload resumes it.
 //
 // The session timer is display-only via setInterval; it must NEVER call
 // saveState on tick. Persistence happens only on session start, each lapse,
-// undo, end, discard, and any intention edit/toggle.
+// undo, end, and discard.
 
 const focusOverlay = document.getElementById('focus-overlay');
 let _focusTimerInterval = null;
-
-function getTodayIntention() {
-  const ds = state.daily_state.find(d => d.date === todayDate());
-  return {
-    text: (ds && typeof ds.intention === 'string') ? ds.intention : '',
-    done: !!(ds && ds.intentionDone)
-  };
-}
-
-function setTodayIntentionText(text) {
-  const ds = ensureDailyState(todayDate());
-  ds.intention = String(text || '');
-  if (!ds.intention) ds.intentionDone = false;
-  saveState();
-  render();
-}
-
-function toggleTodayIntentionDone() {
-  const ds = ensureDailyState(todayDate());
-  ds.intentionDone = !ds.intentionDone;
-  saveState();
-  render();
-}
-
-function renderIntentionCard() {
-  const wrap = document.getElementById('intention-card-wrap');
-  if (!wrap) return;
-  // Don't re-render while the user is actively typing — would clobber the input.
-  if (document.activeElement && document.activeElement.id === 'intention-input') return;
-
-  const { text, done } = getTodayIntention();
-  const doneClass = done && text ? ' done' : '';
-  const checkedClass = done && text ? ' checked' : '';
-  wrap.innerHTML = `
-    <div class="intention-card${doneClass}" id="intention-card">
-      <div class="intention-label">Today's focus</div>
-      <div class="intention-row">
-        <input type="text" class="intention-input" id="intention-input"
-               placeholder="Set today's focus" maxlength="240"
-               autocomplete="off" inputmode="text">
-        <button type="button" class="intention-check${checkedClass}" id="intention-check"
-                aria-label="Toggle intention done" aria-pressed="${done ? 'true' : 'false'}">
-          <span class="intention-check-dot">${done && text ? '&check;' : ''}</span>
-        </button>
-      </div>
-    </div>
-  `;
-
-  const input = document.getElementById('intention-input');
-  input.value = text;
-  input.addEventListener('blur', () => {
-    const next = input.value.trim();
-    if (next === text) return; // no-op
-    setTodayIntentionText(next);
-  });
-  input.addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
-  });
-
-  document.getElementById('intention-check').addEventListener('click', () => {
-    const cur = getTodayIntention();
-    if (!cur.text) return; // can't mark "done" with no intention set
-    toggleTodayIntentionDone();
-  });
-}
 
 // Compute today's focus stats from completed sessions.
 function todayFocusStats() {
@@ -2039,16 +1968,6 @@ function refreshFocusOverlayDynamic() {
 
 function openFocusOverlay() {
   if (!state.activeFocus) return;
-  // Render the (static) intention context line if today's intention is set.
-  const intentEl = document.getElementById('focus-overlay-intention');
-  const intent = getTodayIntention();
-  if (intent.text) {
-    intentEl.innerHTML = `Focusing on: <strong>${escapeHtml(intent.text)}</strong>`;
-    intentEl.hidden = false;
-  } else {
-    intentEl.innerHTML = '';
-    intentEl.hidden = true;
-  }
   refreshFocusOverlayDynamic();
   focusOverlay.classList.add('open');
 
@@ -2849,105 +2768,12 @@ function handleActionEdit() {
   openEditModal(kind, id);
 }
 
-// ---------------- timeline ----------------
-
-// Returns { timed: [...], allDay: [...] } where each entry is a row for today's timeline.
-function buildTimeline() {
-  const today = todayDate();
-  const dayCode = todayDayCode();
-  const timed = [];
-  const allDay = [];
-
-  for (const h of state.habits) {
-    if (h.archived) continue;
-    if (!h.days || !h.days.includes(dayCode)) continue;
-    timed.push({
-      kind: 'habit',
-      id: h.id,
-      title: h.title,
-      time: h.time,
-      duration: h.duration,
-      notes: h.notes,
-      trackCompletion: true,
-      displayLabel: 'habit'
-    });
-  }
-
-  for (const it of state.items) {
-    if (it.date !== today) continue; // someday items have date=null; never on today
-    const row = {
-      kind: 'item',
-      id: it.id,
-      title: it.title,
-      time: it.time,
-      duration: it.duration,
-      notes: it.notes,
-      trackCompletion: !!it.trackCompletion,
-      priority: it.priority || 'normal',
-      displayLabel: it.trackCompletion ? 'to-do' : 'event'
-    };
-    if (it.time) timed.push(row);
-    else         allDay.push(row);
-  }
-
-  timed.sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99'));
-  return { timed, allDay };
-}
-
-function _itemRowHtml(it) {
-  const meta = [];
-  meta.push(`<span class="item-badge badge-kind">${it.displayLabel}</span>`);
-  if (it.duration) meta.push(hoursToHuman(it.duration));
-  if (it.priority === 'high' || it.priority === 'medium') {
-    meta.push(`<span class="item-badge">${it.priority}</span>`);
-  }
-  const trackable = it.trackCompletion;
-  const done    = trackable && isCompletedToday(it.id);
-  const skipped = trackable && !done && isSkippedToday(it.id);
-  const stateClass = done ? ' done' : skipped ? ' skipped' : '';
-  // Additive: priority class so the left bar can color-code items via CSS only.
-  // Habits don't have a priority; they get styled by data-kind selector instead.
-  const prioClass = (it.kind === 'item' && it.priority) ? ` prio-${it.priority}` : '';
-  const check = done ? '&check;' : skipped ? '&minus;' : '';
-  return `
-    <div class="item-row${stateClass}${prioClass}" data-kind="${it.kind}" data-id="${it.id}">
-      <div class="item-time">${fmt12(it.time) || '—'}</div>
-      <div class="item-body">
-        <div class="item-title">${escapeHtml(it.title)}</div>
-        <div class="item-meta">${meta.join(' ')}</div>
-      </div>
-      <div class="item-check">${check}</div>
-    </div>
-  `;
-}
-
-function renderTimeline() {
-  const container = document.getElementById('timeline');
-  const { timed, allDay } = buildTimeline();
-
-  if (timed.length === 0 && allDay.length === 0) {
-    container.innerHTML = `<div class="empty">Nothing on today's timeline.<br>Tap <strong>+ Add</strong> to create one.</div>`;
-    return;
-  }
-
-  let html = '';
-  if (allDay.length > 0) {
-    html += `<div class="allday-band">
-      <div class="allday-label">All-day</div>
-      ${allDay.map(_itemRowHtml).join('')}
-    </div>`;
-  }
-  html += timed.map(_itemRowHtml).join('');
-  container.innerHTML = html;
-
-  container.querySelectorAll('.item-row').forEach(row => {
-    row.addEventListener('click', () => openActionSheet(row.dataset.kind, row.dataset.id));
-  });
-}
-
-// ---------------- 3-day timeline (Today card, read-only) ----------------
-// Three columns (Today | Tomorrow | weekday) of dated to-dos/events. Someday
-// items (date === null) never appear. Pure display: no taps, no completion.
+// ---------------- Next 3 days (Today tab) ----------------
+// One vertical section: labeled day groups (Today | Tomorrow | short weekday),
+// each with its dated to-dos/events beneath, "Nothing" when empty. Someday
+// items (date === null) never appear. Today's rows are tappable (open the
+// action sheet, mirroring the old today-list); the other two days are
+// read-only. All three groups always render — an empty day is information.
 function renderThreeDayTimeline() {
   const wrap = document.getElementById('three-day-wrap');
   if (!wrap) return;
@@ -2955,34 +2781,42 @@ function renderThreeDayTimeline() {
   const d1 = addDays(d0, 1);
   const d2 = addDays(d0, 2);
   const days = [
-    { date: d0, header: 'Today' },
-    { date: d1, header: 'Tomorrow' },
-    { date: d2, header: parseYmd(d2).toLocaleDateString(undefined, { weekday: 'short' }) }
+    { date: d0, label: 'Today', tappable: true },
+    { date: d1, label: 'Tomorrow', tappable: false },
+    { date: d2, label: parseYmd(d2).toLocaleDateString(undefined, { weekday: 'short' }), tappable: false }
   ];
 
-  const colHtml = (day) => {
+  const dayHtml = (day) => {
     const items = state.items
       .filter(it => it.date && it.date === day.date)   // excludes someday (date null)
       .slice()
       .sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99')); // timed asc, untimed last
-    const list = items.length
+    const rows = items.length
       ? items.map(it => {
-          const t = it.time ? `<span class="td-time">${escapeHtml(fmt12(it.time))}</span>` : '';
-          return `<li class="td-item">${t}<span class="td-title">${escapeHtml(it.title)}</span></li>`;
+          const t = it.time ? `<span class="next3-time">${escapeHtml(fmt12(it.time))}</span>` : '';
+          // Today's rows carry data-kind/data-id + tappable class; the other
+          // days render the same content with no handler and no affordance.
+          const attrs = day.tappable ? ` class="next3-row next3-tappable" data-kind="item" data-id="${it.id}"` : ` class="next3-row"`;
+          return `<div${attrs}>${t}<span class="next3-item-title">${escapeHtml(it.title)}</span></div>`;
         }).join('')
-      : `<li class="td-empty">Nothing</li>`;
+      : `<div class="next3-empty">Nothing</div>`;
     return `
-      <div class="td-col">
-        <div class="td-head">${escapeHtml(day.header)}</div>
-        <ul class="td-list">${list}</ul>
+      <div class="next3-day">
+        <div class="next3-day-label">${escapeHtml(day.label)}</div>
+        ${rows}
       </div>`;
   };
 
   wrap.innerHTML = `
-    <div class="vault-section td-section">
-      <div class="vault-section-head"><span class="vault-section-title">Next 3 days</span></div>
-      <div class="td-cols">${days.map(colHtml).join('')}</div>
+    <div class="next3-card">
+      <div class="next3-title">Next 3 days</div>
+      ${days.map(dayHtml).join('')}
     </div>`;
+
+  // Wire today's rows exactly as the old today-list did: tap -> action sheet.
+  wrap.querySelectorAll('.next3-tappable').forEach(row => {
+    row.addEventListener('click', () => openActionSheet(row.dataset.kind, row.dataset.id));
+  });
 }
 
 // ============================================================================
@@ -4432,7 +4266,6 @@ function render() {
   lastRenderDate = todayDate();
   renderTopbar();
   renderBanner();
-  renderIntentionCard();
   renderFocusCard();
   renderCodeCard();
   renderVaultCard();
@@ -4444,7 +4277,6 @@ function render() {
   renderSpacesHub();
   if (spaceOverlay && spaceOverlay.classList.contains('open')) renderSpaceView();
   renderWeeklySummary();
-  renderTimeline();
   renderUpcoming();
   renderDailySummary();
   renderFocusStats();
