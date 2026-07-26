@@ -297,7 +297,15 @@
     </div>
 
     <div id="item-fields" hidden>
-      <div class="field">
+      <!-- WHEN control — to-do tab only. Drives the hidden #f-item-someday
+           checkbox (the source of truth), so all save/prefill logic is unchanged. -->
+      <div class="field" id="item-when-row" hidden>
+        <div class="type-tabs when-tabs" id="when-tabs">
+          <button type="button" data-when="date" class="active">Pick a date</button>
+          <button type="button" data-when="someday">Someday</button>
+        </div>
+      </div>
+      <div class="field" id="item-someday-row">
         <label class="toggle-row" for="f-item-someday">
           <input type="checkbox" id="f-item-someday">
           <span>Someday (no date)</span>
@@ -4065,17 +4073,37 @@ function setType(type) {
   });
 }
 
-// Show/hide #item-date-row, #item-time-row, #item-duration-row based on Someday / All-day toggles
+// Type-aware field visibility. A TO-DO is title + date-or-Someday: its time,
+// duration, and all-day rows are ALWAYS hidden (it has no clock time), and the
+// Someday checkbox is replaced by the WHEN segmented control. An EVENT keeps the
+// exact pre-change behavior (checkbox row + Someday/All-day-driven rows).
 function applyItemVisibility() {
+  const isTodo  = currentType === 'todo';
   const someday = document.getElementById('f-item-someday').checked;
   const allday  = document.getElementById('f-item-allday').checked;
+  // WHEN segmented control (to-do) vs. the Someday checkbox row (event/other).
+  document.getElementById('item-when-row').hidden    = !isTodo;
+  document.getElementById('item-someday-row').hidden = isTodo;
+  if (isTodo) syncWhenTabs();
   document.getElementById('item-date-row').hidden     = someday;
-  document.getElementById('item-allday-row').hidden   = someday;       // can't choose all-day if no date
-  document.getElementById('item-time-row').hidden     = someday || allday;
-  document.getElementById('item-duration-row').hidden = someday || allday;
-  if (!someday && !allday) {
+  document.getElementById('item-allday-row').hidden   = isTodo || someday;   // to-do: never; event: can't all-day with no date
+  document.getElementById('item-time-row').hidden     = isTodo || someday || allday;
+  document.getElementById('item-duration-row').hidden = isTodo || someday || allday;
+  if (!isTodo && !someday && !allday) {
     requestAnimationFrame(() => wheelPickers.itemTime.apply());
   }
+}
+
+// The WHEN control mirrors the hidden #f-item-someday checkbox (source of truth).
+function syncWhenTabs() {
+  const someday = document.getElementById('f-item-someday').checked;
+  document.querySelectorAll('#when-tabs button').forEach(b =>
+    b.classList.toggle('active', (b.dataset.when === 'someday') === someday));
+}
+function setItemWhen(someday) {
+  document.getElementById('f-item-someday').checked = someday;
+  syncWhenTabs();
+  applyItemVisibility();
 }
 
 function setItemPriority(prio) {
@@ -4143,14 +4171,35 @@ function saveForm() {
   } else if (currentType === 'todo' || currentType === 'event') {
     const trackCompletion = (currentType === 'todo');
     const someday = document.getElementById('f-item-someday').checked;
-    const allday  = document.getElementById('f-item-allday').checked;
     const priority = getItemPriority();
 
-    let date = null, time = null, duration = null;
+    let date = null;
     if (!someday) {
       date = document.getElementById('f-item-date').value;
       if (!date) { showError('Date is required, or toggle Someday.'); return; }
-      if (!allday) {
+    }
+
+    if (trackCompletion) {
+      // TO-DO: title + date-or-Someday only. Never read time/duration/all-day
+      // from the (hidden) fields. On create, omit them; on edit of a legacy
+      // timed to-do, PRESERVE the stored time/duration — hidden means "not
+      // asked," not "cleared."
+      if (editingId) {
+        const it = state.items.find(x => x.id === editingId);
+        Object.assign(it, { title, trackCompletion, priority, date, notes });
+      } else {
+        state.items.push({
+          id: uuid(),
+          title, trackCompletion, priority,
+          date, notes,
+          created_at: nowIso()
+        });
+      }
+    } else {
+      // EVENT: unchanged — all-day/time/duration read exactly as before.
+      const allday = document.getElementById('f-item-allday').checked;
+      let time = null, duration = null;
+      if (!someday && !allday) {
         time = wheelPickers.itemTime.getValue();
         const durMin = parseFloat(document.getElementById('f-item-duration').value);
         if (!durMin || durMin <= 0) {
@@ -4159,18 +4208,17 @@ function saveForm() {
         }
         duration = durMin / 60;
       }
-    }
-
-    if (editingId) {
-      const it = state.items.find(x => x.id === editingId);
-      Object.assign(it, { title, trackCompletion, priority, date, time, duration, notes });
-    } else {
-      state.items.push({
-        id: uuid(),
-        title, trackCompletion, priority,
-        date, time, duration, notes,
-        created_at: nowIso()
-      });
+      if (editingId) {
+        const it = state.items.find(x => x.id === editingId);
+        Object.assign(it, { title, trackCompletion, priority, date, time, duration, notes });
+      } else {
+        state.items.push({
+          id: uuid(),
+          title, trackCompletion, priority,
+          date, time, duration, notes,
+          created_at: nowIso()
+        });
+      }
     }
   }
 
@@ -8514,6 +8562,8 @@ document.getElementById('reset-btn').addEventListener('click', resetData);
 // Item form: Someday + All-day toggles, priority selector
 document.getElementById('f-item-someday').addEventListener('change', applyItemVisibility);
 document.getElementById('f-item-allday').addEventListener('change', applyItemVisibility);
+document.querySelectorAll('#when-tabs button').forEach(b =>
+  b.addEventListener('click', () => setItemWhen(b.dataset.when === 'someday')));
 document.querySelectorAll('#f-item-priority .prio-btn').forEach(b => {
   b.addEventListener('click', () => setItemPriority(b.dataset.prio));
 });

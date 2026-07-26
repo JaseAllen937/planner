@@ -356,6 +356,10 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
    third slot left over from the removed Habit tab. Scoped so #vault-type-tabs
    (3) and #block-type-tabs (5, wrapping) keep the base 3-column layout. */
 #type-tabs { grid-template-columns: repeat(2, 1fr); }
+/* WHEN control (to-do only): two half-width options, reuses .type-tabs.
+   minmax(0,1fr) keeps each option from overflowing on a 360px screen. */
+.when-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.when-tabs button { min-height: 44px; white-space: nowrap; }
 .type-tabs button {
   background: transparent; border: none;
   color: var(--text-secondary); padding: 8px;
