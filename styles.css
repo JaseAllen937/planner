@@ -2475,6 +2475,45 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 }
 .next3-empty { font-size: 13px; color: var(--text-tertiary); }
 
+/* Next 3 days — header link + footer stat chips */
+.next3-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.next3-head .next3-title { margin-bottom: 0; }
+.next3-seeall {
+  background: transparent; border: none; cursor: pointer;
+  color: var(--accent); font-size: 12px; font-weight: 600;
+  padding: 4px 2px; white-space: nowrap;
+}
+.next3-footer {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;
+  margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--separator);
+}
+.next3-chip {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  min-height: 44px; padding: 8px 10px; border-radius: var(--r-card);
+  cursor: pointer; border: 1px solid transparent; text-align: center;
+}
+.next3-chip-count { font-family: var(--font-mono); font-size: 18px; font-weight: 500; line-height: 1.1; }
+.next3-chip-label { font-size: 12px; line-height: 1.15; }
+/* Undated = the dateless bucket's only nag: accent tint + accent text. */
+.next3-chip-undated { background: var(--accent-soft); }
+.next3-chip-undated .next3-chip-count,
+.next3-chip-undated .next3-chip-label { color: var(--accent); }
+/* Nothing to nag about -> quiet neutral, not accent. */
+.next3-chip-empty { background: var(--surface-inset); }
+.next3-chip-empty .next3-chip-count { color: var(--text-secondary); }
+.next3-chip-empty .next3-chip-label { color: var(--text-tertiary); }
+/* Next-14-days = the pressure gauge: neutral card surface, hairline border. */
+.next3-chip-next14 { background: var(--card); border-color: var(--separator); }
+.next3-chip-next14 .next3-chip-count { color: var(--text-primary); }
+.next3-chip-next14 .next3-chip-label { color: var(--text-secondary); }
+
+/* Upcoming — Someday promoted to the top in a distinct accent block. */
+.upcoming-someday-section {
+  background: var(--accent-soft); border-left: 3px solid var(--accent);
+  border-radius: var(--r-card); padding: 12px 14px;
+}
+.upcoming-someday-header { color: var(--accent); }
+
 .spaces-hub { margin-bottom: 14px; }
 .spaces-empty {
   font-size: 13px; color: var(--text-secondary);
@@ -2897,6 +2936,10 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 /* The `hidden` attribute must win over `.btn { display: inline-flex }`, otherwise
    the Back button shows (and dead-ends) on the Habits list root. */
 .habits-back-btn[hidden] { display: none; }
+/* Same fix for the Goals overlay's back button — renderGoals sets hidden=true on
+   the list root, but `.btn`'s display overrode the bare [hidden] attribute so it
+   stayed visible (and dead-ended). This makes the existing toggle actually hide it. */
+.goals-back-btn[hidden] { display: none; }
 
 /* Space list rows */
 .habit-space { margin-bottom: 8px; }

@@ -2853,16 +2853,55 @@ function renderThreeDayTimeline() {
       </div>`;
   };
 
+  // Footer chip counts — derived fresh from the SAME source Upcoming uses
+  // (groupUpcoming already drops completed to-dos, so these are OPEN items).
+  const g = groupUpcoming();
+  const undatedCount = g.someday.length;                       // OPEN items with no date
+  const horizon = addDays(d0, 13);                             // today .. today+13 inclusive
+  const next14Count = ['today', 'tomorrow', 'week', 'later'].reduce((n, k) =>
+    n + g[k].filter(it => it.date && it.date >= d0 && it.date <= horizon).length, 0);
+
   wrap.innerHTML = `
     <div class="next3-card">
-      <div class="next3-title">Next 3 days</div>
+      <div class="next3-head">
+        <span class="next3-title">Next 3 days</span>
+        <button type="button" class="next3-seeall" data-next3="seeall">See all ›</button>
+      </div>
       ${days.map(dayHtml).join('')}
+      <div class="next3-footer">
+        <button type="button" class="next3-chip next3-chip-undated${undatedCount ? '' : ' next3-chip-empty'}" data-next3="undated">
+          <span class="next3-chip-count">${undatedCount}</span>
+          <span class="next3-chip-label">undated tasks</span>
+        </button>
+        <button type="button" class="next3-chip next3-chip-next14" data-next3="next14">
+          <span class="next3-chip-count">${next14Count}</span>
+          <span class="next3-chip-label">next 14 days</span>
+        </button>
+      </div>
     </div>`;
 
   // Wire today's rows exactly as the old today-list did: tap -> action sheet.
   wrap.querySelectorAll('.next3-tappable').forEach(row => {
     row.addEventListener('click', () => openActionSheet(row.dataset.kind, row.dataset.id));
   });
+
+  // Header link + footer chips -> Upcoming; the undated chip also scrolls to the
+  // Someday section AFTER the tab is laid out (visibility-safe, sleep-strip pattern).
+  wrap.querySelectorAll('[data-next3]').forEach(el => {
+    el.addEventListener('click', () => {
+      switchTab('upcoming');
+      if (el.dataset.next3 === 'undated') {
+        requestAnimationFrame(() => requestAnimationFrame(scrollUpcomingToSomeday));
+      }
+    });
+  });
+}
+
+// Scroll the Upcoming view to the promoted Someday section. No-ops harmlessly
+// when the section is absent (0 undated -> it isn't rendered).
+function scrollUpcomingToSomeday() {
+  const el = document.getElementById('upcoming-someday-section');
+  if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 // ============================================================================
@@ -5624,7 +5663,9 @@ function renderUpcoming() {
   if (!wrap) return;
 
   const groups = groupUpcoming();
-  const order  = ['overdue', 'today', 'tomorrow', 'week', 'later', 'someday'];
+  // Someday promoted to the FRONT — the dateless bucket is consulted first,
+  // then the dated groups follow in their existing order.
+  const order  = ['someday', 'overdue', 'today', 'tomorrow', 'week', 'later'];
   const labels = {
     overdue:  'Overdue',
     today:    'Today',
@@ -5643,11 +5684,20 @@ function renderUpcoming() {
   let html = '';
   for (const key of order) {
     const list = groups[key];
-    if (list.length === 0) continue;
-    html += `<div class="upcoming-group">
-      <div class="upcoming-group-header">${labels[key]}</div>
-      ${list.map(_upcomingRowHtml).join('')}
-    </div>`;
+    if (list.length === 0) continue;   // empty someday -> no accent box renders
+    if (key === 'someday') {
+      // Distinct accent-tinted container; stable id is the Next-3-days undated
+      // chip's scroll target. Rows use _upcomingRowHtml unchanged.
+      html += `<div class="upcoming-group upcoming-someday-section" id="upcoming-someday-section">
+        <div class="upcoming-group-header upcoming-someday-header">Someday · no date — ${list.length}</div>
+        ${list.map(_upcomingRowHtml).join('')}
+      </div>`;
+    } else {
+      html += `<div class="upcoming-group">
+        <div class="upcoming-group-header">${labels[key]}</div>
+        ${list.map(_upcomingRowHtml).join('')}
+      </div>`;
+    }
   }
   wrap.innerHTML = html;
 
