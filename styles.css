@@ -3071,16 +3071,20 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 .people-card-threads { font-size: 11px; color: var(--text-tertiary); }
 .people-card-threads-open { color: var(--accent); font-weight: 600; }
 
-/* Detail → identity aside + action column (two columns ≥600px, stacked below). */
-.people-detail { display: grid; grid-template-columns: 1fr; gap: 12px; }
-@media (min-width: 600px) {
-  .people-detail { grid-template-columns: 180px 1fr; align-items: start; }
+/* Detail → profile-first: slim header band, then the three profile panels
+   spread across the full width (single column on phones). */
+.people-header-band {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 12px 14px;
 }
-.people-identity { margin-bottom: 0; }
-.people-identity-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-.people-identity .people-head-name { margin-bottom: 2px; }
-.people-identity .people-about-label { margin-top: 12px; }
-.people-action-col { display: flex; flex-direction: column; min-width: 0; }
+.people-header-band .people-head-actions { margin-left: auto; }
+.people-header-band .people-head-name { margin-bottom: 1px; }
+.people-profile-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px; margin-bottom: 12px;
+}
+.people-profile-panel { min-width: 0; margin-bottom: 0; }
+.people-profile-panel .people-about-label { margin-bottom: 6px; }
 
 /* About / Who they are */
 .people-about-label { display: block; font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; }

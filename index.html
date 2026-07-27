@@ -4923,29 +4923,29 @@ function renderPersonDetail(body, p) {
     : `<div class="people-empty">No conversations logged yet.</div>`;
 
   body.innerHTML = `
-    <div class="people-detail">
-      <div class="vault-section people-identity">
-        <div class="people-identity-head">
-          <div class="people-avatar" aria-hidden="true">${escapeHtml(initial)}</div>
-          <span class="people-head-actions">
-            <button type="button" class="space-arrow" data-pact="rename-person" data-id="${escapeHtml(p.id)}" aria-label="Rename">✎</button>
-            <button type="button" class="space-arrow" data-pact="delete-person" data-id="${escapeHtml(p.id)}" aria-label="Delete">✕</button>
-          </span>
-        </div>
+    <div class="vault-section people-header-band">
+      <div class="people-avatar" aria-hidden="true">${escapeHtml(initial)}</div>
+      <div class="people-head-text">
         <div class="people-head-name">${escapeHtml(p.name)}</div>
         <div class="people-head-sub">${escapeHtml(headSub)}</div>
-        ${PERSON_NOTE_FIELDS.map(f => `
+      </div>
+      <span class="people-head-actions">
+        <button type="button" class="space-arrow" data-pact="rename-person" data-id="${escapeHtml(p.id)}" aria-label="Rename">✎</button>
+        <button type="button" class="space-arrow" data-pact="delete-person" data-id="${escapeHtml(p.id)}" aria-label="Delete">✕</button>
+      </span>
+    </div>
+    ${threadsBlock}
+    <div class="people-profile-grid">
+      ${PERSON_NOTE_FIELDS.map(f => `
+        <div class="vault-section people-profile-panel">
           <label class="people-about-label" for="person-note-${f.key}">${escapeHtml(f.label)}</label>
-          <textarea class="code-textarea people-about" id="person-note-${f.key}" placeholder="${escapeHtml(f.ph)}">${escapeHtml(personNoteFor(p.id)[f.key] || '')}</textarea>`).join('')}
-      </div>
-      <div class="people-action-col">
-        ${threadsBlock}
-        <button type="button" class="btn btn-primary people-log-btn" data-pact="log-convo" data-id="${escapeHtml(p.id)}">Log conversation</button>
-        <div class="vault-section">
-          <div class="vault-section-head"><span class="vault-section-title">History</span></div>
-          ${historyHtml}
-        </div>
-      </div>
+          <textarea class="code-textarea people-about" id="person-note-${f.key}" placeholder="${escapeHtml(f.ph)}">${escapeHtml(personNoteFor(p.id)[f.key] || '')}</textarea>
+        </div>`).join('')}
+    </div>
+    <button type="button" class="btn btn-primary people-log-btn" data-pact="log-convo" data-id="${escapeHtml(p.id)}">Log conversation</button>
+    <div class="vault-section">
+      <div class="vault-section-head"><span class="vault-section-title">History</span></div>
+      ${historyHtml}
     </div>`;
 
   // Each field: save-on-blur, autogrow on input, visibility-safe initial sizing.
