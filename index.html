@@ -4869,11 +4869,16 @@ function renderPeopleList(body) {
     const open = openThreadsForPerson(p.id).length;
     const daysHtml = last == null ? 'never' : `${daysSinceContact(last)}d`;
     const initial = ((p.name || '?').trim().charAt(0) || '?').toUpperCase();
-    const desc = (personNoteFor(p.id).who || '').trim();
-    const descShort = desc.length > 60 ? desc.slice(0, 60) + '…' : desc;
-    const descHtml = desc
-      ? `<div class="people-card-desc">${escapeHtml(descShort)}</div>`
-      : `<div class="people-card-desc people-card-desc-empty">No description yet</div>`;
+    const tag = (p.tag || '').trim();
+    const who = (personNoteFor(p.id).who || '').trim();
+    const whoShort = who.length > 60 ? who.slice(0, 60) + '…' : who;
+    // Description line: tag first (what they are to you), else the who clamp,
+    // else the empty state.
+    const descHtml = tag
+      ? `<div class="people-card-desc people-card-tag">${escapeHtml(tag)}</div>`
+      : who
+        ? `<div class="people-card-desc">${escapeHtml(whoShort)}</div>`
+        : `<div class="people-card-desc people-card-desc-empty">No description yet</div>`;
     const threadsHtml = open
       ? `<div class="people-card-threads people-card-threads-open">${open} open thread${open === 1 ? '' : 's'}</div>`
       : `<div class="people-card-threads">No open threads</div>`;
@@ -4927,6 +4932,7 @@ function renderPersonDetail(body, p) {
       <div class="people-avatar" aria-hidden="true">${escapeHtml(initial)}</div>
       <div class="people-head-text">
         <div class="people-head-name">${escapeHtml(p.name)}</div>
+        ${p.tag ? `<div class="people-head-tag">${escapeHtml(p.tag)}</div>` : ''}
         <div class="people-head-sub">${escapeHtml(headSub)}</div>
       </div>
       <span class="people-head-actions">
@@ -4983,17 +4989,48 @@ function onPeopleBodyClick(e) {
 }
 
 // ---- Mutations (each: mutate -> saveState -> render) ----
-function addPerson() {
-  const name = (prompt("Person's name:") || '').trim();
-  if (!name) return;
-  peopleList().push({ id: uuid(), name, about: '', createdAt: todayDate() });
-  saveState(); render();
+// Add / edit a person via the small sheet — Name (required) + Tag (optional).
+function addPerson() { openPersonSheet(null); }
+function renamePerson(id) { openPersonSheet(id); }
+
+function openPersonSheet(id) {
+  const panel = document.getElementById('people-sheet-panel');
+  if (!panel) return;
+  const p = id ? findPerson(id) : null;
+  if (id && !p) return;
+  panel.innerHTML = `
+    <div class="people-sheet-head"><h3 class="people-sheet-title">${p ? 'Edit person' : 'Add person'}</h3></div>
+    <label class="people-log-label" for="person-name">Name</label>
+    <input type="text" id="person-name" class="people-log-date" maxlength="80" autocomplete="off" placeholder="Name" value="${p ? escapeHtml(p.name) : ''}">
+    <label class="people-log-label" for="person-tag">Tag <span class="people-log-hint">(optional)</span></label>
+    <input type="text" id="person-tag" class="people-log-date" maxlength="24" autocomplete="off" placeholder="Best friend · Pastor · Chess rival" value="${p ? escapeHtml(p.tag || '') : ''}">
+    <div class="people-sheet-actions">
+      <button type="button" class="btn" data-person="cancel">Cancel</button>
+      <button type="button" class="btn btn-primary" data-person="save">Save</button>
+    </div>`;
+  peopleSheet.classList.add('open');
+  panel.querySelectorAll('[data-person]').forEach(btn => btn.addEventListener('click', () => {
+    if (btn.dataset.person === 'cancel') closePeopleSheet();
+    else savePersonSheet(id);
+  }));
+  requestAnimationFrame(() => { const n = document.getElementById('person-name'); if (n) n.focus(); });
 }
-function renamePerson(id) {
-  const p = findPerson(id); if (!p) return;
-  const name = (prompt('Rename:', p.name) || '').trim();
-  if (!name || name === p.name) return;
-  p.name = name; saveState(); render();
+
+function savePersonSheet(id) {
+  const name = (document.getElementById('person-name').value || '').trim();
+  if (!name) return;   // name required
+  const tag = (document.getElementById('person-tag').value || '').trim();
+  const p = id ? findPerson(id) : null;
+  if (p) {
+    p.name = name;
+    if (tag) p.tag = tag; else delete p.tag;          // presence-based: '' stores no key
+  } else {
+    const rec = { id: uuid(), name, about: '', createdAt: todayDate() };
+    if (tag) rec.tag = tag;
+    peopleList().push(rec);
+  }
+  closePeopleSheet();
+  saveState(); render();
 }
 function deletePerson(id) {
   const p = findPerson(id); if (!p) return;
