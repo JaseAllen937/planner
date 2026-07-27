@@ -847,7 +847,7 @@ function loadState() {
   if (raw) {
     try {
       const parsed = JSON.parse(raw);
-      if (parsed && parsed.meta && (parsed.meta.version >= 1 && parsed.meta.version <= 15)) {
+      if (parsed && parsed.meta && (parsed.meta.version >= 1 && parsed.meta.version <= 16)) {
         return ensureShape(parsed);
       }
     } catch (e) {
@@ -1171,6 +1171,23 @@ function ensureShape(s) {
   if (!Array.isArray(s.contacts)) s.contacts = [];
   if (!Array.isArray(s.threads)) s.threads = [];
 
+  // ---- v16: Person profiles. personNotes: { [personId]: {who,cares,approach} },
+  // field-wise merged (mergePersonNotes, mirroring mergeVirtueNotes). Migrate the
+  // existing freeform `about` into `who` — idempotent (never overwrite an edited
+  // who); `about` is left in place, dead but harmless (no data deleted).
+  if ((s.meta.version || 1) < 16) {
+    if (!s.personNotes || typeof s.personNotes !== 'object') s.personNotes = {};
+    for (const p of (Array.isArray(s.people) ? s.people : [])) {
+      if (!p || !p.id) continue;
+      if (!(p.about || '').trim()) continue;                 // empty-about -> no entry
+      const n = s.personNotes[p.id] || {};
+      if (!n.who || !String(n.who).trim()) n.who = p.about;   // only when who absent/empty
+      s.personNotes[p.id] = n;
+    }
+    s.meta.version = 16;
+  }
+  if (!s.personNotes || typeof s.personNotes !== 'object') s.personNotes = {};
+
   // Cloud-sync uses meta.updated_at as the conflict-resolution timestamp.
   // Backfill it for pre-sync states.
   if (!s.meta.updated_at) s.meta.updated_at = s.meta.created_at || nowIso();
@@ -1194,7 +1211,7 @@ function removeSampleHabits(s) {
 function seedState() {
   const now = nowIso();
   return {
-    meta: { version: 15, created_at: now, updated_at: now, last_export_at: null, lastWipe: null, tombstones: {} },
+    meta: { version: 16, created_at: now, updated_at: now, last_export_at: null, lastWipe: null, tombstones: {} },
     // No sample habits — habits are now created only as checkbox blocks in Spaces.
     habits: [],
     items: [],
@@ -1214,7 +1231,8 @@ function seedState() {
     weeklyReviews: [],
     people: [],
     contacts: [],
-    threads: []
+    threads: [],
+    personNotes: {}
   };
 }
 
@@ -4765,6 +4783,14 @@ function openHabitPicker(goalId) {
 function peopleList()   { if (!Array.isArray(state.people))   state.people = [];   return state.people; }
 function contactsList() { if (!Array.isArray(state.contacts)) state.contacts = []; return state.contacts; }
 function threadsList()  { if (!Array.isArray(state.threads))  state.threads = [];  return state.threads; }
+function personNotesData() { if (!state.personNotes || typeof state.personNotes !== 'object') state.personNotes = {}; return state.personNotes; }
+function personNoteFor(id) { return personNotesData()[id] || { who: '', cares: '', approach: '' }; }
+// Three prompted profile fields. Save-on-blur + autogrow + draft-guard per id.
+const PERSON_NOTE_FIELDS = [
+  { key: 'who',      label: 'Who they are',           ph: 'How they work. What kind of person they are.' },
+  { key: 'cares',    label: 'What they care about',   ph: 'Interests, people, projects — what lights them up.' },
+  { key: 'approach', label: 'How to show up for them', ph: 'How to be good to them. What they need from you.' }
+];
 function findPerson(id) { return peopleList().find(p => p.id === id) || null; }
 function contactsForPerson(id) { return contactsList().filter(c => c.personId === id); }
 function threadsForPerson(id)  { return threadsList().filter(t => t.personId === id); }
@@ -4818,7 +4844,7 @@ function renderPeople() {
   const body = document.getElementById('people-body');
   if (!body) return;
   // Draft-guard: never clobber the About field mid-edit.
-  if (document.activeElement && document.activeElement.id === 'person-about-input') return;
+  if (document.activeElement && /^person-note-(who|cares|approach)$/.test(document.activeElement.id || '')) return;
   const back = document.getElementById('people-back-btn');
   const p = peopleView === 'detail' ? findPerson(peopleSelectedId) : null;
   if (p) {
@@ -4843,7 +4869,7 @@ function renderPeopleList(body) {
     const open = openThreadsForPerson(p.id).length;
     const daysHtml = last == null ? 'never' : `${daysSinceContact(last)}d`;
     const initial = ((p.name || '?').trim().charAt(0) || '?').toUpperCase();
-    const desc = (p.about || '').trim();
+    const desc = (personNoteFor(p.id).who || '').trim();
     const descShort = desc.length > 60 ? desc.slice(0, 60) + '…' : desc;
     const descHtml = desc
       ? `<div class="people-card-desc">${escapeHtml(descShort)}</div>`
@@ -4908,8 +4934,9 @@ function renderPersonDetail(body, p) {
         </div>
         <div class="people-head-name">${escapeHtml(p.name)}</div>
         <div class="people-head-sub">${escapeHtml(headSub)}</div>
-        <label class="people-about-label" for="person-about-input">Who they are</label>
-        <textarea class="code-textarea people-about" id="person-about-input" placeholder="What you know about them — how they work, what matters to them.">${escapeHtml(p.about || '')}</textarea>
+        ${PERSON_NOTE_FIELDS.map(f => `
+          <label class="people-about-label" for="person-note-${f.key}">${escapeHtml(f.label)}</label>
+          <textarea class="code-textarea people-about" id="person-note-${f.key}" placeholder="${escapeHtml(f.ph)}">${escapeHtml(personNoteFor(p.id)[f.key] || '')}</textarea>`).join('')}
       </div>
       <div class="people-action-col">
         ${threadsBlock}
@@ -4921,12 +4948,24 @@ function renderPersonDetail(body, p) {
       </div>
     </div>`;
 
-  const aboutEl = document.getElementById('person-about-input');
-  if (aboutEl) {
-    aboutEl.addEventListener('blur', () => setPersonAbout(p.id, aboutEl.value));
-    aboutEl.addEventListener('input', () => autoGrowGoalWhy(aboutEl));   // reuse the visibility-safe autogrow
-    requestAnimationFrame(() => autoGrowGoalWhy(aboutEl));
-  }
+  // Each field: save-on-blur, autogrow on input, visibility-safe initial sizing.
+  PERSON_NOTE_FIELDS.forEach(f => {
+    const el = document.getElementById('person-note-' + f.key);
+    if (!el) return;
+    el.addEventListener('blur', () => setPersonNote(p.id, f.key, el.value));
+    el.addEventListener('input', () => autoGrowGoalWhy(el));
+    requestAnimationFrame(() => autoGrowGoalWhy(el));
+  });
+}
+
+// Field-wise write: only rewrites the one field; other fields on the record and
+// the person's own list are untouched (merge resolves per-field across devices).
+function setPersonNote(id, field, text) {
+  const m = personNotesData();
+  const cur = m[id] || {};
+  if ((cur[field] || '') === text) return; // no-op
+  m[id] = Object.assign({}, cur, { [field]: text });
+  saveState(); render();
 }
 
 // ---- Delegated actions inside the People body ----
@@ -4967,6 +5006,7 @@ function deletePerson(id) {
   state.contacts = contactsList().filter(c => c.personId !== id);
   state.threads  = threadsList().filter(t => t.personId !== id);
   state.people   = peopleList().filter(x => x.id !== id);
+  delete personNotesData()[id];   // local cleanup; person tombstone governs (mirrors virtueNotes)
   peopleView = 'list'; peopleSelectedId = null;
   saveState(); render();
 }
@@ -8542,6 +8582,29 @@ function mergeVirtueNotes(localState, remoteState, remoteIsNewer) {
   return out;
 }
 
+// Person profiles — field-wise per person id, mirroring mergeVirtueNotes: a
+// non-empty field beats empty; both non-empty -> the newer blob's value; union
+// of person ids. No tombstone on map entries — the person's own tombstone
+// governs (a deleted person's orphaned note is harmless, exactly like a deleted
+// virtue's retained note).
+function mergePersonNotes(localState, remoteState, remoteIsNewer) {
+  const ln = (localState.personNotes && typeof localState.personNotes === 'object') ? localState.personNotes : {};
+  const rn = (remoteState.personNotes && typeof remoteState.personNotes === 'object') ? remoteState.personNotes : {};
+  const out = {};
+  const ids = new Set([...Object.keys(ln), ...Object.keys(rn)]);
+  for (const id of ids) {
+    const newer = (remoteIsNewer ? rn[id] : ln[id]) || {};
+    const older = (remoteIsNewer ? ln[id] : rn[id]) || {};
+    const pick = f => {
+      if (newer[f] && String(newer[f]).length) return newer[f];
+      if (older[f] && String(older[f]).length) return older[f];
+      return '';
+    };
+    out[id] = { who: pick('who'), cares: pick('cares'), approach: pick('approach') };
+  }
+  return out;
+}
+
 // Field-timestamped scalars: per-FIELD newest-wins, independent of which whole
 // blob is newer. An edit on one device can no longer be reverted by an
 // unrelated save on the other. Absent stamp = legacy value; it loses to any
@@ -8620,6 +8683,7 @@ function mergeStates(localState, remoteState) {
   // written on either device survives the scalar whole-object copy.
   if (!merged.code || typeof merged.code !== 'object') merged.code = {};
   merged.code.virtueNotes = mergeVirtueNotes(localState, remoteState, remoteIsNewer);
+  merged.personNotes = mergePersonNotes(localState, remoteState, remoteIsNewer);
 
   // 3c. Field-timestamped settings scalars: per-field newest-wins, so an edit
   // to one setting is never reverted by an unrelated newer save on the other
