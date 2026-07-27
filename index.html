@@ -37,6 +37,7 @@
   <section class="tab-view active" id="tab-today">
     <div id="banner-wrap"></div>
     <div id="three-day-wrap"></div>      <!-- "Next 3 days" — glance -->
+    <div id="review-card-wrap"></div>    <!-- weekly review — reflect -->
     <div id="spaces-hub-wrap"></div>     <!-- do -->
     <div id="focus-card-wrap"></div>     <!-- do -->
     <div class="today-squares today-squares-3">   <!-- consult -->
@@ -453,6 +454,17 @@
   <div class="modal-panel" id="goals-sheet-panel"></div>
 </div>
 
+<!-- Weekly review — full-screen composer (reuses Vault overlay CSS). -->
+<div class="modal vault-overlay-mode" id="review-overlay" role="dialog" aria-modal="true" aria-label="Sunday review">
+  <div class="vault-overlay-panel">
+    <div class="vault-header">
+      <h2 class="vault-title" id="review-title">🔁 Sunday review</h2>
+      <button type="button" class="btn vault-close-btn" id="review-close-btn" aria-label="Close review">Done</button>
+    </div>
+    <div class="vault-body" id="review-body"></div>
+  </div>
+</div>
+
 <!-- Stats doorway: Habits — Space list -> expand -> per-habit heatmap (reuses Vault overlay CSS) -->
 <div class="modal vault-overlay-mode" id="habits-overlay" role="dialog" aria-modal="true" aria-label="Habits">
   <div class="vault-overlay-panel">
@@ -817,7 +829,7 @@ function loadState() {
   if (raw) {
     try {
       const parsed = JSON.parse(raw);
-      if (parsed && parsed.meta && (parsed.meta.version >= 1 && parsed.meta.version <= 13)) {
+      if (parsed && parsed.meta && (parsed.meta.version >= 1 && parsed.meta.version <= 14)) {
         return ensureShape(parsed);
       }
     } catch (e) {
@@ -1120,6 +1132,14 @@ function ensureShape(s) {
   if (!Array.isArray(s.goals)) s.goals = [];
   if (!Array.isArray(s.goalMilestones)) s.goalMilestones = [];
 
+  // ---- v14: Weekly review. Add-only; no seeding. One record per night-date,
+  // union-merged so reviews from two devices survive.
+  if ((s.meta.version || 1) < 14) {
+    if (!Array.isArray(s.weeklyReviews)) s.weeklyReviews = [];
+    s.meta.version = 14;
+  }
+  if (!Array.isArray(s.weeklyReviews)) s.weeklyReviews = [];
+
   // Cloud-sync uses meta.updated_at as the conflict-resolution timestamp.
   // Backfill it for pre-sync states.
   if (!s.meta.updated_at) s.meta.updated_at = s.meta.created_at || nowIso();
@@ -1143,7 +1163,7 @@ function removeSampleHabits(s) {
 function seedState() {
   const now = nowIso();
   return {
-    meta: { version: 13, created_at: now, updated_at: now, last_export_at: null, lastWipe: null, tombstones: {} },
+    meta: { version: 14, created_at: now, updated_at: now, last_export_at: null, lastWipe: null, tombstones: {} },
     // No sample habits — habits are now created only as checkbox blocks in Spaces.
     habits: [],
     items: [],
@@ -1159,7 +1179,8 @@ function seedState() {
     franklin: seedFranklin(),
     code: { rules: [], virtueNotes: {}, skills: [], journal: [], codeReads: [] },
     goals: [],
-    goalMilestones: []
+    goalMilestones: [],
+    weeklyReviews: []
   };
 }
 
@@ -4698,6 +4719,287 @@ function openHabitPicker(goalId) {
   });
 }
 
+// ============================================================================
+// Weekly review (schema v14). A card on Today opens a full-page composer: five
+// written questions + one yes/no, a "week, ranked" data list, a raw sleep
+// comparison, and a loop where Q4 shows back the previous review's Q5. Reviews
+// are night-dated (codeNightDate) like the journal. DESIGN LAW: the data panels
+// COUNT, they never interpret — no trend prose, no conclusions, no scores.
+// ============================================================================
+
+// TEMP: renders every day. A later build replaces this with the Sunday-only gate.
+const REVIEW_EVERY_DAY = true;
+
+const REVIEW_QS = [
+  { key: 'q1', label: 'What worked this week?' },
+  { key: 'q2', label: 'What got skipped or fell apart?' },
+  { key: 'q3', label: 'What do I need to adjust?' },
+  { key: 'q4', label: 'How did the week go versus what you wanted?' },
+  { key: 'q5', label: "What's the one thing that matters most next week?" }
+];
+const REVIEW_Q6_LABEL = 'Did I have at least one meaningful social contact this week?';
+
+function weeklyReviewsList() { if (!Array.isArray(state.weeklyReviews)) state.weeklyReviews = []; return state.weeklyReviews; }
+function reviewForNight() { const d = codeNightDate(); return weeklyReviewsList().find(r => r.date === d) || null; }
+// Most recent review strictly BEFORE the current night-date (the Q4 loop source).
+function priorReview() {
+  const d = codeNightDate();
+  return weeklyReviewsList().filter(r => r && r.date && r.date < d)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)))[0] || null;
+}
+
+// The week, ranked. Every checkbox block across Spaces over the 7 days ending at
+// endYmd. Per-day state comes from heatCellClass (reused) with the REAL today as
+// the pending pivot, so an unchecked due today is 'pending' and excluded from
+// `due` (today-pending law). Returns { id, label, hint, cells, done, due }.
+function reviewWeekRanked(endYmd) {
+  const today = todayDate();
+  const out = [];
+  for (const b of blocksData()) {
+    if (b.type !== 'checkbox') continue;
+    const cells = []; let done = 0, due = 0;
+    for (let i = 6; i >= 0; i--) {
+      const d = addDays(endYmd, -i);
+      const st = heatCellClass(b, d, today);          // done|missed|notdue|pre|pending
+      if (st === 'pre') continue;                     // clamp to createdAt
+      if (st === 'done')         { cells.push('gs-done');    done++; due++; }
+      else if (st === 'missed')  { cells.push('gs-missed');  due++; }
+      else if (st === 'notdue')  { cells.push('gs-off'); }
+      else if (st === 'pending') { cells.push('gs-pending'); }   // today, not counted
+    }
+    out.push({ id: b.id, label: b.label || 'Habit', hint: recurrenceLabel(b.recurrence), cells, done, due });
+  }
+  // Ranked (due>0): worst rate first; ties -> more due days ranks first (more
+  // tested). Zero-due habits are unranked, appended at the bottom.
+  const ranked = out.filter(h => h.due > 0).sort((a, b) => {
+    const ra = a.done / a.due, rb = b.done / b.due;
+    if (ra !== rb) return ra - rb;
+    return b.due - a.due;
+  });
+  const unranked = out.filter(h => h.due === 0);
+  return { ranked, unranked };
+}
+
+// Bad-habit tallies + off-track: event counts inside the 7-day window. Counts only.
+function reviewTallies(endYmd) {
+  const start = addDays(endYmd, -6);
+  const inWin = d => d && d >= start && d <= endYmd;
+  const f = franklinData();
+  const rows = f.tallies.map(t => ({
+    label: t.label,
+    n: f.tallyEvents.filter(e => e.tallyId === t.id && inWin(e.date)).length
+  }));
+  const off = (state.daily_state || []).reduce((s, ds) => s + (ds && inWin(ds.date) ? (ds.offTrackCount | 0) : 0), 0);
+  rows.push({ label: 'off-track', n: off });
+  return rows;
+}
+
+// Average sleep (hours) over [startYmd, endYmd], reusing the Stats sleep source
+// (buildSleepNights) and its junk-night exclusion (isUsableSleep). null = no
+// valid nights in the window.
+function reviewSleepAvg(startYmd, endYmd) {
+  const usable = buildSleepNights()
+    .filter(n => n.date >= startYmd && n.date <= endYmd)
+    .map(n => n.hours).filter(isUsableSleep);
+  if (!usable.length) return null;
+  return usable.reduce((a, b) => a + b, 0) / usable.length;
+}
+
+// ---- Today card ----
+function renderReviewCard() {
+  const wrap = document.getElementById('review-card-wrap');
+  if (!wrap) return;
+  if (!REVIEW_EVERY_DAY) { wrap.innerHTML = ''; return; }
+  const exists = !!reviewForNight();
+  const sub = exists ? 'Written · tap to edit' : 'Read the week. Set the next one.';
+  wrap.innerHTML = `
+    <button type="button" class="review-card" id="review-entry-card" aria-label="Open Sunday review">
+      <span class="review-card-icon" aria-hidden="true">🔁</span>
+      <span class="review-card-text">
+        <span class="review-card-title">Sunday review</span>
+        <span class="review-card-sub">${escapeHtml(sub)}</span>
+      </span>
+    </button>`;
+  document.getElementById('review-entry-card').addEventListener('click', openReviewView);
+}
+
+// ---- Full-page composer (Goals open/close pattern) ----
+const reviewOverlay = document.getElementById('review-overlay');
+// Draft is the source of truth while the page is open, so a background render()
+// (pull-on-return, day rollover) rebuilds from it and never loses an unsaved
+// answer. Seeded from the night's record on open; written to it on Save.
+let reviewDraft = { q1: '', q2: '', q3: '', q4: '', q5: '', q6: null };
+
+function openReviewView() {
+  const r = reviewForNight();
+  reviewDraft = {
+    q1: r ? (r.q1 || '') : '', q2: r ? (r.q2 || '') : '', q3: r ? (r.q3 || '') : '',
+    q4: r ? (r.q4 || '') : '', q5: r ? (r.q5 || '') : '',
+    q6: r && (r.q6 === 'yes' || r.q6 === 'no') ? r.q6 : null
+  };
+  renderReview();
+  reviewOverlay.classList.add('open');
+}
+function closeReviewView() { reviewOverlay.classList.remove('open'); }
+
+function renderReview() {
+  const body = document.getElementById('review-body');
+  if (!body) return;
+  // Draft-guard (v49 lesson): never rebuild while a review textarea is focused.
+  const ae = document.activeElement;
+  if (ae && /^review-q[1-5]$/.test(ae.id || '')) return;
+
+  const night = codeNightDate();
+  const dateLabel = parseYmd(night).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+
+  // 2. The week, ranked
+  const { ranked, unranked } = reviewWeekRanked(night);
+  const stripHtml = cells => `<span class="goal-strip">${cells.map(c => `<span class="goal-strip-cell ${c}"></span>`).join('')}</span>`;
+  const rateClass = (done, due) => {
+    const r = done / due;
+    return r >= 1 ? 'review-rate-ok' : (r < 0.5 ? 'review-rate-bad' : 'review-rate-mid');
+  };
+  const rankRow = h => `
+    <div class="goal-habit-row">
+      <div class="goal-habit-top">
+        <span class="goal-habit-name">
+          <span class="goal-habit-label">${escapeHtml(h.label)}</span>
+          <span class="goal-habit-space">${escapeHtml(h.hint)}</span>
+        </span>
+        <span class="goal-habit-meta"><span class="review-rate ${rateClass(h.done, h.due)}">${h.done}/${h.due}</span></span>
+      </div>
+      ${stripHtml(h.cells)}
+    </div>`;
+  const unrankedRow = h => `
+    <div class="goal-habit-row">
+      <div class="goal-habit-top">
+        <span class="goal-habit-name">
+          <span class="goal-habit-label">${escapeHtml(h.label)}</span>
+          <span class="goal-habit-space">${escapeHtml(h.hint)}</span>
+        </span>
+        <span class="goal-habit-meta review-notdue">not due this week</span>
+      </div>
+    </div>`;
+  const tallies = reviewTallies(night);
+  const talliesHtml = tallies.map(t =>
+    `<span class="review-tally"><span class="review-tally-label">${escapeHtml(t.label)}</span><span class="review-tally-n ${t.n > 0 ? 'review-tally-hit' : 'review-tally-zero'}">+${t.n}</span></span>`).join('');
+  const rankedHtml = (ranked.length || unranked.length)
+    ? ranked.map(rankRow).join('') + unranked.map(unrankedRow).join('')
+    : `<div class="review-empty">No habits yet — add checkbox habits in a Space.</div>`;
+
+  // 5. Sleep panel (Q3) — raw numbers only
+  const curAvg = reviewSleepAvg(addDays(night, -6), night);
+  const priorAvg = reviewSleepAvg(addDays(night, -13), addDays(night, -7));
+  const sleepTile = (label, v) =>
+    `<div class="stat-tile"><div class="stat-tile-val">${v == null ? '—' : escapeHtml(hoursToHuman(v))}</div><div class="stat-tile-label">${label}</div></div>`;
+
+  // 6. Q4 loop — last review's q5
+  const prior = priorReview();
+  const priorQ5 = prior && (prior.q5 || '').trim();
+  const q4Block = priorQ5
+    ? `<div class="review-lastweek"><div class="review-lastweek-label">Last Sunday you wrote</div><div class="review-lastweek-text">${escapeHtml(priorQ5)}</div></div>`
+    : '';
+
+  const ta = (key, extraClass) =>
+    `<textarea class="code-textarea${extraClass ? ' ' + extraClass : ''}" id="review-${key}" placeholder="">${escapeHtml(reviewDraft[key] || '')}</textarea>`;
+
+  body.innerHTML = `
+    <div class="review-datehead">${escapeHtml(dateLabel)}</div>
+
+    <div class="vault-section">
+      <div class="vault-section-head"><span class="vault-section-title">The week, ranked</span></div>
+      ${rankedHtml}
+      <div class="review-tallies">${talliesHtml}</div>
+    </div>
+
+    <div class="vault-section">
+      <label class="review-q" for="review-q1">${escapeHtml(REVIEW_QS[0].label)}</label>
+      ${ta('q1')}
+    </div>
+    <div class="vault-section">
+      <label class="review-q" for="review-q2">${escapeHtml(REVIEW_QS[1].label)}</label>
+      ${ta('q2')}
+    </div>
+    <div class="vault-section">
+      <label class="review-q" for="review-q3">${escapeHtml(REVIEW_QS[2].label)}</label>
+      <div class="stat-tiles review-sleep">
+        ${sleepTile('Avg sleep · this week', curAvg)}
+        ${sleepTile('Avg sleep · prior week', priorAvg)}
+      </div>
+      ${ta('q3')}
+    </div>
+    <div class="vault-section">
+      <label class="review-q" for="review-q4">${escapeHtml(REVIEW_QS[3].label)}</label>
+      ${q4Block}
+      ${ta('q4')}
+    </div>
+    <div class="vault-section">
+      <label class="review-q" for="review-q5">${escapeHtml(REVIEW_QS[4].label)}</label>
+      ${ta('q5', 'review-reading')}
+      <div class="review-note">Shown back in next week's review. Nowhere else.</div>
+    </div>
+    <div class="vault-section">
+      <label class="review-q">${escapeHtml(REVIEW_Q6_LABEL)}</label>
+      <div class="type-tabs review-q6" id="review-q6-tabs">
+        <button type="button" data-q6="yes" class="${reviewDraft.q6 === 'yes' ? 'active' : ''}">Yes</button>
+        <button type="button" data-q6="no" class="${reviewDraft.q6 === 'no' ? 'active' : ''}">No</button>
+      </div>
+    </div>
+
+    <button type="button" class="btn btn-primary review-save" id="review-save-btn">Save review</button>`;
+
+  // Wire textareas -> draft (no render on keystroke; draft survives background renders).
+  REVIEW_QS.forEach(q => {
+    const el = document.getElementById('review-' + q.key);
+    if (el) el.addEventListener('input', () => { reviewDraft[q.key] = el.value; });
+  });
+  // Q6 segmented pair — tap toggles, tapping the active one deselects to null.
+  body.querySelectorAll('#review-q6-tabs button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      reviewDraft.q6 = (reviewDraft.q6 === btn.dataset.q6) ? null : btn.dataset.q6;
+      body.querySelectorAll('#review-q6-tabs button').forEach(b =>
+        b.classList.toggle('active', b.dataset.q6 === reviewDraft.q6));
+    });
+  });
+  document.getElementById('review-save-btn').addEventListener('click', saveReview);
+}
+
+function saveReview() {
+  const d = codeNightDate();
+  const { q1, q2, q3, q4, q5, q6 } = reviewDraft;
+  const any = [q1, q2, q3, q4, q5].some(s => (s || '').trim()) || q6 === 'yes' || q6 === 'no';
+  if (!any) { toast('Nothing to save yet'); return; }
+  const list = weeklyReviewsList();
+  const existing = list.find(r => r.date === d);
+  if (existing) {
+    Object.assign(existing, { q1, q2, q3, q4, q5, q6, at: nowIso() });   // upsert: same id
+  } else {
+    list.push({ id: uuid(), date: d, q1, q2, q3, q4, q5, q6, at: nowIso() });
+  }
+  saveState();
+  closeReviewView();
+  render();
+  toast('Review saved');
+}
+
+// ---- Archive card (Stats Journal doorway) ----
+function reviewArchiveCard(r) {
+  const dateStr = parseYmd(r.date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  const q5 = (r.q5 || '').trim();
+  const q5Html = q5 ? `<div class="review-arch-q5">${escapeHtml(q5)}</div>` : '';
+  const others = REVIEW_QS.filter(q => q.key !== 'q5').map(q => {
+    const v = (r[q.key] || '').trim();
+    return v ? `<div class="review-arch-block"><div class="review-arch-label">${escapeHtml(q.label)}</div><div class="review-arch-text">${escapeHtml(v)}</div></div>` : '';
+  }).join('');
+  const q6 = (r.q6 === 'yes' || r.q6 === 'no')
+    ? `<div class="review-arch-block"><div class="review-arch-label">${escapeHtml(REVIEW_Q6_LABEL)}</div><div class="review-arch-text">${r.q6 === 'yes' ? 'Yes' : 'No'}</div></div>`
+    : '';
+  return `<div class="review-arch">
+    <div class="review-arch-date">${escapeHtml(dateStr)}</div>
+    ${q5Html}${others}${q6}
+  </div>`;
+}
+
 // ---------------- main render ----------------
 
 // Date the UI was last built for; used to detect an overnight day rollover.
@@ -4712,10 +5014,12 @@ function render() {
   renderVaultCard();
   renderFranklinCard();
   renderGoalsCard();
+  renderReviewCard();
   if (vaultOverlay && vaultOverlay.classList.contains('open')) renderVault();
   if (franklinOverlay && franklinOverlay.classList.contains('open')) renderFranklin();
   if (codeOverlay && codeOverlay.classList.contains('open')) renderCode();
   if (goalsOverlay && goalsOverlay.classList.contains('open')) renderGoals();
+  if (reviewOverlay && reviewOverlay.classList.contains('open')) renderReview();
   renderThreeDayTimeline();
   renderSpacesHub();
   if (spaceOverlay && spaceOverlay.classList.contains('open')) renderSpaceView();
@@ -5153,6 +5457,13 @@ function renderJournalDoorway() {
       }).join('')
     : `<p class="doorway-empty">No journal entries yet — write tonight's in My Code.</p>`;
 
+  // Weekly reviews — newest first, read-only.
+  const reviews = weeklyReviewsList().filter(r => r && r.date).slice()
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  const reviewArchiveHtml = reviews.length
+    ? reviews.map(reviewArchiveCard).join('')
+    : `<p class="doorway-empty">No weekly reviews yet.</p>`;
+
   body.innerHTML = `
     <div class="jd-tiles">
       ${tile('lived', 'Lived it well', counts.lived)}
@@ -5174,6 +5485,10 @@ function renderJournalDoorway() {
     <div class="jd-section">
       <div class="jd-section-head">All entries</div>
       ${archive}
+    </div>
+    <div class="jd-section">
+      <div class="jd-section-head">Weekly reviews</div>
+      ${reviewArchiveHtml}
     </div>`;
 }
 
@@ -7743,7 +8058,8 @@ const MERGE_COLLECTIONS = [
   // tombstones like focusSessions. goalMilestones is SEPARATE (not nested in
   // goal records) so a milestone added on one device survives a merge.
   { key: 'goals',          get: s => s.goals,          set: (s, v) => { s.goals = v; } },
-  { key: 'goalMilestones', get: s => s.goalMilestones, set: (s, v) => { s.goalMilestones = v; } }
+  { key: 'goalMilestones', get: s => s.goalMilestones, set: (s, v) => { s.goalMilestones = v; } },
+  { key: 'weeklyReviews',  get: s => s.weeklyReviews,  set: (s, v) => { s.weeklyReviews = v; } }
 ];
 
 function blobUpdatedAt(s) {
@@ -8687,6 +9003,9 @@ document.getElementById('code-close-btn').addEventListener('click', closeCode);
 document.getElementById('code-journal-btn').addEventListener('click', toggleCodeJournal);
 document.getElementById('code-body').addEventListener('click', onCodeBodyClick);
 codeSheet.addEventListener('click', e => { if (e.target === codeSheet) closeCodeSheet(); });
+
+// ---- Weekly review wiring ----
+document.getElementById('review-close-btn').addEventListener('click', closeReviewView);
 
 // ---- Goals wiring ----
 document.getElementById('goals-close-btn').addEventListener('click', closeGoals);

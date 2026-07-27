@@ -1774,6 +1774,62 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 .gs-off    { background: var(--card); border: 1px solid var(--separator); }  /* near-white empty */
 .gs-pending{ background: var(--card); border: 1px solid var(--accent); }      /* today, open — accent outline, not failed */
 
+/* ---- Weekly review ---- */
+/* Today card — slim full-width row. */
+.review-card {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  background: var(--card); border: 1px solid var(--separator);
+  border-radius: var(--r-card); box-shadow: var(--shadow-card);
+  padding: 14px 16px; margin-bottom: 12px; cursor: pointer; text-align: left;
+}
+.review-card-icon { font-size: 22px; flex-shrink: 0; }
+.review-card-text { display: flex; flex-direction: column; min-width: 0; }
+.review-card-title { font-size: 15px; font-weight: 700; color: var(--text-primary); }
+.review-card-sub { font-size: 12px; color: var(--text-secondary); margin-top: 1px; }
+
+/* Composer */
+.review-datehead { font-size: 13px; color: var(--text-tertiary); margin-bottom: 12px; }
+.review-q { display: block; font-size: 14px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px; line-height: 1.35; }
+.review-note { font-size: 11px; color: var(--text-tertiary); margin-top: 6px; }
+.review-reading { font-family: var(--font-reading); }
+.review-empty { font-size: 13px; color: var(--text-tertiary); padding: 6px 0; }
+.review-save { width: 100%; margin-top: 4px; }
+
+/* Ranked-list rate number — the ONLY colored judgment; counts otherwise. */
+.review-rate { font-family: var(--font-mono); font-feature-settings: var(--num); font-size: 13px; font-weight: 600; }
+.review-rate-bad { color: var(--danger); }
+.review-rate-mid { color: var(--text-secondary); }
+.review-rate-ok  { color: var(--ok); }
+.review-notdue { font-size: 12px; color: var(--text-tertiary); font-style: italic; white-space: nowrap; }
+
+/* Tallies row — event counts in the window; +0 success, >0 danger. */
+.review-tallies { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--separator); }
+.review-tally { display: inline-flex; align-items: baseline; gap: 5px; background: var(--surface-inset); border-radius: var(--r-pill); padding: 4px 10px; }
+.review-tally-label { font-size: 12px; color: var(--text-secondary); }
+.review-tally-n { font-family: var(--font-mono); font-feature-settings: var(--num); font-size: 12px; font-weight: 700; }
+.review-tally-zero { color: var(--ok); }
+.review-tally-hit  { color: var(--danger); }
+
+/* Sleep panel — two raw tiles, no delta/arrow. */
+.review-sleep { margin-bottom: 12px; }
+
+/* Q4 loop — last week's q5, reading font, accent block. */
+.review-lastweek { background: var(--accent-soft); border-left: 3px solid var(--accent); border-radius: var(--r-card); padding: 10px 12px; margin-bottom: 10px; }
+.review-lastweek-label { font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); margin-bottom: 4px; }
+.review-lastweek-text { font-family: var(--font-reading); font-size: 14px; line-height: 1.55; color: var(--text-primary); white-space: pre-wrap; overflow-wrap: break-word; }
+
+/* Q6 segmented pair — two half-width options. */
+.review-q6 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.review-q6 button { min-height: 44px; }
+
+/* Archive cards (Stats Journal doorway) */
+.review-arch { background: var(--card); border: 1px solid var(--separator); border-radius: var(--r-card); padding: 12px 14px; margin-bottom: 10px; }
+.review-arch-date { font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-tertiary); margin-bottom: 6px; }
+.review-arch-q5 { font-family: var(--font-reading); font-size: 14px; line-height: 1.55; color: var(--text-primary); white-space: pre-wrap; overflow-wrap: break-word; margin-bottom: 8px; }
+.review-arch-block { margin-top: 8px; }
+.review-arch-label { font-size: 11px; font-weight: 600; color: var(--text-secondary); margin-bottom: 2px; }
+.review-arch-text { font-size: 13px; line-height: 1.45; color: var(--text-primary); white-space: pre-wrap; overflow-wrap: break-word; }
+
 .goals-ms-row {
   display: flex; align-items: flex-start; gap: 8px;
   padding: 8px 0; border-top: 1px solid var(--separator);
