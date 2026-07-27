@@ -1791,8 +1791,8 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 
 /* Composer */
 .review-datehead { font-size: 13px; color: var(--text-tertiary); margin-bottom: 12px; }
-.review-q { display: block; font-size: 14px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px; line-height: 1.35; }
-.review-note { font-size: 11px; color: var(--text-tertiary); margin-top: 6px; }
+.review-q { display: block; font-size: 12px; font-weight: 600; color: var(--text-primary); margin-bottom: 6px; line-height: 1.3; }
+.review-note { font-size: 11px; color: var(--text-tertiary); margin-top: 4px; }
 .review-reading { font-family: var(--font-reading); }
 .review-empty { font-size: 13px; color: var(--text-tertiary); padding: 6px 0; }
 .review-save { width: 100%; margin-top: 4px; }
@@ -1812,8 +1812,24 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 .review-tally-zero { color: var(--ok); }
 .review-tally-hit  { color: var(--danger); }
 
-/* Sleep panel — two raw tiles, no delta/arrow. */
+/* Sleep panel — one inline raw row, no delta/arrow. */
 .review-sleep { margin-bottom: 12px; }
+.review-sleep-inline { margin-bottom: 10px; font-size: 13px; }
+.review-sleep-val { font-family: var(--font-mono); font-feature-settings: var(--num); color: var(--text-primary); font-weight: 600; }
+.review-sleep-lbl { color: var(--text-tertiary); }
+.review-sleep-sep { color: var(--text-tertiary); margin: 0 6px; }
+
+/* ---- Compact review composer (scoped to #review-body; Goals rows untouched) ---- */
+#review-body .vault-section { padding: 12px; margin-bottom: 10px; }
+/* Textareas ~2 lines, autogrow to content — no fixed tall height, no scrollbar. */
+#review-body .code-textarea { min-height: 52px; overflow: hidden; resize: none; }
+/* Ranked rows tighter; schedule hint sits inline after the name (strip stays
+   its own line). Wraps at a space on very narrow widths. */
+#review-body .goal-habit-row { padding: 7px 0; }
+#review-body .goal-habit-name { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+#review-body .goal-habit-space { margin-top: 0; }
+/* Q6 pair slightly shorter to match the compacted form. */
+#review-body .review-q6 button { min-height: 38px; }
 
 /* Q4 loop — last week's q5, reading font, accent block. */
 .review-lastweek { background: var(--accent-soft); border-left: 3px solid var(--accent); border-radius: var(--r-card); padding: 10px 12px; margin-bottom: 10px; }

@@ -5199,8 +5199,7 @@ function renderReview() {
   // 5. Sleep panel (Q3) — raw numbers only
   const curAvg = reviewSleepAvg(addDays(night, -6), night);
   const priorAvg = reviewSleepAvg(addDays(night, -13), addDays(night, -7));
-  const sleepTile = (label, v) =>
-    `<div class="stat-tile"><div class="stat-tile-val">${v == null ? '—' : escapeHtml(hoursToHuman(v))}</div><div class="stat-tile-label">${label}</div></div>`;
+  const fmtSleepAvg = v => v == null ? '—' : hoursToHuman(v);
 
   // 6. Q4 loop — last review's q5
   const prior = priorReview();
@@ -5231,9 +5230,10 @@ function renderReview() {
     </div>
     <div class="vault-section">
       <label class="review-q" for="review-q3">${escapeHtml(REVIEW_QS[2].label)}</label>
-      <div class="stat-tiles review-sleep">
-        ${sleepTile('Avg sleep · this week', curAvg)}
-        ${sleepTile('Avg sleep · prior week', priorAvg)}
+      <div class="review-sleep-inline">
+        <span class="review-sleep-val">${escapeHtml(fmtSleepAvg(curAvg))}</span><span class="review-sleep-lbl"> this week</span>
+        <span class="review-sleep-sep">·</span>
+        <span class="review-sleep-val">${escapeHtml(fmtSleepAvg(priorAvg))}</span><span class="review-sleep-lbl"> prior</span>
       </div>
       ${ta('q3')}
     </div>
@@ -5258,10 +5258,15 @@ function renderReview() {
 
     <button type="button" class="btn btn-primary review-save" id="review-save-btn">Save review</button>`;
 
-  // Wire textareas -> draft (no render on keystroke; draft survives background renders).
+  // Wire textareas -> draft (no render on keystroke; draft survives background
+  // renders). Autogrow reuses the visibility-safe Why-field pattern: size on
+  // input and once after layout (a hidden textarea reports scrollHeight 0).
   REVIEW_QS.forEach(q => {
     const el = document.getElementById('review-' + q.key);
-    if (el) el.addEventListener('input', () => { reviewDraft[q.key] = el.value; });
+    if (el) {
+      el.addEventListener('input', () => { reviewDraft[q.key] = el.value; autoGrowGoalWhy(el); });
+      requestAnimationFrame(() => autoGrowGoalWhy(el));
+    }
   });
   // Q6 segmented pair — tap toggles, tapping the active one deselects to null.
   body.querySelectorAll('#review-q6-tabs button').forEach(btn => {
