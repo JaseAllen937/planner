@@ -40,10 +40,11 @@
     <div id="review-card-wrap"></div>    <!-- weekly review — reflect -->
     <div id="spaces-hub-wrap"></div>     <!-- do -->
     <div id="focus-card-wrap"></div>     <!-- do -->
-    <div class="today-squares today-squares-3">   <!-- consult -->
+    <div class="today-squares today-squares-4">   <!-- consult (2x2) -->
       <div id="vault-card-wrap"></div>
       <div id="franklin-card-wrap"></div>
       <div id="goals-card-wrap"></div>
+      <div id="people-card-wrap"></div>
     </div>
     <div id="code-card-wrap"></div>      <!-- foundation, page base -->
   </section>
@@ -454,6 +455,23 @@
   <div class="modal-panel" id="goals-sheet-panel"></div>
 </div>
 
+<!-- People — full-screen relationship memory (reuses Vault overlay CSS). -->
+<div class="modal vault-overlay-mode" id="people-overlay" role="dialog" aria-modal="true" aria-label="People">
+  <div class="vault-overlay-panel">
+    <div class="vault-header">
+      <button type="button" class="btn people-back-btn" id="people-back-btn" aria-label="Back to people" hidden>‹ People</button>
+      <h2 class="vault-title" id="people-title">👥 People</h2>
+      <button type="button" class="btn vault-close-btn" id="people-close-btn" aria-label="Close People">Done</button>
+    </div>
+    <div class="vault-body" id="people-body"></div>
+  </div>
+</div>
+
+<!-- People bottom-sheet — log conversation form. -->
+<div class="modal vault-sheet-mode" id="people-sheet" role="dialog" aria-modal="true">
+  <div class="modal-panel" id="people-sheet-panel"></div>
+</div>
+
 <!-- Weekly review — full-screen composer (reuses Vault overlay CSS). -->
 <div class="modal vault-overlay-mode" id="review-overlay" role="dialog" aria-modal="true" aria-label="Sunday review">
   <div class="vault-overlay-panel">
@@ -829,7 +847,7 @@ function loadState() {
   if (raw) {
     try {
       const parsed = JSON.parse(raw);
-      if (parsed && parsed.meta && (parsed.meta.version >= 1 && parsed.meta.version <= 14)) {
+      if (parsed && parsed.meta && (parsed.meta.version >= 1 && parsed.meta.version <= 15)) {
         return ensureShape(parsed);
       }
     } catch (e) {
@@ -1140,6 +1158,19 @@ function ensureShape(s) {
   }
   if (!Array.isArray(s.weeklyReviews)) s.weeklyReviews = [];
 
+  // ---- v15: People (active relationship memory). Add-only; no seeding. People,
+  // contacts (dated conversation events), and threads (open loops per person) are
+  // three union-merged collections so records from two devices all survive.
+  if ((s.meta.version || 1) < 15) {
+    if (!Array.isArray(s.people)) s.people = [];
+    if (!Array.isArray(s.contacts)) s.contacts = [];
+    if (!Array.isArray(s.threads)) s.threads = [];
+    s.meta.version = 15;
+  }
+  if (!Array.isArray(s.people)) s.people = [];
+  if (!Array.isArray(s.contacts)) s.contacts = [];
+  if (!Array.isArray(s.threads)) s.threads = [];
+
   // Cloud-sync uses meta.updated_at as the conflict-resolution timestamp.
   // Backfill it for pre-sync states.
   if (!s.meta.updated_at) s.meta.updated_at = s.meta.created_at || nowIso();
@@ -1163,7 +1194,7 @@ function removeSampleHabits(s) {
 function seedState() {
   const now = nowIso();
   return {
-    meta: { version: 14, created_at: now, updated_at: now, last_export_at: null, lastWipe: null, tombstones: {} },
+    meta: { version: 15, created_at: now, updated_at: now, last_export_at: null, lastWipe: null, tombstones: {} },
     // No sample habits — habits are now created only as checkbox blocks in Spaces.
     habits: [],
     items: [],
@@ -1180,7 +1211,10 @@ function seedState() {
     code: { rules: [], virtueNotes: {}, skills: [], journal: [], codeReads: [] },
     goals: [],
     goalMilestones: [],
-    weeklyReviews: []
+    weeklyReviews: [],
+    people: [],
+    contacts: [],
+    threads: []
   };
 }
 
@@ -4720,6 +4754,281 @@ function openHabitPicker(goalId) {
 }
 
 // ============================================================================
+// People — active relationship memory (schema v15). People as records,
+// conversations as dated events, and THREADS: open loops per person, captured
+// after a conversation, surfaced as a briefing before the next, closed when
+// addressed. DESIGN LAW: no scores, streaks, red states, percentages, or
+// "overdue" language on human beings — days-since is a plain number and the sort
+// order is the only pressure in the feature.
+// ============================================================================
+
+function peopleList()   { if (!Array.isArray(state.people))   state.people = [];   return state.people; }
+function contactsList() { if (!Array.isArray(state.contacts)) state.contacts = []; return state.contacts; }
+function threadsList()  { if (!Array.isArray(state.threads))  state.threads = [];  return state.threads; }
+function findPerson(id) { return peopleList().find(p => p.id === id) || null; }
+function contactsForPerson(id) { return contactsList().filter(c => c.personId === id); }
+function threadsForPerson(id)  { return threadsList().filter(t => t.personId === id); }
+function openThreadsForPerson(id) { return threadsForPerson(id).filter(t => !t.done); }
+function lastContactDate(id) {
+  const cs = contactsForPerson(id);
+  if (!cs.length) return null;
+  return cs.map(c => c.date).filter(Boolean).sort().slice(-1)[0] || null;
+}
+function daysSinceContact(dateYmd) {
+  if (!dateYmd) return null;
+  return Math.max(0, daysBetween(dateYmd, todayDate()));
+}
+// Longest silence first; never-contacted (null) sorts above all. Name breaks ties.
+function peopleSorted() {
+  return peopleList().slice().sort((a, b) => {
+    const la = lastContactDate(a.id), lb = lastContactDate(b.id);
+    const sa = la == null ? Infinity : daysSinceContact(la);
+    const sb = lb == null ? Infinity : daysSinceContact(lb);
+    if (sa !== sb) return sb - sa;
+    return String(a.name).localeCompare(String(b.name));
+  });
+}
+
+// ---- Today square ----
+function renderPeopleCard() {
+  const wrap = document.getElementById('people-card-wrap');
+  if (!wrap) return;
+  const n = peopleList().length;
+  const sub = n ? `${n} ${n === 1 ? 'person' : 'people'}` : 'Keep up with people';
+  wrap.innerHTML = `
+    <button type="button" class="vault-entry-card vault-entry-square" id="people-entry-card" aria-label="Open People">
+      <span class="vault-entry-icon" aria-hidden="true">👥</span>
+      <span class="vault-entry-title">People</span>
+      <span class="vault-entry-sub">${escapeHtml(sub)}</span>
+    </button>`;
+  document.getElementById('people-entry-card').addEventListener('click', openPeopleView);
+}
+
+// ---- Full-page overlay (Goals open/close pattern, incl. fixed back-at-root) ----
+const peopleOverlay = document.getElementById('people-overlay');
+const peopleSheet   = document.getElementById('people-sheet');
+let peopleView = 'list';        // 'list' | 'detail'
+let peopleSelectedId = null;
+
+function openPeopleView() { peopleView = 'list'; peopleSelectedId = null; renderPeople(); peopleOverlay.classList.add('open'); }
+function closePeople() { peopleOverlay.classList.remove('open'); closePeopleSheet(); }
+function closePeopleSheet() { peopleSheet.classList.remove('open'); }
+
+function renderPeople() {
+  const body = document.getElementById('people-body');
+  if (!body) return;
+  // Draft-guard: never clobber the About field mid-edit.
+  if (document.activeElement && document.activeElement.id === 'person-about-input') return;
+  const back = document.getElementById('people-back-btn');
+  const p = peopleView === 'detail' ? findPerson(peopleSelectedId) : null;
+  if (p) {
+    if (back) back.hidden = false;
+    renderPersonDetail(body, p);
+  } else {
+    peopleView = 'list'; peopleSelectedId = null;
+    if (back) back.hidden = true;
+    renderPeopleList(body);
+  }
+}
+
+function renderPeopleList(body) {
+  const people = peopleSorted();
+  const head = `<div class="vault-section-head"><span class="vault-section-title">People</span><button type="button" class="vault-mini-btn" data-pact="add-person">+ Add person</button></div>`;
+  if (!people.length) {
+    body.innerHTML = `<div class="vault-section">${head}<div class="people-empty">Add the people you want to keep up with.</div></div>`;
+    return;
+  }
+  const rows = people.map(p => {
+    const last = lastContactDate(p.id);
+    const open = openThreadsForPerson(p.id).length;
+    const daysHtml = last == null ? 'never' : `${daysSinceContact(last)}d`;
+    const threadsHtml = open ? `<span class="people-row-threads"> · ${open} thread${open === 1 ? '' : 's'}</span>` : '';
+    return `
+      <div class="people-row" data-pact="open-person" data-id="${escapeHtml(p.id)}">
+        <span class="people-row-name">${escapeHtml(p.name)}${threadsHtml}</span>
+        <span class="people-row-days">${daysHtml}</span>
+      </div>`;
+  }).join('');
+  body.innerHTML = `<div class="vault-section">${head}<div class="people-list">${rows}</div></div>`;
+}
+
+// The briefing — section order IS the design.
+function renderPersonDetail(body, p) {
+  const last = lastContactDate(p.id);
+  const initial = ((p.name || '?').trim().charAt(0) || '?').toUpperCase();
+  const headSub = last == null
+    ? 'never talked — log your first conversation'
+    : `last talked ${daysSinceContact(last)}d ago · ${goalsMonthDay(last)}`;
+
+  // 2. Open threads — bring these up (oldest first). Omitted entirely when none.
+  const openT = openThreadsForPerson(p.id).slice().sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+  const threadsBlock = openT.length ? `
+    <div class="people-threads">
+      <div class="people-threads-label">Open threads — bring these up</div>
+      ${openT.map(t => `
+        <div class="people-thread">
+          <button type="button" class="people-thread-check" data-pact="close-thread" data-id="${escapeHtml(t.id)}" aria-label="Close thread"><span class="people-thread-dot"></span></button>
+          <span class="people-thread-text">${escapeHtml(t.text)}</span>
+        </div>`).join('')}
+      <button type="button" class="people-thread-add" data-pact="add-thread" data-id="${escapeHtml(p.id)}">+ Add thread</button>
+    </div>` : '';
+
+  // 5. History — newest first, capped at 15 with "· N earlier".
+  const cs = contactsForPerson(p.id).slice().sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  const CAP = 15;
+  const shown = cs.slice(0, CAP);
+  const moreN = cs.length - shown.length;
+  const historyHtml = shown.length
+    ? shown.map(c => `<div class="people-hist-row"><span class="people-hist-date">${escapeHtml(goalsMonthDay(c.date))}</span>${c.note ? `<span class="people-hist-note">${escapeHtml(c.note)}</span>` : ''}</div>`).join('')
+      + (moreN > 0 ? `<div class="people-hist-more">· ${moreN} earlier</div>` : '')
+    : `<div class="people-empty">No conversations logged yet.</div>`;
+
+  body.innerHTML = `
+    <div class="vault-section people-head">
+      <div class="people-avatar" aria-hidden="true">${escapeHtml(initial)}</div>
+      <div class="people-head-text">
+        <div class="people-head-name">${escapeHtml(p.name)}</div>
+        <div class="people-head-sub">${escapeHtml(headSub)}</div>
+      </div>
+      <span class="people-head-actions">
+        <button type="button" class="space-arrow" data-pact="rename-person" data-id="${escapeHtml(p.id)}" aria-label="Rename">✎</button>
+        <button type="button" class="space-arrow" data-pact="delete-person" data-id="${escapeHtml(p.id)}" aria-label="Delete">✕</button>
+      </span>
+    </div>
+    ${threadsBlock}
+    <div class="vault-section">
+      <label class="people-about-label" for="person-about-input">About</label>
+      <textarea class="code-textarea people-about" id="person-about-input" placeholder="Anything worth remembering…">${escapeHtml(p.about || '')}</textarea>
+    </div>
+    <button type="button" class="btn btn-primary people-log-btn" data-pact="log-convo" data-id="${escapeHtml(p.id)}">Log conversation</button>
+    <div class="vault-section">
+      <div class="vault-section-head"><span class="vault-section-title">History</span></div>
+      ${historyHtml}
+    </div>`;
+
+  const aboutEl = document.getElementById('person-about-input');
+  if (aboutEl) {
+    aboutEl.addEventListener('blur', () => setPersonAbout(p.id, aboutEl.value));
+    aboutEl.addEventListener('input', () => autoGrowGoalWhy(aboutEl));   // reuse the visibility-safe autogrow
+    requestAnimationFrame(() => autoGrowGoalWhy(aboutEl));
+  }
+}
+
+// ---- Delegated actions inside the People body ----
+function onPeopleBodyClick(e) {
+  const el = e.target.closest('[data-pact]');
+  if (!el) return;
+  const act = el.dataset.pact, id = el.dataset.id;
+  if      (act === 'add-person')    addPerson();
+  else if (act === 'open-person')   { peopleSelectedId = id; peopleView = 'detail'; renderPeople(); }
+  else if (act === 'rename-person') renamePerson(id);
+  else if (act === 'delete-person') deletePerson(id);
+  else if (act === 'close-thread')  closeThread(id);
+  else if (act === 'add-thread')    addThread(id);
+  else if (act === 'log-convo')     openLogSheet(id);
+}
+
+// ---- Mutations (each: mutate -> saveState -> render) ----
+function addPerson() {
+  const name = (prompt("Person's name:") || '').trim();
+  if (!name) return;
+  peopleList().push({ id: uuid(), name, about: '', createdAt: todayDate() });
+  saveState(); render();
+}
+function renamePerson(id) {
+  const p = findPerson(id); if (!p) return;
+  const name = (prompt('Rename:', p.name) || '').trim();
+  if (!name || name === p.name) return;
+  p.name = name; saveState(); render();
+}
+function deletePerson(id) {
+  const p = findPerson(id); if (!p) return;
+  const cs = contactsForPerson(id), ts = threadsForPerson(id);
+  const msg = `Delete "${p.name}"?\n\nThis removes ${p.name}, their ${cs.length} logged conversation${cs.length === 1 ? '' : 's'}, and ${ts.length} thread${ts.length === 1 ? '' : 's'}. This can't be undone.`;
+  if (!confirm(msg)) return;
+  cs.forEach(c => tombstone('contacts', c.id));
+  ts.forEach(t => tombstone('threads', t.id));
+  tombstone('people', id);
+  state.contacts = contactsList().filter(c => c.personId !== id);
+  state.threads  = threadsList().filter(t => t.personId !== id);
+  state.people   = peopleList().filter(x => x.id !== id);
+  peopleView = 'list'; peopleSelectedId = null;
+  saveState(); render();
+}
+function setPersonAbout(id, text) {
+  const p = findPerson(id); if (!p) return;
+  if ((p.about || '') === text) return; // no-op
+  p.about = text; saveState(); render();
+}
+function closeThread(id) {
+  const t = threadsList().find(x => x.id === id);
+  if (!t || t.done) return;
+  t.done = todayDate(); saveState(); render();   // closed = the day it was addressed; record kept
+}
+function addThread(personId) {
+  const text = (prompt('New thread — something to bring up next time:') || '').trim();
+  if (!text) return;
+  threadsList().push({ id: uuid(), personId, text, done: null, createdAt: todayDate() });
+  saveState(); render();
+}
+
+// ---- Log conversation (bottom-sheet) ----
+function openLogSheet(personId) {
+  const p = findPerson(personId);
+  const panel = document.getElementById('people-sheet-panel');
+  if (!p || !panel) return;
+  const openT = openThreadsForPerson(personId).slice().sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+  panel.innerHTML = `
+    <div class="people-sheet-head"><h3 class="people-sheet-title">Log conversation · ${escapeHtml(p.name)}</h3></div>
+    <label class="people-log-label" for="log-date">Date</label>
+    <input type="date" id="log-date" class="people-log-date" value="${escapeHtml(todayDate())}">
+    <label class="people-log-label" for="log-note">What did you talk about?</label>
+    <textarea class="code-textarea" id="log-note" placeholder="Optional"></textarea>
+    <label class="people-log-label" for="log-thread">Anything to remember for next time? <span class="people-log-hint">(becomes a thread)</span></label>
+    <textarea class="code-textarea" id="log-thread" placeholder="Optional"></textarea>
+    ${openT.length ? `
+      <div class="people-log-threads">
+        <div class="people-log-threads-label">Addressed any of these?</div>
+        ${openT.map(t => `<label class="people-log-thread"><input type="checkbox" data-thread="${escapeHtml(t.id)}"><span>${escapeHtml(t.text)}</span></label>`).join('')}
+      </div>` : ''}
+    <div class="people-sheet-actions">
+      <button type="button" class="btn" data-log="cancel">Cancel</button>
+      <button type="button" class="btn btn-primary" data-log="save">Save</button>
+    </div>`;
+  peopleSheet.classList.add('open');
+  panel.querySelectorAll('[data-log]').forEach(btn => btn.addEventListener('click', () => {
+    if (btn.dataset.log === 'cancel') closePeopleSheet();
+    else saveLog(personId);
+  }));
+}
+function saveLog(personId) {
+  const dateEl = document.getElementById('log-date');
+  const date = (dateEl && dateEl.value) || todayDate();
+  const note = (document.getElementById('log-note').value || '').trim();
+  const threadText = (document.getElementById('log-thread').value || '').trim();
+  const ticked = [...document.querySelectorAll('#people-sheet-panel [data-thread]:checked')].map(c => c.dataset.thread);
+  contactsList().push({ id: uuid(), personId, date, note, at: nowIso() });
+  if (threadText) threadsList().push({ id: uuid(), personId, text: threadText, done: null, createdAt: todayDate() });
+  ticked.forEach(tid => { const t = threadsList().find(x => x.id === tid); if (t && !t.done) t.done = date; });
+  saveState(); closePeopleSheet(); render(); toast('Logged');
+}
+
+// Q6 contact line (review composer) — counts only; the Yes/No stays the user's.
+function reviewContactLine(endYmd) {
+  const start = addDays(endYmd, -6);
+  const cs = contactsList().filter(c => c && c.date && c.date >= start && c.date <= endYmd)
+    .slice().sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  if (!cs.length) return 'No conversations logged this week';
+  const names = cs.map(c => {
+    const p = findPerson(c.personId);
+    const wd = parseYmd(c.date).toLocaleDateString(undefined, { weekday: 'short' });
+    return `${p ? p.name : '—'} (${wd})`;
+  });
+  const shown = names.slice(0, 4).join(', ');
+  return `${cs.length} this week — ${shown}${names.length > 4 ? ' …' : ''}`;
+}
+
+// ============================================================================
 // Weekly review (schema v14). A card on Today opens a full-page composer: five
 // written questions + one yes/no, a "week, ranked" data list, a raw sleep
 // comparison, and a loop where Q4 shows back the previous review's Q5. Reviews
@@ -4940,6 +5249,7 @@ function renderReview() {
     </div>
     <div class="vault-section">
       <label class="review-q">${escapeHtml(REVIEW_Q6_LABEL)}</label>
+      <div class="review-contact-line">${escapeHtml(reviewContactLine(night))}</div>
       <div class="type-tabs review-q6" id="review-q6-tabs">
         <button type="button" data-q6="yes" class="${reviewDraft.q6 === 'yes' ? 'active' : ''}">Yes</button>
         <button type="button" data-q6="no" class="${reviewDraft.q6 === 'no' ? 'active' : ''}">No</button>
@@ -5014,11 +5324,13 @@ function render() {
   renderVaultCard();
   renderFranklinCard();
   renderGoalsCard();
+  renderPeopleCard();
   renderReviewCard();
   if (vaultOverlay && vaultOverlay.classList.contains('open')) renderVault();
   if (franklinOverlay && franklinOverlay.classList.contains('open')) renderFranklin();
   if (codeOverlay && codeOverlay.classList.contains('open')) renderCode();
   if (goalsOverlay && goalsOverlay.classList.contains('open')) renderGoals();
+  if (peopleOverlay && peopleOverlay.classList.contains('open')) renderPeople();
   if (reviewOverlay && reviewOverlay.classList.contains('open')) renderReview();
   renderThreeDayTimeline();
   renderSpacesHub();
@@ -8059,7 +8371,10 @@ const MERGE_COLLECTIONS = [
   // goal records) so a milestone added on one device survives a merge.
   { key: 'goals',          get: s => s.goals,          set: (s, v) => { s.goals = v; } },
   { key: 'goalMilestones', get: s => s.goalMilestones, set: (s, v) => { s.goalMilestones = v; } },
-  { key: 'weeklyReviews',  get: s => s.weeklyReviews,  set: (s, v) => { s.weeklyReviews = v; } }
+  { key: 'weeklyReviews',  get: s => s.weeklyReviews,  set: (s, v) => { s.weeklyReviews = v; } },
+  { key: 'people',   get: s => s.people,   set: (s, v) => { s.people = v; } },
+  { key: 'contacts', get: s => s.contacts, set: (s, v) => { s.contacts = v; } },
+  { key: 'threads',  get: s => s.threads,  set: (s, v) => { s.threads = v; } }
 ];
 
 function blobUpdatedAt(s) {
@@ -9006,6 +9321,12 @@ codeSheet.addEventListener('click', e => { if (e.target === codeSheet) closeCode
 
 // ---- Weekly review wiring ----
 document.getElementById('review-close-btn').addEventListener('click', closeReviewView);
+
+// ---- People wiring ----
+document.getElementById('people-close-btn').addEventListener('click', closePeople);
+document.getElementById('people-back-btn').addEventListener('click', () => { peopleView = 'list'; peopleSelectedId = null; renderPeople(); });
+document.getElementById('people-body').addEventListener('click', onPeopleBodyClick);
+peopleSheet.addEventListener('click', e => { if (e.target === peopleSheet) closePeopleSheet(); });
 
 // ---- Goals wiring ----
 document.getElementById('goals-close-btn').addEventListener('click', closeGoals);

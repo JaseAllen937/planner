@@ -1706,6 +1706,8 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 .today-squares-3 .vault-entry-icon { font-size: 24px; width: 44px; height: 44px; }
 .today-squares-3 .vault-entry-title { font-size: 12.5px; line-height: 1.15; }
 .today-squares-3 .vault-entry-sub { font-size: 10px; line-height: 1.2; }
+/* Four rooms -> 2x2 on every width; full-size squares (each ≥44px tap). */
+.today-squares-4 { grid-template-columns: repeat(2, 1fr); gap: 12px; }
 
 /* ---- Goals (direction layer) ---- */
 .goals-empty { font-size: 13px; color: var(--text-tertiary); padding: 8px 0; line-height: 1.5; }
@@ -2996,6 +2998,70 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
    the list root, but `.btn`'s display overrode the bare [hidden] attribute so it
    stayed visible (and dead-ended). This makes the existing toggle actually hide it. */
 .goals-back-btn[hidden] { display: none; }
+/* Same [hidden]-wins-over-.btn fix for the People overlay's back button. */
+.people-back-btn[hidden] { display: none; }
+
+/* ---- People ---- */
+.people-empty { font-size: 13px; color: var(--text-tertiary); padding: 8px 0; line-height: 1.5; }
+.people-list { display: flex; flex-direction: column; }
+.people-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 13px 0; border-top: 1px solid var(--separator); cursor: pointer;
+}
+.people-row:first-child { border-top: none; }
+.people-row-name { font-size: 15px; font-weight: 600; color: var(--text-primary); min-width: 0; overflow-wrap: anywhere; }
+.people-row-threads { font-weight: 400; color: var(--text-tertiary); font-size: 13px; }
+/* Days-since — plain neutral mono number. NEVER danger/red, whatever the value. */
+.people-row-days { flex-shrink: 0; font-family: var(--font-mono); font-feature-settings: var(--num); font-size: 13px; color: var(--text-secondary); }
+
+/* Detail header */
+.people-head { display: flex; align-items: center; gap: 12px; }
+.people-avatar {
+  flex-shrink: 0; width: 44px; height: 44px; border-radius: 50%;
+  background: var(--accent-soft); color: var(--accent);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; font-weight: 700;
+}
+.people-head-text { flex: 1; min-width: 0; }
+.people-head-name { font-size: 18px; font-weight: 800; color: var(--text-primary); letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.people-head-sub { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+.people-head-actions { display: inline-flex; flex-shrink: 0; }
+
+/* Open-threads briefing — accent block, mirrors the read-slice/someday language. */
+.people-threads { background: var(--accent-soft); border-left: 3px solid var(--accent); border-radius: var(--r-card); padding: 12px 14px; margin-bottom: 12px; }
+.people-threads-label { font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); margin-bottom: 8px; }
+.people-thread { display: flex; align-items: flex-start; gap: 10px; padding: 5px 0; }
+.people-thread-check { flex-shrink: 0; width: 22px; height: 22px; margin-top: 1px; border: 1.5px solid var(--accent); border-radius: 50%; background: transparent; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.people-thread-dot { width: 8px; height: 8px; border-radius: 50%; background: transparent; }
+.people-thread-text { flex: 1; min-width: 0; font-size: 14px; line-height: 1.4; color: var(--text-primary); overflow-wrap: anywhere; }
+.people-thread-add { margin-top: 6px; background: transparent; border: none; color: var(--accent); font-size: 13px; font-weight: 600; cursor: pointer; padding: 4px 0; min-height: 32px; }
+
+/* About */
+.people-about-label { display: block; font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; }
+#people-body .people-about { font-family: var(--font-reading); font-size: 14px; line-height: 1.6; min-height: 72px; overflow: hidden; resize: none; }
+.people-log-btn { width: 100%; margin-bottom: 14px; }
+
+/* History */
+.people-hist-row { display: flex; gap: 10px; padding: 8px 0; border-top: 1px solid var(--separator); }
+.people-hist-row:first-of-type { border-top: none; }
+.people-hist-date { flex-shrink: 0; font-family: var(--font-mono); font-feature-settings: var(--num); font-size: 12px; color: var(--text-tertiary); min-width: 52px; }
+.people-hist-note { font-size: 14px; line-height: 1.4; color: var(--text-primary); overflow-wrap: anywhere; white-space: pre-wrap; }
+.people-hist-more { font-size: 12px; color: var(--text-tertiary); padding-top: 8px; }
+
+/* Log sheet */
+.people-sheet-head { margin-bottom: 12px; }
+.people-sheet-title { font-size: 17px; font-weight: 700; color: var(--text-primary); margin: 0; }
+.people-log-label { display: block; font-size: 12px; font-weight: 600; color: var(--text-secondary); margin: 12px 0 6px; }
+.people-log-hint { font-weight: 400; color: var(--accent); }
+.people-log-date { width: 100%; padding: 11px 12px; border-radius: var(--r-pill); border: 1px solid transparent; background: var(--surface-inset); color: var(--text-primary); font-size: 15px; }
+.people-log-threads { margin-top: 12px; }
+.people-log-threads-label { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-tertiary); margin-bottom: 6px; }
+.people-log-thread { display: flex; align-items: flex-start; gap: 8px; padding: 6px 0; font-size: 14px; color: var(--text-primary); }
+.people-sheet-actions { display: flex; gap: 10px; margin-top: 16px; }
+.people-sheet-actions .btn { flex: 1; }
+
+/* Q6 contact line — muted data, no judgment. */
+.review-contact-line { font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; }
 
 /* Space list rows */
 .habit-space { margin-bottom: 8px; }
