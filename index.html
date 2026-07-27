@@ -4838,18 +4838,31 @@ function renderPeopleList(body) {
     body.innerHTML = `<div class="vault-section">${head}<div class="people-empty">Add the people you want to keep up with.</div></div>`;
     return;
   }
-  const rows = people.map(p => {
+  const cards = people.map(p => {
     const last = lastContactDate(p.id);
     const open = openThreadsForPerson(p.id).length;
     const daysHtml = last == null ? 'never' : `${daysSinceContact(last)}d`;
-    const threadsHtml = open ? `<span class="people-row-threads"> · ${open} thread${open === 1 ? '' : 's'}</span>` : '';
+    const initial = ((p.name || '?').trim().charAt(0) || '?').toUpperCase();
+    const desc = (p.about || '').trim();
+    const descShort = desc.length > 60 ? desc.slice(0, 60) + '…' : desc;
+    const descHtml = desc
+      ? `<div class="people-card-desc">${escapeHtml(descShort)}</div>`
+      : `<div class="people-card-desc people-card-desc-empty">No description yet</div>`;
+    const threadsHtml = open
+      ? `<div class="people-card-threads people-card-threads-open">${open} open thread${open === 1 ? '' : 's'}</div>`
+      : `<div class="people-card-threads">No open threads</div>`;
     return `
-      <div class="people-row" data-pact="open-person" data-id="${escapeHtml(p.id)}">
-        <span class="people-row-name">${escapeHtml(p.name)}${threadsHtml}</span>
-        <span class="people-row-days">${daysHtml}</span>
+      <div class="people-card" data-pact="open-person" data-id="${escapeHtml(p.id)}">
+        <div class="people-card-top">
+          <span class="people-avatar people-card-avatar" aria-hidden="true">${escapeHtml(initial)}</span>
+          <span class="people-card-days">${daysHtml}</span>
+        </div>
+        <div class="people-card-name">${escapeHtml(p.name)}</div>
+        ${descHtml}
+        ${threadsHtml}
       </div>`;
   }).join('');
-  body.innerHTML = `<div class="vault-section">${head}<div class="people-list">${rows}</div></div>`;
+  body.innerHTML = `<div class="vault-section">${head}<div class="people-grid">${cards}</div></div>`;
 }
 
 // The briefing — section order IS the design.
@@ -4884,26 +4897,28 @@ function renderPersonDetail(body, p) {
     : `<div class="people-empty">No conversations logged yet.</div>`;
 
   body.innerHTML = `
-    <div class="vault-section people-head">
-      <div class="people-avatar" aria-hidden="true">${escapeHtml(initial)}</div>
-      <div class="people-head-text">
+    <div class="people-detail">
+      <div class="vault-section people-identity">
+        <div class="people-identity-head">
+          <div class="people-avatar" aria-hidden="true">${escapeHtml(initial)}</div>
+          <span class="people-head-actions">
+            <button type="button" class="space-arrow" data-pact="rename-person" data-id="${escapeHtml(p.id)}" aria-label="Rename">✎</button>
+            <button type="button" class="space-arrow" data-pact="delete-person" data-id="${escapeHtml(p.id)}" aria-label="Delete">✕</button>
+          </span>
+        </div>
         <div class="people-head-name">${escapeHtml(p.name)}</div>
         <div class="people-head-sub">${escapeHtml(headSub)}</div>
+        <label class="people-about-label" for="person-about-input">Who they are</label>
+        <textarea class="code-textarea people-about" id="person-about-input" placeholder="What you know about them — how they work, what matters to them.">${escapeHtml(p.about || '')}</textarea>
       </div>
-      <span class="people-head-actions">
-        <button type="button" class="space-arrow" data-pact="rename-person" data-id="${escapeHtml(p.id)}" aria-label="Rename">✎</button>
-        <button type="button" class="space-arrow" data-pact="delete-person" data-id="${escapeHtml(p.id)}" aria-label="Delete">✕</button>
-      </span>
-    </div>
-    ${threadsBlock}
-    <div class="vault-section">
-      <label class="people-about-label" for="person-about-input">About</label>
-      <textarea class="code-textarea people-about" id="person-about-input" placeholder="Anything worth remembering…">${escapeHtml(p.about || '')}</textarea>
-    </div>
-    <button type="button" class="btn btn-primary people-log-btn" data-pact="log-convo" data-id="${escapeHtml(p.id)}">Log conversation</button>
-    <div class="vault-section">
-      <div class="vault-section-head"><span class="vault-section-title">History</span></div>
-      ${historyHtml}
+      <div class="people-action-col">
+        ${threadsBlock}
+        <button type="button" class="btn btn-primary people-log-btn" data-pact="log-convo" data-id="${escapeHtml(p.id)}">Log conversation</button>
+        <div class="vault-section">
+          <div class="vault-section-head"><span class="vault-section-title">History</span></div>
+          ${historyHtml}
+        </div>
+      </div>
     </div>`;
 
   const aboutEl = document.getElementById('person-about-input');
@@ -5254,6 +5269,7 @@ function renderReview() {
         <button type="button" data-q6="yes" class="${reviewDraft.q6 === 'yes' ? 'active' : ''}">Yes</button>
         <button type="button" data-q6="no" class="${reviewDraft.q6 === 'no' ? 'active' : ''}">No</button>
       </div>
+      <div class="review-q6-wip">Work in progress — this question upgrades once People has a few weeks of data.</div>
     </div>
 
     <button type="button" class="btn btn-primary review-save" id="review-save-btn">Save review</button>`;
