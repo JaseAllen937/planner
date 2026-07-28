@@ -1076,6 +1076,29 @@ function ensureShape(s) {
     }
   }
 
+  // REPAIR (always-run, idempotent, monotonic-EARLIER only): a fresh seed stamps
+  // createdAt = todayDate() onto the stable-id tallies and can then WIN the
+  // union-by-id merge on blob recency, leaving createdAt later than the tally's
+  // own earliest event. Correct it to the earliest dated event. This only ever
+  // moves createdAt EARLIER, so it can never overwrite a legitimate value, is
+  // safe to re-run on every load, and self-heals if the clobber recurs.
+  {
+    const earliestEvent = new Map();
+    for (const e of s.franklin.tallyEvents) {
+      if (!e || !e.tallyId) continue;
+      if (typeof e.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(e.date)) continue;
+      const cur = earliestEvent.get(e.tallyId);
+      if (!cur || e.date < cur) earliestEvent.set(e.tallyId, e.date);
+    }
+    for (const t of s.franklin.tallies) {
+      if (!t || typeof t !== 'object') continue;
+      const first = earliestEvent.get(t.id);
+      if (!first) continue;                                   // no events -> leave alone
+      const cur = t.createdAt ? String(t.createdAt).slice(0, 10) : null;
+      if (!cur || first < cur) t.createdAt = first;            // earlier only
+    }
+  }
+
   // v9 -> v10: My Code — personal moral code (rules / virtue notes / skills /
   // journal). virtueNotes is keyed by the EXISTING franklin virtue ids (no
   // second virtue list). Idempotent: never re-inits if code already exists.
