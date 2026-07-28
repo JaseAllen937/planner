@@ -838,6 +838,11 @@ function initWheelPickers() {
 
 // ---------------- state ----------------
 
+// Current storage schema version. EVERY version-acceptance check reads this.
+// Historical migration gates (if (version < 11) etc.) keep their hardcoded
+// numbers — those are facts about the past, not the current version.
+const SCHEMA_VERSION = 17;
+
 let state = loadState();
 
 const PREMERGE_BACKUP_KEY = 'agendaai_premerge_backup';
@@ -847,7 +852,7 @@ function loadState() {
   if (raw) {
     try {
       const parsed = JSON.parse(raw);
-      if (parsed && parsed.meta && (parsed.meta.version >= 1 && parsed.meta.version <= 17)) {
+      if (parsed && parsed.meta && (parsed.meta.version >= 1 && parsed.meta.version <= SCHEMA_VERSION)) {
         return ensureShape(parsed);
       }
     } catch (e) {
@@ -1221,7 +1226,10 @@ function ensureShape(s) {
       r.virtueIds = r.virtueId ? [r.virtueId] : [];
       delete r.virtueId;
     }
-    s.meta.version = 17;
+    // Terminal write of the LATEST migration block reads the constant (it brings
+    // a blob to the current version). When a v18 block is added, pin THIS back to
+    // a hardcoded 17 and have the new block's write read SCHEMA_VERSION.
+    s.meta.version = SCHEMA_VERSION;
   }
 
   // Always-run derive guard (sibling to the v78 tally repair): a device on stale
@@ -1260,7 +1268,7 @@ function removeSampleHabits(s) {
 function seedState() {
   const now = nowIso();
   return {
-    meta: { version: 17, created_at: now, updated_at: now, last_export_at: null, lastWipe: null, tombstones: {} },
+    meta: { version: SCHEMA_VERSION, created_at: now, updated_at: now, last_export_at: null, lastWipe: null, tombstones: {} },
     // No sample habits — habits are now created only as checkbox blocks in Spaces.
     habits: [],
     items: [],
@@ -4440,12 +4448,18 @@ function deleteCurrent() {
 
 function exportData() {
   state.meta.last_export_at = nowIso();
-  saveState();
+  // last_export_at is a per-device breadcrumb (shown in Settings). It must NOT
+  // bump meta.updated_at or push: a read-only export making this blob "newer"
+  // would let its stale records win a later merge. Local write only.
+  saveStateLocalOnly();
   const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `agendaai-${todayDate()}.json`;
+  // Include HHMM so two exports on the same day don't silently collide to "(1)".
+  const d = new Date();
+  const stamp = `${todayDate()}-${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}`;
+  a.download = `agendaai-${stamp}.json`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -4459,8 +4473,15 @@ function importData(file) {
   reader.onload = () => {
     try {
       const parsed = JSON.parse(reader.result);
-      if (!parsed || !parsed.meta || !(parsed.meta.version >= 1 && parsed.meta.version <= 10)) {
-        toast('Invalid file: expected agendaai schema v1–v10');
+      const v = parsed && parsed.meta && parsed.meta.version;
+      // A file from a newer build (version > current) can't be down-migrated —
+      // reject it distinctly so it's never mistaken for a corrupt file.
+      if (typeof v === 'number' && isFinite(v) && v > SCHEMA_VERSION) {
+        toast('File is from a newer version of AgendaAI');
+        return;
+      }
+      if (!parsed || !parsed.meta || !(v >= 1 && v <= SCHEMA_VERSION)) {
+        toast(`Invalid file: expected agendaai schema v1–v${SCHEMA_VERSION}`);
         return;
       }
       if (!confirm('Replace all current data with the imported file?')) return;

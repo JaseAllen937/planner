@@ -965,6 +965,7 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
   color: white;
   padding: 12px 18px; border-radius: var(--r-pill);
   font-size: 14px; z-index: 200;
+  max-width: min(92vw, 420px); white-space: normal; text-align: center;   /* long toasts wrap inside the viewport, never clip at 320px */
   opacity: 0; transition: opacity 0.2s;
   pointer-events: none;
   box-shadow: var(--shadow-lg);
@@ -1814,10 +1815,6 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 
 /* Sleep panel — one inline raw row, no delta/arrow. */
 .review-sleep { margin-bottom: 12px; }
-.review-sleep-inline { margin-bottom: 10px; font-size: 13px; }
-.review-sleep-val { font-family: var(--font-mono); font-feature-settings: var(--num); color: var(--text-primary); font-weight: 600; }
-.review-sleep-lbl { color: var(--text-tertiary); }
-.review-sleep-sep { color: var(--text-tertiary); margin: 0 6px; }
 
 /* Sleep panel: 3 metric rows x (this week | prior), mean over range. */
 .review-sleep-grid {
