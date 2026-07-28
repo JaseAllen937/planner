@@ -874,6 +874,10 @@ function _eventDurationHours(start, end) {
 }
 
 function ensureShape(s) {
+  // _legend is export-only documentation (see buildExportLegend). Strip it
+  // unconditionally so importing a legend-bearing file can never introduce it
+  // into state, localStorage, or the synced blob.
+  if (s && typeof s === 'object' && '_legend' in s) delete s._legend;
   s.habits ||= [];
   s.completions ||= [];
   s.missed ||= [];
@@ -4446,13 +4450,97 @@ function deleteCurrent() {
 
 // ---------------- export / import / reset ----------------
 
+// ---- Self-describing export legend (export-only; stripped by ensureShape) ----
+// A field/type dictionary DERIVED from the live object (so it can never drift the
+// way a hand-kept doc does) plus a small static conventions block for facts that
+// live in code, not data. Never assigned to state.
+function _legendType(v) {
+  if (v === null) return 'null';
+  if (Array.isArray(v)) return 'array';
+  return typeof v;   // string | number | boolean | object | undefined
+}
+// Union of observed types per field across ALL records; 'absent' when a field is
+// missing on some. Real types first, then null, then absent — so a sometimes-null
+// string reads "string|null", the exact ambiguity that caused the "None" mistake.
+function _legendFields(records) {
+  if (!records.length) return null;
+  const keys = new Set();
+  for (const r of records) if (r && typeof r === 'object') for (const k of Object.keys(r)) keys.add(k);
+  const rank = t => t === 'absent' ? 2 : t === 'null' ? 1 : 0;
+  const out = {};
+  for (const k of keys) {
+    const types = new Set(); let missing = false;
+    for (const r of records) {
+      if (r && typeof r === 'object' && (k in r)) types.add(_legendType(r[k]));
+      else missing = true;
+    }
+    const parts = [...types];
+    if (missing) parts.push('absent');
+    parts.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+    out[k] = parts.join('|');
+  }
+  return out;
+}
+function buildExportLegend(state) {
+  const collections = {}, maps = {}, scalars = {};
+  const isPlainObj = v => v && typeof v === 'object' && !Array.isArray(v);
+  const isObjectMap = v => isPlainObj(v) && Object.keys(v).length > 0 && Object.values(v).every(isPlainObj);
+  const emitArray = (name, arr) => {
+    const objs = arr.filter(r => r && typeof r === 'object' && !Array.isArray(r));
+    collections[name] = arr.length === 0
+      ? { records: 0, fields: null, note: 'no records observed' }
+      : { records: arr.length, fields: _legendFields(objs.length ? objs : arr) };
+  };
+  const emitMap = (name, obj) => {
+    const ks = Object.keys(obj), fset = new Set();
+    for (const k of ks) for (const f of Object.keys(obj[k] || {})) fset.add(f);
+    maps[name] = { keys: ks.length, valueFields: ks.length ? [...fset].sort() : null };
+  };
+  for (const [k, v] of Object.entries(state)) {
+    if (Array.isArray(v)) emitArray(k, v);
+    else if (isObjectMap(v)) emitMap(k, v);                         // e.g. personNotes
+    else if (isPlainObj(v)) {
+      let recursed = false;
+      for (const [ck, cv] of Object.entries(v)) {                  // one level deep: vault.* franklin.* code.*
+        if (Array.isArray(cv)) { emitArray(`${k}.${ck}`, cv); recursed = true; }
+        else if (isObjectMap(cv)) { emitMap(`${k}.${ck}`, cv); recursed = true; }   // e.g. code.virtueNotes
+      }
+      if (!recursed) scalars[k] = 'object';                        // e.g. meta / active activeFocus
+    }
+    else scalars[k] = _legendType(v);                              // focusLastType, focusLastTypeAt, null activeFocus
+  }
+  return {
+    _comment: 'Derived field/type dictionary + static conventions. Export-only; ensureShape strips it on import.',
+    derived: { collections, maps, scalars },
+    conventions: {
+      schemaVersion: SCHEMA_VERSION,
+      exportedAt: nowIso(),
+      dateFormat: 'YYYY-MM-DD',
+      timeFormat: 'HH:MM 24h',
+      dayCodes: 'M T W R F S U — R = Thursday, U = Sunday',
+      nightBoundary: 'A night belongs to the day it starts. Before 06:00 local, the night-date is the previous calendar day (codeNightDate).',
+      nightKeyed: ['code.journal', 'code.codeReads', 'weeklyReviews', 'daily_state (sleep)'],
+      calendarKeyed: ['blocks[].checks', 'focusSessions', 'contacts', 'franklin.tallyEvents', 'franklin.virtueSlips'],
+      todayPending: 'A due-but-unchecked item today is pending, never missed. Charts and trends exclude today.',
+      sleepUsableRange: 'hours_slept outside 1–14 is excluded from all in-app math and is NOT rewritten in storage. Three historical values (2026-07-06, 07-10, 07-11) exceed 14 and are stored as-is.',
+      sleepDerivation: 'hours_slept on date D = wake_time[D] − bedtime[D−1].',
+      mergeSemantics: 'Per-record union by id, newer-record-wins within a record. blocks[].checks are unioned favouring checked. code.virtueNotes and personNotes are field-merged. franklin.anchorDate, franklin.cycleDays and focusLastType are per-field timestamped scalars.',
+      mergeRegisteredCollections: MERGE_COLLECTIONS.map(c => c.key),
+      notInterpretedInApp: 'The app counts and never grades. No targets, goals or percentages appear on any data surface. Interpretation is deliberately external to the app.'
+    }
+  };
+}
+
 function exportData() {
   state.meta.last_export_at = nowIso();
   // last_export_at is a per-device breadcrumb (shown in Settings). It must NOT
   // bump meta.updated_at or push: a read-only export making this blob "newer"
   // would let its stale records win a later merge. Local write only.
   saveStateLocalOnly();
-  const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+  // _legend is spread onto the EXPORTED object only — never assigned to state,
+  // so it can't reach localStorage or the synced blob. ensureShape strips it on
+  // import. Whole-state serialization is preserved (no allowlist).
+  const blob = new Blob([JSON.stringify({ ...state, _legend: buildExportLegend(state) }, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
