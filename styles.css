@@ -1927,7 +1927,21 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
   align-self: flex-start; font-size: 11px; font-weight: 600;
   color: var(--accent); background: var(--accent-soft);
   padding: 2px 8px; border-radius: var(--r-pill);
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* Edit-mode badge is a tap target (opens the rule's virtue picker) — >=44px. */
+.code-virtue-tag-edit {
+  border: none; cursor: pointer; min-height: 44px;
+  display: inline-flex; align-items: center; padding: 4px 12px;
+}
+/* Virtue multi-select in the rule sheet: scrolls itself, never the page. */
+.code-rule-virtues { max-height: 45vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.code-rule-virtue-opt {
+  display: flex; align-items: center; gap: 10px; min-height: 44px;
+  padding: 6px 2px; cursor: pointer;
+}
+.code-rule-virtue-opt input { width: 20px; height: 20px; flex-shrink: 0; }
+.code-rule-virtue-opt span { overflow-wrap: break-word; min-width: 0; }
 .code-row-actions { display: flex; gap: 2px; flex-shrink: 0; }
 
 .code-virtue-item {

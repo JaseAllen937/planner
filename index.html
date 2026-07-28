@@ -847,7 +847,7 @@ function loadState() {
   if (raw) {
     try {
       const parsed = JSON.parse(raw);
-      if (parsed && parsed.meta && (parsed.meta.version >= 1 && parsed.meta.version <= 16)) {
+      if (parsed && parsed.meta && (parsed.meta.version >= 1 && parsed.meta.version <= 17)) {
         return ensureShape(parsed);
       }
     } catch (e) {
@@ -1211,6 +1211,32 @@ function ensureShape(s) {
   }
   if (!s.personNotes || typeof s.personNotes !== 'object') s.personNotes = {};
 
+  // ---- v16 -> v17: a rule serves ONE OR MORE virtues. Single `virtueId`
+  // becomes `virtueIds` (array). All live records hold null, so no assignment
+  // is lost. NOTE: only code.rules[].virtueId changes — franklin.virtueSlips and
+  // code.codeReads keep their own virtueId untouched.
+  if ((s.meta.version || 1) < 17) {
+    for (const r of s.code.rules) {
+      if (!r || typeof r !== 'object') continue;
+      r.virtueIds = r.virtueId ? [r.virtueId] : [];
+      delete r.virtueId;
+    }
+    s.meta.version = 17;
+  }
+
+  // Always-run derive guard (sibling to the v78 tally repair): a device on stale
+  // cached JS can write a rule carrying only `virtueId`, and union-by-id
+  // newer-wins can let it replace a migrated record. Normalize every load AND at
+  // merge step 5 (mergeStates returns ensureShape(merged)). Idempotent, additive.
+  for (const r of s.code.rules) {
+    if (!r || typeof r !== 'object') continue;
+    if (!Array.isArray(r.virtueIds)) r.virtueIds = r.virtueId ? [r.virtueId] : [];
+    if ('virtueId' in r) delete r.virtueId;
+    // de-dup, drop non-string / empty entries
+    const seen = new Set();
+    r.virtueIds = r.virtueIds.filter(v => (typeof v === 'string' && v && !seen.has(v)) ? (seen.add(v), true) : false);
+  }
+
   // Cloud-sync uses meta.updated_at as the conflict-resolution timestamp.
   // Backfill it for pre-sync states.
   if (!s.meta.updated_at) s.meta.updated_at = s.meta.created_at || nowIso();
@@ -1234,7 +1260,7 @@ function removeSampleHabits(s) {
 function seedState() {
   const now = nowIso();
   return {
-    meta: { version: 16, created_at: now, updated_at: now, last_export_at: null, lastWipe: null, tombstones: {} },
+    meta: { version: 17, created_at: now, updated_at: now, last_export_at: null, lastWipe: null, tombstones: {} },
     // No sample habits — habits are now created only as checkbox blocks in Spaces.
     habits: [],
     items: [],
@@ -3191,13 +3217,15 @@ function deleteVirtue(id) {
   const v = f.virtues.find(x => x.id === id);
   if (!v) return;
   const c = codeData();
-  const linked = c.rules.filter(r => r.virtueId === id).length;
+  const linked = c.rules.filter(r => (r.virtueIds || []).includes(id)).length;
   const note = c.virtueNotes[id];
   const hasNote = !!(note && ((note.why || '').trim() || (note.manifest || '').trim()));
   const msg = `Delete "${v.name}"?\n\nThis virtue has ${hasNote ? 'writing in My Code' : 'no writing'} and ${linked} linked rule${linked === 1 ? '' : 's'}. Its slip history and your writing will be KEPT but hidden; linked rules will be UNLINKED, not deleted. The virtue won't come back.`;
   if (!confirm(msg)) return;
   tombstone('franklin.virtues', id);                       // stays deleted across sync
-  c.rules.forEach(r => { if (r.virtueId === id) r.virtueId = null; }); // unlink, keep the rule
+  // Unlink ONLY this id from each rule; a rule serving other virtues keeps them
+  // and is never deleted or nulled.
+  c.rules.forEach(r => { if (Array.isArray(r.virtueIds)) r.virtueIds = r.virtueIds.filter(x => x !== id); });
   // virtueSlips retained (orphaned); code.virtueNotes[id] retained (hidden, recoverable-in-state).
   f.virtues = f.virtues.filter(x => x.id !== id);
   saveState(); render();
@@ -3603,22 +3631,39 @@ function renderCodeMain(body) {
 // A single numbered row with one ⋯ menu (rules + skills share it). `showMenu`
 // gates the ⋯: Rules pass codeRulesEdit so read mode is text-only, full width;
 // Skills default to true (they have no separate edit toggle).
-function codeNumberedRow(kind, item, i, total, text, tag, showMenu = true) {
+function codeNumberedRow(kind, item, i, total, text, tag, showMenu = true, tagHtml = null) {
+  // tagHtml (pre-escaped) wins when provided (rules' virtue badge); else the
+  // plain `tag` string path (skills / read mode) is escaped here as before.
+  const badge = tagHtml != null ? tagHtml : (tag ? `<span class="code-virtue-tag">${escapeHtml(tag)}</span>` : '');
   return `<div class="code-rule-row">
     <span class="code-rule-num">${i + 1}</span>
     <div class="code-rule-body">
       <div class="code-rule-text">${escapeHtml(text)}</div>
-      ${tag ? `<span class="code-virtue-tag">${escapeHtml(tag)}</span>` : ''}
+      ${badge}
     </div>
     ${showMenu ? `<button type="button" class="space-menu-btn code-menu-btn" data-cact="open-menu" data-menu-kind="${kind}" data-menu-id="${item.id}" data-index="${i}" data-total="${total}" aria-label="Actions" aria-haspopup="menu">⋯</button>` : ''}
   </div>`;
+}
+
+// Virtue badge for a rule: first virtue name + "+N" when it serves more (never
+// all names inline — a 3-virtue rule would overflow at 360px). In edit mode the
+// badge is a tap target that opens the rule's virtue picker; read mode is a
+// plain span (empty when unassigned).
+function ruleVirtueBadge(r, edit) {
+  const vids = Array.isArray(r.virtueIds) ? r.virtueIds : [];
+  const first = vids.length ? virtueNameById(vids[0]) : null;
+  const label = first ? escapeHtml(first) + (vids.length > 1 ? ` +${vids.length - 1}` : '') : '';
+  if (edit) {
+    return `<button type="button" class="code-virtue-tag code-virtue-tag-edit" data-cact="edit-rule-virtues" data-menu-id="${escapeHtml(r.id)}" aria-label="Set virtues">${label || '+ virtues'}</button>`;
+  }
+  return label ? `<span class="code-virtue-tag">${label}</span>` : '';
 }
 
 function renderCodeRules() {
   const col = (scope, label) => {
     const rules = codeRulesByScope(scope);
     const rows = rules.length
-      ? rules.map((r, i) => codeNumberedRow('rule', r, i, rules.length, r.text, r.virtueId ? virtueNameById(r.virtueId) : null, codeRulesEdit)).join('')
+      ? rules.map((r, i) => codeNumberedRow('rule', r, i, rules.length, r.text, null, codeRulesEdit, ruleVirtueBadge(r, codeRulesEdit))).join('')
       : `<div class="code-empty">No rules yet.</div>`;
     return `<div class="code-rule-col code-rule-col-${scope}">
       <div class="vault-section-head"><span class="vault-section-title">${label}</span><span class="code-rule-head-actions"><button type="button" class="vault-mini-btn" data-cact="rules-edit" aria-pressed="${codeRulesEdit ? 'true' : 'false'}">${codeRulesEdit ? 'Done' : 'Edit'}</button><button type="button" class="vault-mini-btn" data-cact="add-rule" data-scope="${scope}">+ Add</button></span></div>
@@ -3648,7 +3693,7 @@ function renderCodeVirtuesList() {
     const n = notes[v.id] || {};
     const why = (n.why || '').trim();
     const manifest = (n.manifest || '').trim();
-    const linked = rules.filter(r => r.virtueId === v.id);
+    const linked = rules.filter(r => (r.virtueIds || []).includes(v.id));
     let inner;
     if (!why && !manifest) {
       inner = `<div class="code-virtue-empty">Not written yet — tap ⋯ to add your reasons.</div>`;
@@ -3677,7 +3722,7 @@ function renderCodeVirtueDetail(body) {
   const v = codeVirtues().find(x => x.id === codeVirtueId);
   if (!v) { codeVirtueId = null; return renderCode(); }
   const note = codeData().virtueNotes[v.id] || {};
-  const linked = codeData().rules.filter(r => r.virtueId === v.id);
+  const linked = codeData().rules.filter(r => (r.virtueIds || []).includes(v.id));
   body.innerHTML = `
     <button type="button" class="code-back" data-cact="virtue-back">‹ Virtues</button>
     <div class="vault-section">
@@ -3790,7 +3835,7 @@ function codeReadSlice() {
   const notes = (virtue && c.virtueNotes[virtue.id]) || null;
 
   // Rule pool: rules serving the night's virtue; else all rules; null when none.
-  let pool = virtue ? orderedRules.filter(r => r.virtueId === virtue.id) : [];
+  let pool = virtue ? orderedRules.filter(r => (r.virtueIds || []).includes(virtue.id)) : [];
   if (pool.length === 0) pool = orderedRules;
   let rule = null, ruleNumber = null;
   if (pool.length) {
@@ -3910,6 +3955,7 @@ function onCodeBodyClick(e) {
   else if (act === 'open-menu')    openBlockMenuFor(el);
   else if (act === 'journal-back') { codeView = 'main'; renderCode(); }
   else if (act === 'add-rule')     openCodeRuleSheet(null, el.dataset.scope);
+  else if (act === 'edit-rule-virtues') { const r = codeData().rules.find(x => x.id === el.dataset.menuId); if (r) openCodeRuleSheet(r); }
   else if (act === 'add-skill')    openCodeSkillSheet(null);
   else if (act === 'rate')         { codeJournalRating = el.dataset.rating; document.querySelectorAll('#code-rating button').forEach(b => b.classList.toggle('active', b.dataset.rating === codeJournalRating)); }
   else if (act === 'save-journal') saveJournalFromComposer();
@@ -3950,8 +3996,8 @@ function deleteCodeRule(id) {
 }
 function openCodeRuleSheet(rule, scope) {
   codeForm = rule
-    ? { kind: 'rule', id: rule.id, text: rule.text, scope: rule.scope, virtueId: rule.virtueId || '' }
-    : { kind: 'rule', id: null, text: '', scope: scope || 'public', virtueId: '' };
+    ? { kind: 'rule', id: rule.id, text: rule.text, scope: rule.scope, virtueIds: (rule.virtueIds || []).slice() }
+    : { kind: 'rule', id: null, text: '', scope: scope || 'public', virtueIds: [] };
   buildCodeRuleSheet();
   openCodeSheet();
   setTimeout(() => { const t = document.getElementById('code-rule-text'); if (t) t.focus(); }, 50);
@@ -3973,11 +4019,10 @@ function buildCodeRuleSheet() {
       </div>
     </div>
     <div class="field">
-      <label for="code-rule-virtue">Linked virtue (optional)</label>
-      <select id="code-rule-virtue">
-        <option value="">None</option>
-        ${codeVirtues().map(v => `<option value="${v.id}"${f.virtueId === v.id ? ' selected' : ''}>${escapeHtml(v.name)}</option>`).join('')}
-      </select>
+      <label>Linked virtues (optional)</label>
+      <div class="code-rule-virtues" id="code-rule-virtues">
+        ${rotationVirtues().map(v => `<label class="code-rule-virtue-opt"><input type="checkbox" data-virtue="${escapeHtml(v.id)}"${(f.virtueIds || []).includes(v.id) ? ' checked' : ''}><span>${escapeHtml(v.name)}</span></label>`).join('')}
+      </div>
     </div>
     <div id="code-sheet-error" class="error-msg" hidden></div>
     <div class="form-actions">
@@ -3997,15 +4042,17 @@ function saveCodeRuleForm() {
   const f = codeForm;
   const errEl = document.getElementById('code-sheet-error');
   const text = (document.getElementById('code-rule-text').value || '').trim();
-  const virtueId = document.getElementById('code-rule-virtue').value || null;
+  // Multi-select: collect checked virtue ids (0 = unassigned, valid).
+  const virtueIds = [...document.querySelectorAll('#code-rule-virtues input[type="checkbox"]:checked')]
+    .map(cb => cb.dataset.virtue).filter(v => typeof v === 'string' && v);
   if (!text) { errEl.textContent = 'Write the rule.'; errEl.hidden = false; return; }
   const c = codeData();
   if (f.id) {
     const r = c.rules.find(x => x.id === f.id);
-    if (r) Object.assign(r, { text, scope: f.scope, virtueId });
+    if (r) Object.assign(r, { text, scope: f.scope, virtueIds });
   } else {
     const maxOrder = c.rules.filter(r => r.scope === f.scope).reduce((m, r) => Math.max(m, r.order | 0), -1);
-    c.rules.push({ id: uuid(), text, scope: f.scope, virtueId, order: maxOrder + 1, createdAt: nowIso() });
+    c.rules.push({ id: uuid(), text, scope: f.scope, virtueIds, order: maxOrder + 1, createdAt: nowIso() });
   }
   saveState(); render(); if (codeOverlay.classList.contains('open')) renderCode(); closeCodeSheet();
 }
