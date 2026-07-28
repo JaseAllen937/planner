@@ -3567,6 +3567,10 @@ let codeRulesEdit = false;    // session-only: Rules read/edit split (⋯ menus 
 let codeForm = null;          // sheet form state
 let codeJournalRating = '';   // composer rating (in-memory)
 let codeSummaryOpen = false;  // composer: reading-summary textarea revealed (in-memory)
+// Recite gate: rules revealed for tonight? Transient UI only — never stored,
+// never synced. Survives a background render() because renderCodeReadSlice reads
+// it on every rebuild; reset when the overlay closes.
+let codeReciteRevealed = false;
 
 function codeData() {
   if (!state.code || typeof state.code !== 'object') state.code = { rules: [], virtueNotes: {}, skills: [], journal: [], codeReads: [] };
@@ -3604,7 +3608,7 @@ const codeOverlay = document.getElementById('code-overlay');
 const codeSheet   = document.getElementById('code-sheet');
 
 function openCode() { codeView = 'main'; codeVirtueId = null; codeRulesEdit = false; renderCode(); codeOverlay.classList.add('open'); }
-function closeCode() { codeOverlay.classList.remove('open'); closeCodeSheet(); }
+function closeCode() { codeOverlay.classList.remove('open'); closeCodeSheet(); codeReciteRevealed = false; }
 function openCodeSheet() { codeSheet.classList.add('open'); }
 function closeCodeSheet() { codeSheet.classList.remove('open'); codeForm = null; }
 
@@ -3846,6 +3850,13 @@ function codeReadSlice() {
   const virtue = n ? seededShuffle(seq, Math.floor(nights / n))[nights % n] : null;
   const notes = (virtue && c.virtueNotes[virtue.id]) || null;
 
+  // Rules assigned to the night's virtue, in stable public-then-private order
+  // (never shuffled) — both devices reveal in the same sequence. recite mode
+  // engages only when the virtue has >= 1 assigned rule; else read mode, where
+  // the pool falls back to all rules exactly as before.
+  const virtueRules = virtue ? orderedRules.filter(r => (r.virtueIds || []).includes(virtue.id)) : [];
+  const mode = virtueRules.length >= 1 ? 'recite' : 'read';
+
   // Rule pool: rules serving the night's virtue; else all rules; null when none.
   let pool = virtue ? orderedRules.filter(r => (r.virtueIds || []).includes(virtue.id)) : [];
   if (pool.length === 0) pool = orderedRules;
@@ -3856,7 +3867,7 @@ function codeReadSlice() {
     // 1-based position within its own scope list (matches My Code numbering).
     ruleNumber = codeRulesByScope(rule.scope).findIndex(r => r.id === rule.id) + 1;
   }
-  return { virtue, notes, rule, ruleNumber };
+  return { virtue, notes, rule, ruleNumber, virtueRules, mode };
 }
 
 // Log tonight's read-through: at most one record per date (edit on re-log,
@@ -3866,7 +3877,9 @@ function logCodeRead() {
   const today = codeNightDate();
   const slice = codeReadSlice();
   const virtueId = slice && slice.virtue ? slice.virtue.id : null;
-  const ruleId = slice && slice.rule ? slice.rule.id : null;
+  // Recite mode reveals ALL the virtue's rules — there is no single rule to log,
+  // so ruleId is null (same keys, no new field). Read mode logs its one rule.
+  const ruleId = (slice && slice.mode === 'read' && slice.rule) ? slice.rule.id : null;
   const rec = c.codeReads.find(e => e.date === today);
   if (rec) { rec.virtueId = virtueId; rec.ruleId = ruleId; rec.at = nowIso(); }
   else c.codeReads.push({ id: uuid(), date: today, virtueId, ruleId, at: nowIso() });
@@ -3875,25 +3888,74 @@ function logCodeRead() {
   if (codeOverlay.classList.contains('open')) renderCode();
 }
 
+// Scope label for a rule number — "Public"/"Private". The gate strips My Code's
+// scope headings, so a bare number 1–7 is ambiguous across the two lists.
+function codeScopeLabel(scope) { return scope === 'private' ? 'Private' : 'Public'; }
+// A single rule row: its number within its own scope list + a scope tag + text.
+function codeReadRuleRow(rule) {
+  const num = codeRulesByScope(rule.scope).findIndex(r => r.id === rule.id) + 1;
+  return `
+    <div class="code-rule-row code-readslice-rule">
+      <span class="code-rule-num">${num}</span>
+      <div class="code-rule-body">
+        <div class="code-readslice-scope">${escapeHtml(codeScopeLabel(rule.scope))} rule</div>
+        <div class="code-rule-text">${escapeHtml(rule.text)}</div>
+      </div>
+    </div>`;
+}
+// Virtue essays (why / manifest) — both independently optional; nothing when neither.
+function codeReadEssays(why, manifest) {
+  return (why ? `<div class="code-readslice-vn"><div class="code-vn-label">Why it matters</div><div class="code-vn-text">${escapeHtml(why)}</div></div>` : '')
+       + (manifest ? `<div class="code-readslice-vn"><div class="code-vn-label">What it looks like</div><div class="code-vn-text">${escapeHtml(manifest)}</div></div>` : '');
+}
+
 // The gate card shown before the composer until tonight's read is logged.
 function renderCodeReadSlice(body, slice) {
   const v = slice.virtue;
   const n = slice.notes || {};
   const why = (n.why || '').trim();
   const manifest = (n.manifest || '').trim();
+
+  // ---- Recite mode: the night's virtue has assigned rules ----
+  if (v && slice.mode === 'recite') {
+    const rules = slice.virtueRules || [];
+    const head = `<div class="vault-section-head"><span class="vault-section-title">Tonight's recite · ${escapeHtml(v.name)}</span></div>`;
+    const virtueTop = `<div class="code-readslice-virtue"><div class="code-virtue-name">${escapeHtml(v.name)}</div><div class="code-virtue-def">${escapeHtml(v.definition)}</div></div>`;
+    if (!codeReciteRevealed) {
+      // BEFORE reveal: NO rule text, NO essays anywhere in the DOM. Recall first.
+      body.innerHTML = `
+        <button type="button" class="code-back" data-cact="journal-back">‹ Back</button>
+        <div class="vault-section code-readslice">
+          ${head}
+          ${virtueTop}
+          <div class="code-recite-count">${rules.length} rule${rules.length === 1 ? '' : 's'} serve this virtue.</div>
+          <div class="code-recite-prompt">Name them from memory, then reveal.</div>
+          <button type="button" class="btn btn-primary code-recite-reveal" data-cact="recite-reveal">Reveal</button>
+        </div>`;
+      return;
+    }
+    // AFTER reveal: all rules at once (stable order), then the essays.
+    body.innerHTML = `
+      <button type="button" class="code-back" data-cact="journal-back">‹ Back</button>
+      <div class="vault-section code-readslice">
+        ${head}
+        ${virtueTop}
+        ${rules.map(codeReadRuleRow).join('')}
+        ${codeReadEssays(why, manifest)}
+        <button type="button" class="btn btn-primary code-readslice-done" data-cact="code-read-done">I've read it</button>
+      </div>`;
+    return;
+  }
+
+  // ---- Read mode: unchanged behaviour + scope-labelled rule number ----
   const title = v
     ? `Tonight's read · ${escapeHtml(v.name)}`
-    : (slice.rule ? `Tonight's read · Rule ${slice.ruleNumber}` : `Tonight's read`);
+    : (slice.rule ? `Tonight's read · ${escapeHtml(codeScopeLabel(slice.rule.scope))} rule ${slice.ruleNumber}` : `Tonight's read`);
   let virtueBlock = '';
   if (v) {
-    let inner;
-    if (!why && !manifest) {
-      inner = `<div class="code-readslice-empty">You haven't written this virtue yet — add it in My Virtues.</div>`;
-    } else {
-      inner =
-        (why ? `<div class="code-readslice-vn"><div class="code-vn-label">Why it matters</div><div class="code-vn-text">${escapeHtml(why)}</div></div>` : '') +
-        (manifest ? `<div class="code-readslice-vn"><div class="code-vn-label">What it looks like</div><div class="code-vn-text">${escapeHtml(manifest)}</div></div>` : '');
-    }
+    const inner = (!why && !manifest)
+      ? `<div class="code-readslice-empty">You haven't written this virtue yet — add it in My Virtues.</div>`
+      : codeReadEssays(why, manifest);
     virtueBlock = `
       <div class="code-readslice-virtue">
         <div class="code-virtue-name">${escapeHtml(v.name)}</div>
@@ -3901,11 +3963,7 @@ function renderCodeReadSlice(body, slice) {
         ${inner}
       </div>`;
   }
-  const ruleBlock = slice.rule ? `
-    <div class="code-rule-row code-readslice-rule">
-      <span class="code-rule-num">${slice.ruleNumber}</span>
-      <div class="code-rule-body"><div class="code-rule-text">${escapeHtml(slice.rule.text)}</div></div>
-    </div>` : '';
+  const ruleBlock = slice.rule ? codeReadRuleRow(slice.rule) : '';
   body.innerHTML = `
     <button type="button" class="code-back" data-cact="journal-back">‹ Back</button>
     <div class="vault-section code-readslice">
@@ -3971,6 +4029,7 @@ function onCodeBodyClick(e) {
   else if (act === 'add-skill')    openCodeSkillSheet(null);
   else if (act === 'rate')         { codeJournalRating = el.dataset.rating; document.querySelectorAll('#code-rating button').forEach(b => b.classList.toggle('active', b.dataset.rating === codeJournalRating)); }
   else if (act === 'save-journal') saveJournalFromComposer();
+  else if (act === 'recite-reveal') { codeReciteRevealed = true; renderCode(); }  // transient UI only, nothing stored
   else if (act === 'code-read-done') logCodeRead();
   else if (act === 'toggle-reading-summary') {
     // Reveal in place — NO re-render. A rebuild here refills the journal

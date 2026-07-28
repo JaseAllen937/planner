@@ -2186,7 +2186,13 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 .code-readslice-vn { margin-top: 10px; }
 .code-readslice-empty { font-size: 13px; color: var(--text-tertiary); margin-top: 8px; }
 .code-readslice-rule { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--separator); }
+/* Scope tag on a gate rule row — disambiguates the shared 1–7 numbering. */
+.code-readslice-scope { font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--accent); margin-bottom: 2px; }
 .code-readslice-done { margin-top: 16px; }
+/* Recite mode — before-reveal recall prompt. */
+.code-recite-count { font-size: 15px; font-weight: 600; color: var(--text-primary); margin-top: 14px; }
+.code-recite-prompt { font-size: 13px; color: var(--text-secondary); margin-top: 4px; margin-bottom: 14px; }
+.code-recite-reveal { min-height: 44px; }
 .code-summary-add { align-self: flex-start; margin: 2px 0 6px; padding-left: 0; }
 
 /* ---- The Benjamin Franklin overlay body ---- */
