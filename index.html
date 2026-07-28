@@ -5166,13 +5166,14 @@ function reviewContactLine(endYmd) {
 // COUNT, they never interpret — no trend prose, no conclusions, no scores.
 // ============================================================================
 
-// TEMP: renders every day. A later build replaces this with the Sunday-only gate.
-const REVIEW_EVERY_DAY = true;
+// Manual test override: force the Sunday sheet-card every day. Live path gates
+// on the night-date weekday (see renderReviewCard). Leave false in production.
+const REVIEW_EVERY_DAY = false;
 
 const REVIEW_QS = [
   { key: 'q1', label: 'What worked this week?' },
   { key: 'q2', label: 'What got skipped or fell apart?' },
-  { key: 'q3', label: 'What do I need to adjust?' },
+  { key: 'q3', label: 'What do I need to adjust about my sleep?' },
   { key: 'q4', label: 'How did the week go versus what you wanted?' },
   { key: 'q5', label: "What's the one thing that matters most next week?" }
 ];
@@ -5184,6 +5185,13 @@ function reviewForNight() { const d = codeNightDate(); return weeklyReviewsList(
 function priorReview() {
   const d = codeNightDate();
   return weeklyReviewsList().filter(r => r && r.date && r.date < d)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)))[0] || null;
+}
+// Most recent review (by date) carrying a non-empty q5 — the Today-card source.
+// NOT priorReview: this INCLUDES the current night-date, so a Sunday catch-up
+// still surfaces the newest sentence available.
+function latestReviewWithQ5() {
+  return weeklyReviewsList().filter(r => r && r.date && (r.q5 || '').trim())
     .sort((a, b) => String(b.date).localeCompare(String(a.date)))[0] || null;
 }
 
@@ -5244,21 +5252,96 @@ function reviewSleepAvg(startYmd, endYmd) {
   return usable.reduce((a, b) => a + b, 0) / usable.length;
 }
 
+// Sleep DURATION over the window: { mean, min, max, n } in hours, gated by
+// isUsableSleep (1–14h). null when no usable night. Pure; buildSleepNights only.
+function sleepStatsDuration(startYmd, endYmd) {
+  const hrs = buildSleepNights()
+    .filter(n => n.date >= startYmd && n.date <= endYmd)
+    .map(n => n.hours).filter(isUsableSleep);
+  if (!hrs.length) return null;
+  return { mean: hrs.reduce((a, b) => a + b, 0) / hrs.length, min: Math.min(...hrs), max: Math.max(...hrs), n: hrs.length };
+}
+
+// Sleep CLOCK stat (bedtime|wake) over the window: { mean, min, max, n } in
+// minutes-from-midnight, gated by the SAME plausibility windows the sleep input
+// uses (6pm–6am bedtime, 4am–2pm wake) — excluded values are skipped and not
+// counted, never rewritten. Bedtimes cross midnight, so they are folded to
+// minutes-from-18:00 for min/max AND the mean, then unfolded for display.
+function sleepStatsClock(startYmd, endYmd, field) {
+  const gate = field === 'bedtime' ? isPlausibleBedtime : isPlausibleWakeTime;
+  const raw = buildSleepNights()
+    .filter(n => n.date >= startYmd && n.date <= endYmd)
+    .map(n => field === 'bedtime' ? n.bedtime : n.wake)
+    .filter(gate).map(minsSinceMidnight);
+  if (!raw.length) return null;
+  if (field === 'bedtime') {
+    const fold = v => v >= 1080 ? v - 1080 : v + 360;         // minutes from 18:00
+    const unfold = f => ((Math.round(f) + 1080) % 1440);
+    const folded = raw.map(fold);
+    const meanF = folded.reduce((a, b) => a + b, 0) / folded.length;
+    return { mean: unfold(meanF), min: unfold(Math.min(...folded)), max: unfold(Math.max(...folded)), n: raw.length };
+  }
+  // wake sits in the morning window (gate guarantees 4am–2pm) — no fold needed.
+  const mean = Math.round(raw.reduce((a, b) => a + b, 0) / raw.length);
+  return { mean, min: Math.min(...raw), max: Math.max(...raw), n: raw.length };
+}
+
+// Formatters. fmtDurationHM(h) -> "7h 57m" (mean) or "5h42m" compact (range
+// endpoints, so a range fits one line at 360px). fmtClockMins(mins) -> "1:17a"
+// reusing sleepClock's 12-hour a/p convention (not modifying sleepClock).
+function fmtDurationHM(hours, compact) {
+  const mins = Math.round(hours * 60);
+  const h = Math.floor(mins / 60), m = String(mins % 60).padStart(2, '0');
+  return compact ? `${h}h${m}m` : `${h}h ${m}m`;
+}
+function fmtClockMins(mins) {
+  const t = (((Math.round(mins) % 1440) + 1440) % 1440);
+  const h = Math.floor(t / 60), m = t % 60;
+  const h12 = ((h + 11) % 12) + 1;
+  return `${h12}:${String(m).padStart(2, '0')}${h >= 12 ? 'p' : 'a'}`;
+}
+
 // ---- Today card ----
 function renderReviewCard() {
   const wrap = document.getElementById('review-card-wrap');
   if (!wrap) return;
-  if (!REVIEW_EVERY_DAY) { wrap.innerHTML = ''; return; }
-  const exists = !!reviewForNight();
-  const sub = exists ? 'Written · tap to edit' : 'Read the week. Set the next one.';
-  wrap.innerHTML = `
-    <button type="button" class="review-card" id="review-entry-card" aria-label="Open Sunday review">
-      <span class="review-card-icon" aria-hidden="true">🔁</span>
-      <span class="review-card-text">
-        <span class="review-card-title">Sunday review</span>
-        <span class="review-card-sub">${escapeHtml(sub)}</span>
-      </span>
-    </button>`;
+  // Sunday gate: weekday from the NIGHT-date (parseYmd -> local, not UTC), so a
+  // 00:30 Monday session still reads Sunday until 06:00. REVIEW_EVERY_DAY forces
+  // the sheet-card for manual testing.
+  const isSunday = parseYmd(codeNightDate()).getDay() === 0;
+  if (REVIEW_EVERY_DAY || isSunday) {
+    const exists = !!reviewForNight();
+    const sub = exists ? 'Written · tap to edit' : 'Read the week. Set the next one.';
+    wrap.innerHTML = `
+      <button type="button" class="review-card" id="review-entry-card" aria-label="Open Sunday review">
+        <span class="review-card-icon" aria-hidden="true">🔁</span>
+        <span class="review-card-text">
+          <span class="review-card-title">Sunday review</span>
+          <span class="review-card-sub">${escapeHtml(sub)}</span>
+        </span>
+      </button>`;
+    document.getElementById('review-entry-card').addEventListener('click', openReviewView);
+    return;
+  }
+  // Non-Sunday: show the newest q5 ("the one thing") — your sentence, no status.
+  // Still tappable for catch-up. No q5 anywhere -> the plain card as before.
+  const q5rec = latestReviewWithQ5();
+  if (q5rec) {
+    wrap.innerHTML = `
+      <button type="button" class="review-card review-card-q5wrap" id="review-entry-card" aria-label="Open review">
+        <span class="review-card-q5label">the one thing</span>
+        <span class="review-card-q5">${escapeHtml((q5rec.q5 || '').trim())}</span>
+      </button>`;
+  } else {
+    wrap.innerHTML = `
+      <button type="button" class="review-card" id="review-entry-card" aria-label="Open review">
+        <span class="review-card-icon" aria-hidden="true">🔁</span>
+        <span class="review-card-text">
+          <span class="review-card-title">Sunday review</span>
+          <span class="review-card-sub">Read the week. Set the next one.</span>
+        </span>
+      </button>`;
+  }
   document.getElementById('review-entry-card').addEventListener('click', openReviewView);
 }
 
@@ -5341,6 +5424,31 @@ function renderReview() {
   const ta = (key, extraClass) =>
     `<textarea class="code-textarea${extraClass ? ' ' + extraClass : ''}" id="review-${key}" placeholder="">${escapeHtml(reviewDraft[key] || '')}</textarea>`;
 
+  // Q3 sleep panel: mean AND range, per metric per week. Ranges are what the
+  // mean alone concealed. Counting, not interpreting — no arrows/colours/labels
+  // beyond "mean above, range below".
+  const wCur = [addDays(night, -6), night], wPri = [addDays(night, -13), addDays(night, -7)];
+  const sleepCell = (stat, isDur, prior) => {
+    if (!stat) return `<div class="rsg-cell${prior ? ' rsg-prior' : ''}"><div class="rsg-mean">—</div><div class="rsg-range">—</div></div>`;
+    const meanStr = isDur ? fmtDurationHM(stat.mean) : fmtClockMins(stat.mean);
+    const rangeStr = isDur
+      ? `${fmtDurationHM(stat.min, true)} – ${fmtDurationHM(stat.max, true)}`
+      : `${fmtClockMins(stat.min)} – ${fmtClockMins(stat.max)}`;
+    return `<div class="rsg-cell${prior ? ' rsg-prior' : ''}"><div class="rsg-mean">${escapeHtml(meanStr)}</div><div class="rsg-range">${escapeHtml(rangeStr)}</div></div>`;
+  };
+  const durC = sleepStatsDuration(wCur[0], wCur[1]), durP = sleepStatsDuration(wPri[0], wPri[1]);
+  const bedC = sleepStatsClock(wCur[0], wCur[1], 'bedtime'), bedP = sleepStatsClock(wPri[0], wPri[1], 'bedtime');
+  const wakC = sleepStatsClock(wCur[0], wCur[1], 'wake'), wakP = sleepStatsClock(wPri[0], wPri[1], 'wake');
+  const sleepGrid = `
+    <div class="review-sleep-grid">
+      <span class="rsg-head"></span><span class="rsg-head">this week</span><span class="rsg-head rsg-prior">prior</span>
+      <span class="rsg-rlabel">duration</span>${sleepCell(durC, true, false)}${sleepCell(durP, true, true)}
+      <span class="rsg-rlabel">bedtime</span>${sleepCell(bedC, false, false)}${sleepCell(bedP, false, true)}
+      <span class="rsg-rlabel">wake</span>${sleepCell(wakC, false, false)}${sleepCell(wakP, false, true)}
+    </div>
+    <div class="review-sleep-counts">${durC ? durC.n : 0} of 7 nights logged · prior ${durP ? durP.n : 0} of 7</div>
+    <div class="review-sleep-legend">mean above, range below</div>`;
+
   body.innerHTML = `
     <div class="review-datehead">${escapeHtml(dateLabel)}</div>
 
@@ -5360,11 +5468,7 @@ function renderReview() {
     </div>
     <div class="vault-section">
       <label class="review-q" for="review-q3">${escapeHtml(REVIEW_QS[2].label)}</label>
-      <div class="review-sleep-inline">
-        <span class="review-sleep-val">${escapeHtml(fmtSleepAvg(curAvg))}</span><span class="review-sleep-lbl"> this week</span>
-        <span class="review-sleep-sep">·</span>
-        <span class="review-sleep-val">${escapeHtml(fmtSleepAvg(priorAvg))}</span><span class="review-sleep-lbl"> prior</span>
-      </div>
+      ${sleepGrid}
       ${ta('q3')}
     </div>
     <div class="vault-section">
