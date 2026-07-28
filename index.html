@@ -78,7 +78,6 @@
     </div>
     <!-- B) Doorways — tappable cards into full-screen stat overlays -->
     <div id="stats-doorways"></div>
-    <div id="insights-wrap"></div>
     <div id="history-wrap"></div>
     <!-- Legacy summary panels kept alive (hidden) so their renderers never crash;
          their figures are surfaced compactly in the overview tiles above. -->
@@ -1752,78 +1751,6 @@ function renderWeeklySummary() {
 }
 
 // ---------------- insight cards ----------------
-
-function computeInsights() {
-  const cards = [];
-  const today = todayDate();
-  const thisStart = startOfWeek(today);
-  const thisWeek = weeklySummary(thisStart);
-  const lastWeek = weeklySummary(addDays(thisStart, -7));
-
-  // ---- Individual-habit insight rules removed ----
-  // The old "skipped N days in a row", "long streak broken", per-time-bucket
-  // habit completion, and crushing-it→at-risk cards all read state.habits, which
-  // is now empty (habits live as Spaces checkbox blocks). They are intentionally
-  // gone. SEAM: future Spaces-based insights (per-block streaks, due-block
-  // completion trends) can be added here. Only aggregate wellness rules remain.
-
-  // Rule 6: focused hours up >=5 vs last week
-  if (thisWeek.total_focused_hours - lastWeek.total_focused_hours >= 5) {
-    const diff = Math.round(thisWeek.total_focused_hours - lastWeek.total_focused_hours);
-    cards.push({ tone: 'good', title: `Focused hours up by ${diff}h this week`, body: '' });
-  }
-
-  // Rule 1: bedtime drift >=30 min later vs last week
-  const avgBedtime = (dates) => {
-    const mins = dates.map(d => state.daily_state.find(ds => ds.date === d))
-      .filter(ds => ds && ds.bedtime)
-      .map(ds => {
-        let m = minsSinceMidnight(ds.bedtime);
-        // treat 00:00-04:00 as next day
-        if (m < 4 * 60) m += 1440;
-        return m;
-      });
-    return mins.length ? mins.reduce((a,b)=>a+b,0) / mins.length : null;
-  };
-  const thisBed = avgBedtime(weekDates(thisStart));
-  const lastBed = avgBedtime(weekDates(addDays(thisStart, -7)));
-  if (thisBed != null && lastBed != null && (thisBed - lastBed) >= 30) {
-    cards.push({ tone: 'warn', title: `Bedtime drifted ${Math.round(thisBed - lastBed)} min later vs last week`, body: 'Sleep regularity matters.' });
-  }
-
-  return cards;
-}
-
-// Open/closed state lives only in memory — collapsed by default each session.
-let insightsOpen = false;
-
-function renderInsights() {
-  const wrap = document.getElementById('insights-wrap');
-  const cards = computeInsights();
-  if (cards.length === 0) { wrap.innerHTML = ''; return; }
-
-  const openClass = insightsOpen ? ' open' : '';
-  const cardsHtml = cards.map(c => `
-    <div class="insight-card ${c.tone}">
-      <h4>${escapeHtml(c.title)}</h4>
-      ${c.body ? `<p>${escapeHtml(c.body)}</p>` : ''}
-    </div>
-  `).join('');
-
-  wrap.innerHTML = `
-    <div class="insights-expander${openClass}">
-      <button type="button" class="insights-toggle" id="insights-toggle" aria-expanded="${insightsOpen ? 'true' : 'false'}">
-        <span class="insights-toggle-label">⚠︎ Insights (${cards.length})</span>
-        <span class="insights-chevron" aria-hidden="true">›</span>
-      </button>
-      <div class="insights-body"${insightsOpen ? '' : ' hidden'}>${cardsHtml}</div>
-    </div>`;
-
-  document.getElementById('insights-toggle').addEventListener('click', () => {
-    insightsOpen = !insightsOpen;
-    renderInsights();
-  });
-}
 
 // ---------------- morning popup (blocking) ----------------
 
@@ -4061,6 +3988,7 @@ function deleteCodeRule(id) {
   const c = codeData();
   const r = c.rules.find(x => x.id === id);
   const scope = r ? r.scope : null;
+  tombstone('code.rules', id);   // stays deleted across sync
   c.rules = c.rules.filter(x => x.id !== id);
   if (scope) renumberOrder(codeRulesByScope(scope));
   saveState(); render(); if (codeOverlay.classList.contains('open')) renderCode(); closeCodeSheet();
@@ -4142,6 +4070,7 @@ function moveCodeSkill(id, delta) {
 function deleteCodeSkill(id) {
   if (!confirm('Delete this skill?')) return;
   const c = codeData();
+  tombstone('code.skills', id);   // stays deleted across sync
   c.skills = c.skills.filter(x => x.id !== id);
   renumberOrder(c.skills.slice().sort((a, b) => (a.order | 0) - (b.order | 0)));
   saveState(); render(); if (codeOverlay.classList.contains('open')) renderCode(); closeCodeSheet();
@@ -5800,7 +5729,6 @@ function render() {
   renderStatsDoorways();
   if (habitsOverlay && habitsOverlay.classList.contains('open')) renderHabitsDoorway();
   if (frankStatsOverlay && frankStatsOverlay.classList.contains('open')) renderFrankDoorway();
-  renderInsights();
   renderAllTime();
   renderCalendar();
   renderSettings();
