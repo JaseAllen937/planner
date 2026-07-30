@@ -844,7 +844,7 @@ const SCHEMA_VERSION = 17;
 // Human-facing build tag shown in Settings and stamped into every export legend.
 // BUMP THIS TOGETHER WITH sw.js VERSION on every deploy — a stale tag is how a
 // rolled-back build went unnoticed for two days.
-const APP_VERSION = 'v87';
+const APP_VERSION = 'v88';
 
 let state = loadState();
 
@@ -3204,7 +3204,10 @@ function deleteVirtue(id) {
   tombstone('franklin.virtues', id);                       // stays deleted across sync
   // Unlink ONLY this id from each rule; a rule serving other virtues keeps them
   // and is never deleted or nulled.
-  c.rules.forEach(r => { if (Array.isArray(r.virtueIds)) r.virtueIds = r.virtueIds.filter(x => x !== id); });
+  c.rules.forEach(r => {
+    if (Array.isArray(r.virtueIds)) r.virtueIds = r.virtueIds.filter(x => x !== id);
+    if (r.primaryVirtueId === id) r.primaryVirtueId = null;   // a broken primary is cleared at source
+  });
   // virtueSlips retained (orphaned); code.virtueNotes[id] retained (hidden, recoverable-in-state).
   f.virtues = f.virtues.filter(x => x.id !== id);
   saveState(); render();
@@ -3634,8 +3637,16 @@ function codeNumberedRow(kind, item, i, total, text, tag, showMenu = true, tagHt
 // plain span (empty when unassigned).
 function ruleVirtueBadge(r, edit) {
   const vids = Array.isArray(r.virtueIds) ? r.virtueIds : [];
-  const first = vids.length ? virtueNameById(vids[0]) : null;
-  const label = first ? escapeHtml(first) + (vids.length > 1 ? ` +${vids.length - 1}` : '') : '';
+  // Primary (core) virtue first with a star; then the remaining linked virtues.
+  // Null-safe: primary counts only if it's still a real linked virtue.
+  const primary = (r.primaryVirtueId && vids.includes(r.primaryVirtueId) && virtueNameById(r.primaryVirtueId)) ? r.primaryVirtueId : null;
+  const ordered = primary ? [primary, ...vids.filter(v => v !== primary)] : vids;
+  const named = ordered.map(id => virtueNameById(id)).filter(Boolean);
+  let label = '';
+  if (named.length) {
+    const head = (primary ? '★ ' : '') + escapeHtml(named[0]);   // star only when the first IS the named primary
+    label = head + (named.length > 1 ? ` +${named.length - 1}` : '');   // never wrap: starred one + count
+  }
   if (edit) {
     return `<button type="button" class="code-virtue-tag code-virtue-tag-edit" data-cact="edit-rule-virtues" data-menu-id="${escapeHtml(r.id)}" aria-label="Set virtues">${label || '+ virtues'}</button>`;
   }
@@ -3718,7 +3729,7 @@ function renderCodeVirtueDetail(body) {
     </div>
     <div class="vault-section">
       <div class="vault-section-head"><span class="vault-section-title">Rules serving this virtue</span></div>
-      ${linked.length ? linked.map(r => `<div class="code-linked-rule">${escapeHtml(r.text)}</div>`).join('') : `<div class="code-empty">No rules linked yet.</div>`}
+      ${linked.length ? codeVirtueRuleRows(v.id) : `<div class="code-empty">No rules linked yet.</div>`}
     </div>`;
   const why = document.getElementById('code-why');
   const man = document.getElementById('code-manifest');
@@ -3860,16 +3871,49 @@ function logCodeRead() {
 // scope headings, so a bare number 1–7 is ambiguous across the two lists.
 function codeScopeLabel(scope) { return scope === 'private' ? 'Private' : 'Public'; }
 // A single rule row: its number within its own scope list + a scope tag + text.
-function codeReadRuleRow(rule) {
+// Is `rule` the core rule for `virtueId`? Null-safe: the primary must be a real,
+// still-linked virtue, else the rule has no core.
+function ruleIsCoreFor(rule, virtueId) {
+  return !!virtueId && (rule.primaryVirtueId || null) === virtueId && (rule.virtueIds || []).includes(virtueId);
+}
+// Shared rule row. With no forVirtueId (read-mode single rule) the row is exactly
+// as before. With a virtue in view it gains the core/also-serves treatment: a
+// star + accent scope line "· core" + font-weight 500 body for the core rule; an
+// indented, muted "· also serves" secondary row otherwise.
+function codeReadRuleRow(rule, forVirtueId = null) {
   const num = codeRulesByScope(rule.scope).findIndex(r => r.id === rule.id) + 1;
-  return `
+  const base = `${escapeHtml(codeScopeLabel(rule.scope))} rule ${num}`;
+  if (!forVirtueId) {
+    return `
     <div class="code-rule-row code-readslice-rule">
       <span class="code-rule-num">${num}</span>
       <div class="code-rule-body">
-        <div class="code-readslice-scope">${escapeHtml(codeScopeLabel(rule.scope))} rule</div>
+        <div class="code-readslice-scope">${base}</div>
         <div class="code-rule-text">${escapeHtml(rule.text)}</div>
       </div>
     </div>`;
+  }
+  const core = ruleIsCoreFor(rule, forVirtueId);
+  const star = core ? '<span class="code-core-star" aria-hidden="true">★</span>' : '<span class="code-core-star code-core-star-empty" aria-hidden="true"></span>';
+  return `
+    <div class="code-rule-row code-readslice-rule ${core ? 'code-core' : 'code-alsoserves'}">
+      ${star}
+      <span class="code-rule-num">${num}</span>
+      <div class="code-rule-body">
+        <div class="code-readslice-scope ${core ? 'code-scope-core' : 'code-scope-secondary'}">${base} · ${core ? 'core' : 'also serves'}</div>
+        <div class="code-rule-text ${core ? 'code-body-core' : 'code-body-secondary'}">${escapeHtml(rule.text)}</div>
+      </div>
+    </div>`;
+}
+// Linked rules for a virtue, core-first then also-serving, each keeping the
+// public-then-private + order-within-scope sequence. Shared by the virtue detail
+// and the recite card so the two surfaces agree.
+function codeVirtueRuleRows(virtueId) {
+  const ordered = [...codeRulesByScope('public'), ...codeRulesByScope('private')]
+    .filter(r => (r.virtueIds || []).includes(virtueId));
+  const core = ordered.filter(r => ruleIsCoreFor(r, virtueId));
+  const rest = ordered.filter(r => !ruleIsCoreFor(r, virtueId));
+  return [...core, ...rest].map(r => codeReadRuleRow(r, virtueId)).join('');
 }
 // Virtue essays (why / manifest) — both independently optional; nothing when neither.
 function codeReadEssays(why, manifest) {
@@ -3889,26 +3933,30 @@ function renderCodeReadSlice(body, slice) {
     const rules = slice.virtueRules || [];
     const head = `<div class="vault-section-head"><span class="vault-section-title">Tonight's recite · ${escapeHtml(v.name)}</span></div>`;
     const virtueTop = `<div class="code-readslice-virtue"><div class="code-virtue-name">${escapeHtml(v.name)}</div><div class="code-virtue-def">${escapeHtml(v.definition)}</div></div>`;
+    const coreCount = rules.filter(r => ruleIsCoreFor(r, v.id)).length;
     if (!codeReciteRevealed) {
       // BEFORE reveal: NO rule text, NO essays anywhere in the DOM. Recall first.
+      // Only addition: a core count fragment (accent) when the virtue has a core.
+      const countLine = `${rules.length} rule${rules.length === 1 ? '' : 's'} serve this virtue`
+        + (coreCount > 0 ? ` — <span class="code-recite-core">${coreCount} core</span>` : '.');
       body.innerHTML = `
         <button type="button" class="code-back" data-cact="journal-back">‹ Back</button>
         <div class="vault-section code-readslice">
           ${head}
           ${virtueTop}
-          <div class="code-recite-count">${rules.length} rule${rules.length === 1 ? '' : 's'} serve this virtue.</div>
+          <div class="code-recite-count">${countLine}</div>
           <div class="code-recite-prompt">Name them from memory, then reveal.</div>
           <button type="button" class="btn btn-primary code-recite-reveal" data-cact="recite-reveal">Reveal</button>
         </div>`;
       return;
     }
-    // AFTER reveal: all rules at once (stable order), then the essays.
+    // AFTER reveal: EVERY attached rule, core first, then the essays.
     body.innerHTML = `
       <button type="button" class="code-back" data-cact="journal-back">‹ Back</button>
       <div class="vault-section code-readslice">
         ${head}
         ${virtueTop}
-        ${rules.map(codeReadRuleRow).join('')}
+        ${codeVirtueRuleRows(v.id)}
         ${codeReadEssays(why, manifest)}
         <button type="button" class="btn btn-primary code-readslice-done" data-cact="code-read-done">I've read it</button>
       </div>`;
@@ -4036,8 +4084,8 @@ function deleteCodeRule(id) {
 }
 function openCodeRuleSheet(rule, scope) {
   codeForm = rule
-    ? { kind: 'rule', id: rule.id, text: rule.text, scope: rule.scope, virtueIds: (rule.virtueIds || []).slice() }
-    : { kind: 'rule', id: null, text: '', scope: scope || 'public', virtueIds: [] };
+    ? { kind: 'rule', id: rule.id, text: rule.text, scope: rule.scope, virtueIds: (rule.virtueIds || []).slice(), primaryVirtueId: rule.primaryVirtueId || null }
+    : { kind: 'rule', id: null, text: '', scope: scope || 'public', virtueIds: [], primaryVirtueId: null };
   buildCodeRuleSheet();
   openCodeSheet();
   setTimeout(() => { const t = document.getElementById('code-rule-text'); if (t) t.focus(); }, 50);
@@ -4060,9 +4108,8 @@ function buildCodeRuleSheet() {
     </div>
     <div class="field">
       <label>Linked virtues (optional)</label>
-      <div class="code-rule-virtues" id="code-rule-virtues">
-        ${rotationVirtues().map(v => `<label class="code-rule-virtue-opt"><input type="checkbox" data-virtue="${escapeHtml(v.id)}"${(f.virtueIds || []).includes(v.id) ? ' checked' : ''}><span>${escapeHtml(v.name)}</span></label>`).join('')}
-      </div>
+      <div class="code-rule-virtues" id="code-rule-virtues"></div>
+      <div class="code-rule-virtues-hint">Check to link. Tap ★ to mark the one it's chiefly about (core). Unlinking a starred virtue clears the star.</div>
     </div>
     <div id="code-sheet-error" class="error-msg" hidden></div>
     <div class="form-actions">
@@ -4077,22 +4124,54 @@ function buildCodeRuleSheet() {
   document.getElementById('code-rule-save').addEventListener('click', saveCodeRuleForm);
   const del = document.getElementById('code-rule-delete');
   if (del) del.addEventListener('click', () => deleteCodeRule(f.id));
+  refreshRuleVirtueList();
+}
+// Live virtue picker: check to link, ★ to promote one to core (at most one).
+// Reads/writes codeForm.virtueIds + primaryVirtueId; re-renders in place so the
+// rule textarea keeps its value. Unchecking the starred virtue clears the star.
+function refreshRuleVirtueList() {
+  const box = document.getElementById('code-rule-virtues');
+  if (!box) return;
+  const f = codeForm;
+  box.innerHTML = rotationVirtues().map(v => {
+    const checked = (f.virtueIds || []).includes(v.id);
+    const isPrimary = checked && f.primaryVirtueId === v.id;
+    const star = checked
+      ? `<button type="button" class="code-virtue-star${isPrimary ? ' set' : ''}" data-star="${escapeHtml(v.id)}" aria-label="Mark ${escapeHtml(v.name)} as core" aria-pressed="${isPrimary ? 'true' : 'false'}">★</button>`
+      : '';
+    return `<div class="code-rule-virtue-opt">
+      <label class="code-rule-virtue-check"><input type="checkbox" data-virtue="${escapeHtml(v.id)}"${checked ? ' checked' : ''}><span>${escapeHtml(v.name)}</span></label>
+      ${star}
+    </div>`;
+  }).join('');
+  box.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.addEventListener('change', () => {
+    const id = cb.dataset.virtue;
+    if (cb.checked) { if (!f.virtueIds.includes(id)) f.virtueIds.push(id); }
+    else { f.virtueIds = f.virtueIds.filter(x => x !== id); if (f.primaryVirtueId === id) f.primaryVirtueId = null; }
+    refreshRuleVirtueList();
+  }));
+  box.querySelectorAll('[data-star]').forEach(btn => btn.addEventListener('click', () => {
+    const id = btn.dataset.star;
+    f.primaryVirtueId = (f.primaryVirtueId === id) ? null : id;   // toggle; at most one
+    refreshRuleVirtueList();
+  }));
 }
 function saveCodeRuleForm() {
   const f = codeForm;
   const errEl = document.getElementById('code-sheet-error');
   const text = (document.getElementById('code-rule-text').value || '').trim();
-  // Multi-select: collect checked virtue ids (0 = unassigned, valid).
-  const virtueIds = [...document.querySelectorAll('#code-rule-virtues input[type="checkbox"]:checked')]
-    .map(cb => cb.dataset.virtue).filter(v => typeof v === 'string' && v);
+  // virtueIds + primaryVirtueId come from codeForm (kept live by the picker).
+  const virtueIds = (f.virtueIds || []).filter(v => typeof v === 'string' && v);
+  // Constraint: primary MUST be one of this rule's own virtueIds, else null.
+  const primaryVirtueId = (f.primaryVirtueId && virtueIds.includes(f.primaryVirtueId)) ? f.primaryVirtueId : null;
   if (!text) { errEl.textContent = 'Write the rule.'; errEl.hidden = false; return; }
   const c = codeData();
   if (f.id) {
     const r = c.rules.find(x => x.id === f.id);
-    if (r) Object.assign(r, { text, scope: f.scope, virtueIds });
+    if (r) Object.assign(r, { text, scope: f.scope, virtueIds, primaryVirtueId });
   } else {
     const maxOrder = c.rules.filter(r => r.scope === f.scope).reduce((m, r) => Math.max(m, r.order | 0), -1);
-    c.rules.push({ id: uuid(), text, scope: f.scope, virtueIds, order: maxOrder + 1, createdAt: nowIso() });
+    c.rules.push({ id: uuid(), text, scope: f.scope, virtueIds, primaryVirtueId, order: maxOrder + 1, createdAt: nowIso() });
   }
   saveState(); render(); if (codeOverlay.classList.contains('open')) renderCode(); closeCodeSheet();
 }

@@ -1899,8 +1899,30 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
   display: flex; align-items: center; gap: 10px; min-height: 44px;
   padding: 6px 2px; cursor: pointer;
 }
+.code-rule-virtue-check { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; min-height: 44px; cursor: pointer; }
 .code-rule-virtue-opt input { width: 20px; height: 20px; flex-shrink: 0; }
-.code-rule-virtue-opt span { overflow-wrap: break-word; min-width: 0; }
+.code-rule-virtue-check span { overflow-wrap: break-word; min-width: 0; }
+/* Star to promote a checked virtue to core — separately tappable from the checkbox. */
+.code-virtue-star {
+  flex-shrink: 0; min-width: 44px; min-height: 44px; padding: 0 8px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: none; cursor: pointer;
+  font-size: 20px; line-height: 1; color: var(--text-tertiary);
+}
+.code-virtue-star.set { color: var(--accent); }
+.code-rule-virtues-hint { font-size: 11px; color: var(--text-tertiary); margin-top: 6px; line-height: 1.4; }
+
+/* Core vs also-serves on a rule row (virtue detail + recite card). The only
+   emphasis: star + accent scope line + body weight 500 for core; indent + muted
+   scope + secondary text for also-serves. No fills, no size step, weight caps 500. */
+.code-core-star { flex-shrink: 0; width: 16px; text-align: center; color: var(--accent); font-size: 12px; line-height: 1.6; }
+.code-core-star-empty { color: transparent; }   /* keeps also-serves body aligned under core body */
+.code-scope-core { color: var(--accent); }
+.code-scope-secondary { color: var(--text-tertiary); }
+.code-body-core { font-weight: 500; color: var(--text-primary); }
+.code-body-secondary { font-weight: 400; color: var(--text-secondary); }
+/* recite pre-reveal core count fragment */
+.code-recite-core { color: var(--accent); font-weight: 500; }
 .code-row-actions { display: flex; gap: 2px; flex-shrink: 0; }
 
 .code-virtue-item {
