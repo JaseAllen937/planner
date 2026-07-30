@@ -846,17 +846,38 @@ let state = loadState();
 
 const PREMERGE_BACKUP_KEY = 'agendaai_premerge_backup';
 
+// Self-contained blocking message (no styles.css classes, no overlay) shown when
+// this build is older than the stored data. Inline styles only so it renders even
+// if nothing else has initialised; readable and overflow-free at 320px.
+function haltForStaleBuild() {
+  try {
+    document.body.innerHTML =
+      '<div style="max-width:320px;margin:22vh auto 0;padding:0 20px;font-family:-apple-system,system-ui,sans-serif;text-align:center;color:#1c1c1e;">'
+      + '<div style="font-size:34px;line-height:1;margin-bottom:16px;">↻</div>'
+      + '<div style="font-size:17px;font-weight:600;line-height:1.4;">This device is running an old version of AgendaAI. Reload to update.</div>'
+      + '</div>';
+  } catch (e) { /* body not ready — the throw below still halts */ }
+}
+
 function loadState() {
   const raw = localStorage.getItem(STORAGE_KEY);
+  let parsed = null;
   if (raw) {
-    try {
-      const parsed = JSON.parse(raw);
-      if (parsed && parsed.meta && (parsed.meta.version >= 1 && parsed.meta.version <= SCHEMA_VERSION)) {
-        return ensureShape(parsed);
-      }
-    } catch (e) {
-      console.error('Failed to parse stored data', e);
-    }
+    try { parsed = JSON.parse(raw); }
+    catch (e) { console.error('Failed to parse stored data', e); parsed = null; }
+  }
+  const v = parsed && parsed.meta && parsed.meta.version;
+  // A blob from a NEWER build must NEVER be seeded over — that wipes real data
+  // unrecoverably on this device (fired 2026-07-24 and 2026-07-29). Refuse to
+  // start: leave localStorage untouched, no sync/push/write, show a message and
+  // halt. A reload fetches the new JS and fixes it.
+  if (typeof v === 'number' && isFinite(v) && v > SCHEMA_VERSION) {
+    haltForStaleBuild();
+    throw new Error('AgendaAI: stored data is schema v' + v + ', newer than this build (v' + SCHEMA_VERSION + '). Halting to protect data.');
+  }
+  // Accepted range -> migrate; too-low or malformed -> seed fresh (unchanged).
+  if (parsed && parsed.meta && v >= 1 && v <= SCHEMA_VERSION) {
+    return ensureShape(parsed);
   }
   return seedState();
 }
@@ -1224,10 +1245,14 @@ function ensureShape(s) {
   // is lost. NOTE: only code.rules[].virtueId changes — franklin.virtueSlips and
   // code.codeReads keep their own virtueId untouched.
   if ((s.meta.version || 1) < 17) {
+    // DEFENSIVE: a version gate is NOT proof the field is absent. A stale client
+    // can stamp an old meta.version onto already-migrated (virtueIds-bearing)
+    // records; an unconditional `r.virtueIds = r.virtueId ? [...] : []` then wipes
+    // real assignments (39 lost, 2026-07-29). Only fill when the array is missing.
     for (const r of s.code.rules) {
       if (!r || typeof r !== 'object') continue;
-      r.virtueIds = r.virtueId ? [r.virtueId] : [];
-      delete r.virtueId;
+      if (!Array.isArray(r.virtueIds)) r.virtueIds = r.virtueId ? [r.virtueId] : [];
+      if ('virtueId' in r) delete r.virtueId;
     }
     // Terminal write of the LATEST migration block reads the constant (it brings
     // a blob to the current version). When a v18 block is added, pin THIS back to
@@ -8973,6 +8998,13 @@ function mergeStates(localState, remoteState) {
   );
   if (!merged.meta) merged.meta = {};
   merged.meta.tombstones = tomb;
+  // Schema version is a monotonic marker, not user-edited content: take the MAX
+  // of both sides so a fresh-seed / stale-client blob can never drag it backwards
+  // and re-trigger an already-run migration on the next load (the 2026-07-29 loss
+  // path). meta ONLY — the per-collection union and merges below are untouched.
+  const _lv = (localState.meta && localState.meta.version) || 1;
+  const _rv = (remoteState.meta && remoteState.meta.version) || 1;
+  merged.meta.version = Math.max(_lv, _rv);
 
   // 2. id-bearing arrays: union by id, newer-record-wins, drop tombstoned.
   for (const col of MERGE_COLLECTIONS) {
