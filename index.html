@@ -174,7 +174,7 @@
       <h3>About</h3>
       <div class="settings-row">
         <div>Version</div>
-        <div class="meta" id="about-version">Phase 4 (v1)</div>
+        <div class="meta" id="about-version"></div>
       </div>
       <div class="settings-row">
         <div>Storage key</div>
@@ -571,7 +571,7 @@
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
-// Service worker registration (Phase 4 — PWA wrapper).
+// Service worker registration (PWA wrapper).
 // Lets the app install to iPhone home screen and work offline.
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -841,6 +841,10 @@ function initWheelPickers() {
 // Historical migration gates (if (version < 11) etc.) keep their hardcoded
 // numbers — those are facts about the past, not the current version.
 const SCHEMA_VERSION = 17;
+// Human-facing build tag shown in Settings and stamped into every export legend.
+// BUMP THIS TOGETHER WITH sw.js VERSION on every deploy — a stale tag is how a
+// rolled-back build went unnoticed for two days.
+const APP_VERSION = 'v87';
 
 let state = loadState();
 
@@ -3052,24 +3056,35 @@ function rotationVirtues() {
 // Focus virtue + cycle window, computed purely from date (never stored).
 // SELECTION indexes into rotationVirtues() (id-sorted), so `index`/`virtue`/
 // `nextVirtue` are the rotation sequence, not the display array order.
-function franklinCycleInfo() {
+// Focus-cycle breakdown for an EXPLICIT date — the one sequential rotation.
+// Pure in `ymd`: it never reads the clock, so the read gate can pass the
+// night-date (codeNightDate) and Franklin can pass today, sharing identical
+// arithmetic instead of duplicating (and drifting) it. Sequential advance from
+// anchorDate every cycleDays days, diff<0 clamped to 0, positive modulo — so a
+// virtue can never immediately follow itself.
+function franklinCycleForDate(ymd) {
   const f = franklinData();
   const seq = rotationVirtues();
   const n = seq.length;
-  const today = todayDate();
   const cycleDays = Math.max(1, f.cycleDays | 0);
   if (n === 0) {
-    return { index: 0, virtue: null, nextVirtue: null, cycleStart: today, cycleEnd: addDays(today, cycleDays), daysRemaining: cycleDays };
+    return { index: 0, virtue: null, nextVirtue: null, cycleStart: ymd, cycleEnd: addDays(ymd, cycleDays), daysRemaining: cycleDays };
   }
-  let diff = daysBetween(f.anchorDate, today);
-  if (!isFinite(diff) || diff < 0) diff = 0; // today before anchor -> first cycle
+  let diff = daysBetween(f.anchorDate, ymd);
+  if (!isFinite(diff) || diff < 0) diff = 0; // date before anchor -> first cycle
   const cycleIndex = Math.floor(diff / cycleDays);
   const index = ((cycleIndex % n) + n) % n;
   const cycleStart = addDays(f.anchorDate, cycleIndex * cycleDays);
   const cycleEnd = addDays(cycleStart, cycleDays); // exclusive
-  const daysRemaining = cycleDays - daysBetween(cycleStart, today);
+  const daysRemaining = cycleDays - daysBetween(cycleStart, ymd);
   return { index, virtue: seq[index], nextVirtue: seq[(index + 1) % n], cycleStart, cycleEnd, daysRemaining };
 }
+// The focus virtue for a given date (the read gate's source). Returns the virtue
+// object (has `.id`) or null when there are no virtues.
+function franklinVirtueForDate(ymd) { return franklinCycleForDate(ymd).virtue; }
+// Franklin card/stats: today's breakdown. Byte-identical to the pre-refactor
+// return value (same arithmetic, ymd = todayDate()).
+function franklinCycleInfo() { return franklinCycleForDate(todayDate()); }
 
 // Derived counts (event-log lengths — always integers).
 function tallyCount(tallyId) {
@@ -3184,7 +3199,7 @@ function deleteVirtue(id) {
   const linked = c.rules.filter(r => (r.virtueIds || []).includes(id)).length;
   const note = c.virtueNotes[id];
   const hasNote = !!(note && ((note.why || '').trim() || (note.manifest || '').trim()));
-  const msg = `Delete "${v.name}"?\n\nThis virtue has ${hasNote ? 'writing in My Code' : 'no writing'} and ${linked} linked rule${linked === 1 ? '' : 's'}. Its slip history and your writing will be KEPT but hidden; linked rules will be UNLINKED, not deleted. The virtue won't come back.`;
+  const msg = `Delete "${v.name}"?\n\nThis virtue has ${hasNote ? 'writing in My Code' : 'no writing'} and ${linked} linked rule${linked === 1 ? '' : 's'}. Its slip history is kept. Your why / how it manifests writing stays in your data but will no longer be visible anywhere in the app — copy it out first if you want to keep it. Linked rules are unlinked, not deleted. The virtue won't come back.`;
   if (!confirm(msg)) return;
   tombstone('franklin.virtues', id);                       // stays deleted across sync
   // Unlink ONLY this id from each rule; a rule serving other virtues keeps them
@@ -3781,9 +3796,10 @@ function mulberry32(seed) { return function() { let t = seed += 0x6D2B79F5;
 function seededShuffle(arr, seed) { const a = arr.slice(); const rnd = mulberry32(seed);
   for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
 
-// The nightly read slice is FULLY DECOUPLED from Franklin's focus cycle: each
-// night gets its own shuffled-full-pass virtue and a seeded-random rule from
-// that virtue's pool. franklinCycleInfo is not consulted here at all.
+// The nightly read slice's virtue IS the Franklin focus virtue for the
+// night-date — one sequential rotation, one dial (cycleDays). Rules are recited
+// on the same days their slips are tallied. The rule pick still uses a seeded
+// per-night draw over the virtue's pool (read-mode fallback), unchanged.
 function codeReadSlice() {
   const c = codeData();
   const orderedRules = [...codeRulesByScope('public'), ...codeRulesByScope('private')];
@@ -3791,16 +3807,16 @@ function codeReadSlice() {
   const n = seq.length;
   if (n === 0 && orderedRules.length === 0) return null; // nothing to read
 
-  // Nights since a FIXED epoch (deliberately independent of Franklin's
-  // anchorDate — the read cadence and the practice cycle are unrelated).
-  const nights = Math.max(0, daysBetween('2026-01-01', codeNightDate()));
-
-  // Virtue: one scrambled full pass per n nights, reshuffled each pass (seed =
-  // pass index), so every virtue appears exactly once per pass in random order.
-  // Edge: a pass boundary can coincidentally repeat the prior night's virtue —
-  // acceptable (still random-feeling, still complete within each pass).
-  const virtue = n ? seededShuffle(seq, Math.floor(nights / n))[nights % n] : null;
+  // Virtue = the Franklin focus virtue for the night-date (codeNightDate, so a
+  // pre-06:00 session still shows the night's virtue, not the new day's). The
+  // sequential walk holds each virtue cycleDays nights and can never repeat
+  // back-to-back. No shuffle; anchorDate/cycleDays drive it.
+  const virtue = franklinVirtueForDate(codeNightDate());
   const notes = (virtue && c.virtueNotes[virtue.id]) || null;
+
+  // Per-night deterministic seed for the read-mode single-rule pick — days since
+  // a fixed epoch, unrelated to the virtue rotation; both devices agree.
+  const nights = Math.max(0, daysBetween('2026-01-01', codeNightDate()));
 
   // Rules assigned to the night's virtue, in stable public-then-private order
   // (never shuffled) — both devices reveal in the same sequence. recite mode
@@ -4189,6 +4205,8 @@ function renderTopbar() {
 }
 
 function renderSettings() {
+  const verEl = document.getElementById('about-version');
+  if (verEl) verEl.textContent = `${APP_VERSION} · schema ${SCHEMA_VERSION}`;
   const el = document.getElementById('about-last-export');
   if (state.meta.last_export_at) {
     el.textContent = new Date(state.meta.last_export_at).toLocaleString();
@@ -4527,6 +4545,7 @@ function buildExportLegend(state) {
     derived: { collections, maps, scalars },
     conventions: {
       schemaVersion: SCHEMA_VERSION,
+      appVersion: APP_VERSION,
       exportedAt: nowIso(),
       dateFormat: 'YYYY-MM-DD',
       timeFormat: 'HH:MM 24h',
