@@ -2,7 +2,7 @@
 // BUMP THIS VERSION when you ship changes, otherwise the iPhone keeps the
 // old cached files forever. Bump APP_VERSION in index.html to the SAME value —
 // they must always match; APP_VERSION is what Settings and the export legend show.
-const VERSION = 'v88';
+const VERSION = 'v89';
 const CACHE = `agendaai-${VERSION}`;
 const ASSETS = [
   './',

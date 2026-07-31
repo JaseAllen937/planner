@@ -36,6 +36,7 @@
 <main>
   <section class="tab-view active" id="tab-today">
     <div id="banner-wrap"></div>
+    <div id="practising-card-wrap"></div>  <!-- current focus virtue + slip stepper -->
     <div id="three-day-wrap"></div>      <!-- "Next 3 days" — glance -->
     <div id="review-card-wrap"></div>    <!-- weekly review — reflect -->
     <div id="spaces-hub-wrap"></div>     <!-- do -->
@@ -844,7 +845,7 @@ const SCHEMA_VERSION = 17;
 // Human-facing build tag shown in Settings and stamped into every export legend.
 // BUMP THIS TOGETHER WITH sw.js VERSION on every deploy — a stale tag is how a
 // rolled-back build went unnoticed for two days.
-const APP_VERSION = 'v88';
+const APP_VERSION = 'v89';
 
 let state = loadState();
 
@@ -1897,6 +1898,43 @@ function todayFocusStats() {
   }
   const rate = totalHours > 0 ? totalLapses / totalHours : null;
   return { count: sessions.length, totalHours, totalLapses, rate };
+}
+
+// Practising card — first content on Today. Shows the current focus virtue, its
+// definition, this cycle's slip count and a stepper. Reuses franklinCycleInfo /
+// addVirtueSlip / removeVirtueSlipInCycle / virtueCycleSlips (slips are
+// calendar-dated via todayDate, so franklinCycleInfo — which reads todayDate —
+// is correct here). Own handler + data-slip attrs so it never collides with the
+// Franklin overlay's data-fact delegation.
+function renderPractisingCard() {
+  const wrap = document.getElementById('practising-card-wrap');
+  if (!wrap) return;
+  const ci = franklinCycleInfo();
+  const virtue = ci.virtue;
+  if (!virtue) { wrap.innerHTML = ''; return; }   // no virtues -> render nothing
+  const count = virtueCycleSlips(virtue.id, ci.cycleStart, ci.cycleEnd);
+  const def = (virtue.definition || '').trim();    // 5 virtues have none -> omit the row
+  const countText = count === 0 ? 'No slips this cycle' : `${count} slip${count === 1 ? '' : 's'} this cycle`;
+  const minus = count > 0
+    ? `<button type="button" class="prac-step prac-step-minus" data-slip="dec" data-id="${escapeHtml(virtue.id)}" aria-label="Remove a slip">−</button>`
+    : '';   // absent (not disabled) at zero — nothing to mis-tap
+  wrap.innerHTML = `
+    <div class="prac-card">
+      <div class="prac-label">PRACTISING</div>
+      <div class="prac-name">${escapeHtml(virtue.name)}</div>
+      ${def ? `<div class="prac-def">${escapeHtml(def)}</div>` : ''}
+      <div class="prac-foot">
+        <span class="prac-count">${escapeHtml(countText)}</span>
+        <span class="prac-steps">
+          ${minus}
+          <button type="button" class="prac-step prac-step-plus" data-slip="inc" data-id="${escapeHtml(virtue.id)}" aria-label="Log a slip">+</button>
+        </span>
+      </div>
+    </div>`;
+  wrap.querySelectorAll('[data-slip]').forEach(btn => btn.addEventListener('click', () => {
+    if (btn.dataset.slip === 'inc') addVirtueSlip(btn.dataset.id);
+    else removeVirtueSlipInCycle(btn.dataset.id);
+  }));
 }
 
 function renderFocusCard() {
@@ -3109,6 +3147,7 @@ function removeTallyEvent(tallyId) {
   if (!evs.length) return; // floor at none
   evs.sort((a, b) => String(b.at).localeCompare(String(a.at)));
   const rm = evs[0].id;
+  tombstone('franklin.tallyEvents', rm);   // stays deleted across sync (v85 lesson, undo paths)
   f.tallyEvents = f.tallyEvents.filter(e => e.id !== rm);
   saveState(); render();
 }
@@ -3123,6 +3162,7 @@ function removeVirtueSlipInCycle(virtueId) {
   if (!evs.length) return; // floor at none, scoped to current cycle
   evs.sort((a, b) => String(b.at).localeCompare(String(a.at)));
   const rm = evs[0].id;
+  tombstone('franklin.virtueSlips', rm);   // stays deleted across sync (v85 lesson, undo paths)
   f.virtueSlips = f.virtueSlips.filter(e => e.id !== rm);
   saveState(); render();
 }
@@ -5826,6 +5866,7 @@ function render() {
   lastRenderDate = todayDate();
   renderTopbar();
   renderBanner();
+  renderPractisingCard();
   renderFocusCard();
   renderCodeCard();
   renderVaultCard();
