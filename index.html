@@ -115,6 +115,14 @@
           </div>
           <button class="btn" id="account-signout-btn">Sign out</button>
         </div>
+        <div class="settings-row">
+          <div>
+            <div>Sync now</div>
+            <div class="meta" id="sync-now-status"></div>
+          </div>
+          <button class="btn" id="sync-now-btn">Sync</button>
+        </div>
+        <div class="meta sync-stale-line" id="sync-stale-line" hidden></div>
       </div>
 
       <div class="meta sync-status-line" id="sync-status">Not signed in</div>
@@ -845,7 +853,7 @@ const SCHEMA_VERSION = 17;
 // Human-facing build tag shown in Settings and stamped into every export legend.
 // BUMP THIS TOGETHER WITH sw.js VERSION on every deploy — a stale tag is how a
 // rolled-back build went unnoticed for two days.
-const APP_VERSION = 'v89';
+const APP_VERSION = 'v90';
 
 let state = loadState();
 
@@ -9340,8 +9348,12 @@ async function supaPush(blob) {
 
 // ---- Sync orchestration ----
 
-let _syncTimer = null;
-let _pendingPush = false;
+let _syncTimer = null;       // debounce timer (saveState -> push)
+let _retryTimer = null;      // backoff retry timer after a failed push
+let _pendingPush = false;    // a push is scheduled OR in flight — the pull guard blocks on THIS
+let _pushFailed = false;     // the last push attempt failed (drives retry / online recovery / status)
+let _retryCount = 0;         // index into RETRY_DELAYS
+const RETRY_DELAYS = [5000, 15000, 60000]; // 5s, 15s, 60s, then give up (status stays error)
 let _syncStatus = 'idle'; // 'idle' | 'saving' | 'synced' | 'offline' | 'error'
 
 function setSyncStatus(s) {
@@ -9349,25 +9361,56 @@ function setSyncStatus(s) {
   renderSyncStatus();
 }
 
+// Debounced push scheduler. A fresh saveState supersedes any pending retry and
+// resets the backoff — the user's newest edit starts a clean attempt sequence.
 function triggerSync() {
-  // Always called from saveState. Silent no-op when not signed in / not configured.
   if (!getSession() || !supaConfigured()) return;
+  if (_retryTimer) { clearTimeout(_retryTimer); _retryTimer = null; }
+  _retryCount = 0;
+  _schedulePush(1500);
+}
+function _schedulePush(delay) {
   _pendingPush = true;
   if (_syncTimer) clearTimeout(_syncTimer);
   setSyncStatus('saving');
-  _syncTimer = setTimeout(async () => {
-    _syncTimer = null;
-    if (!navigator.onLine) { setSyncStatus('offline'); return; }
-    try {
-      await supaPush(state);
-      _pendingPush = false;
-      localStorage.setItem(SYNCED_AT_KEY, nowIso());
-      setSyncStatus('synced');
-    } catch (e) {
-      console.warn('Sync push failed:', e);
-      setSyncStatus(navigator.onLine ? 'error' : 'offline');
-    }
-  }, 1500);
+  _syncTimer = setTimeout(_doPush, delay);
+}
+// One push attempt. Clears _pendingPush on EVERY exit (success, failure, offline)
+// so a failed/aborted push can never wedge the pull guard for the life of the
+// page — the v89 deadlock. Failure is recorded in _pushFailed, kept distinct
+// from in-flight, and a backoff retry is scheduled.
+async function _doPush() {
+  _syncTimer = null;
+  if (!navigator.onLine) {
+    _pendingPush = false; _pushFailed = true;   // not in flight; online listener recovers
+    setSyncStatus('offline');
+    return;
+  }
+  try {
+    await supaPush(state);
+    _pendingPush = false; _pushFailed = false; _retryCount = 0;
+    localStorage.setItem(SYNCED_AT_KEY, nowIso());
+    setSyncStatus('synced');
+  } catch (e) {
+    console.warn('Sync push failed:', e);
+    _pendingPush = false;   // <-- the fix: no longer in flight, pulls are unblocked
+    _pushFailed = true;
+    setSyncStatus(navigator.onLine ? 'error' : 'offline');
+    _scheduleRetry();
+  }
+}
+// Push-only backoff retry. Never pulls, never merges, never touches `state`.
+function _scheduleRetry() {
+  if (_retryCount >= RETRY_DELAYS.length) return;   // gave up; status stays error
+  const delay = RETRY_DELAYS[_retryCount++];
+  if (_retryTimer) clearTimeout(_retryTimer);
+  _retryTimer = setTimeout(() => {
+    _retryTimer = null;
+    if (!getSession() || !supaConfigured() || !_pushFailed) return;
+    _pendingPush = true;
+    setSyncStatus('saving');
+    _doPush();
+  }, delay);
 }
 
 async function initialSync() {
@@ -9497,10 +9540,17 @@ async function pullOnReturn() {
   }
 }
 
-// Retry pending sync when connection comes back.
+// Reconnect recovery — the case iOS produces most often: the app is
+// backgrounded, the in-flight fetch dies, the network returns. One push attempt
+// per `online` event (never a loop); nothing outstanding -> nothing happens.
 window.addEventListener('online', () => {
-  if (getSession() && _pendingPush) triggerSync();
+  if (!getSession() || !supaConfigured()) return;
+  if (!_pushFailed && !_pendingPush) return;
+  if (_retryTimer) { clearTimeout(_retryTimer); _retryTimer = null; }
+  _retryCount = 0;
+  _schedulePush(0);
 });
+window.addEventListener('offline', () => { if (getSession()) setSyncStatus('offline'); });
 
 // Re-render when the app becomes visible on a NEW day. Without this, a PWA
 // resumed after midnight shows yesterday's screen (due items, timeline, focus
@@ -9551,6 +9601,69 @@ function renderSyncStatus() {
   if (_syncStatus === 'error')   { el.textContent = 'Sync error – will retry'; return; }
   const at = localStorage.getItem(SYNCED_AT_KEY);
   el.textContent = at ? `Synced · ${relativeSince(at)}` : 'Not yet synced';
+  renderStaleSyncLine();
+}
+
+// Account & Backup ONLY: a plain line naming the last successful sync, shown when
+// the last push failed OR the last success is >24h old while signed in. No badge,
+// toast or notification, and nothing on any other tab — a fact where the user
+// would already be looking, so silent multi-week divergence can't hide.
+function renderStaleSyncLine() {
+  const el = document.getElementById('sync-stale-line');
+  if (!el) return;
+  const session = getSession();
+  const at = localStorage.getItem(SYNCED_AT_KEY);
+  const stale = at ? (Date.now() - new Date(at).getTime() > 24 * 60 * 60 * 1000) : true;
+  if (session && supaConfigured() && (_pushFailed || stale)) {
+    el.textContent = at ? `Last synced ${relativeSince(at)}` : 'Not yet synced on this device';
+    el.hidden = false;
+  } else {
+    el.textContent = '';
+    el.hidden = true;
+  }
+}
+
+// Manual reconcile — the escape hatch. Pushes outstanding local changes, then
+// pulls + merges (saveStateLocalOnly, render). Bypasses RETURN_PULL_MIN_MS: an
+// explicit request is never a returning-to-app pull. A pre-merge failure leaves
+// state and localStorage untouched.
+async function syncNow() {
+  if (!getSession() || !supaConfigured()) return;
+  const btn = document.getElementById('sync-now-btn');
+  const st  = document.getElementById('sync-now-status');
+  if (btn) btn.disabled = true;
+  if (st) st.textContent = 'Syncing…';
+  try {
+    if (!navigator.onLine) throw new Error('offline');
+    // Push any outstanding local change first, cancelling scheduled/retry pushes.
+    if (_pendingPush || _pushFailed) {
+      if (_syncTimer)  { clearTimeout(_syncTimer);  _syncTimer = null; }
+      if (_retryTimer) { clearTimeout(_retryTimer); _retryTimer = null; }
+      await supaPush(state);
+      _pendingPush = false; _pushFailed = false; _retryCount = 0;
+    }
+    const remote = await supaPull();   // throws here -> state untouched
+    if (remote && remote.data) {
+      state = mergeStates(state, remote.data);
+      saveStateLocalOnly();            // pull path: never bumps updated_at, never pushes
+      render();
+      // Converge the cloud to the merged truth; a failure here just marks the
+      // push for retry and does NOT roll back the (correct) merged local state.
+      try { await supaPush(state); _pushFailed = false; }
+      catch (e) { console.warn('Sync now push-back failed:', e); _pushFailed = true; _scheduleRetry(); }
+    }
+    localStorage.setItem(SYNCED_AT_KEY, nowIso());
+    setSyncStatus('synced');
+    if (st) st.textContent = 'Synced';
+  } catch (e) {
+    console.warn('Sync now failed:', e);
+    _pushFailed = true;
+    setSyncStatus(navigator.onLine ? 'error' : 'offline');
+    if (st) st.textContent = navigator.onLine ? 'Sync failed' : 'Offline';
+  } finally {
+    if (btn) btn.disabled = false;
+    renderSyncStatus();
+  }
 }
 
 // Periodically refresh the "Synced · Xm ago" string.
@@ -9816,6 +9929,9 @@ document.getElementById('reset-btn').addEventListener('click', resetData);
     if (!confirm('Sign out? Local data stays on this device.')) return;
     supaSignOut();
   });
+
+  const syncNowBtn = document.getElementById('sync-now-btn');
+  if (syncNowBtn) syncNowBtn.addEventListener('click', syncNow);
 })();
 
 // Item form: Someday + All-day toggles, priority selector
