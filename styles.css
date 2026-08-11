@@ -485,6 +485,22 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
   margin: 0 16px;
   max-height: 88vh;
 }
+/* Dismiss control for the morning popup — the explicit exit so a blocking modal
+   can never hide the recovery surface (Settings / Sync now / Import / Export). */
+.mc-close-btn {
+  position: absolute;
+  top: 8px; right: 8px;
+  width: 44px; height: 44px;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0; margin: 0;
+  background: transparent; border: none;
+  color: var(--text-tertiary);
+  font-size: 28px; line-height: 1;
+  cursor: pointer;
+  border-radius: 999px;
+  z-index: 2;
+}
+.mc-close-btn:active { color: var(--text-secondary); }
 
 .scale {
   display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px;

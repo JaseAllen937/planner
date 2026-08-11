@@ -207,6 +207,7 @@
 
 <div class="modal modal-blocking" id="morning-modal" role="dialog" aria-modal="true">
   <div class="modal-panel">
+    <button type="button" class="mc-close-btn" id="mc-close-btn" aria-label="Close">&times;</button>
     <h2>Good morning</h2>
     <div class="popup-meta">Log last night's sleep before starting your day.</div>
 
@@ -853,7 +854,7 @@ const SCHEMA_VERSION = 17;
 // Human-facing build tag shown in Settings and stamped into every export legend.
 // BUMP THIS TOGETHER WITH sw.js VERSION on every deploy — a stale tag is how a
 // rolled-back build went unnoticed for two days.
-const APP_VERSION = 'v90';
+const APP_VERSION = 'v91';
 
 let state = loadState();
 
@@ -1828,9 +1829,30 @@ function hideMorningPopup() {
   document.getElementById('morning-modal').classList.remove('open');
 }
 
+// Transient, in-memory only — the todayDate() the popup was dismissed for.
+// NEVER stored, synced, or placed in `state`; a reload legitimately resets it.
+// It suppresses RE-OPENING only, and only for the current day.
+let morningDismissedFor = null;
+
+// User closed the popup by hand (the × control). Setting the flag keeps the 60s
+// poll from re-opening it today; writes NOTHING — a skipped morning log is a
+// fact, not a debt.
+function dismissMorningPopup() {
+  morningDismissedFor = todayDate();
+  hideMorningPopup();
+}
+
 function maybeShowMorningPopup() {
-  if (shouldShowMorningPopup()) showMorningPopup();
-  else hideMorningPopup();
+  if (shouldShowMorningPopup()) {
+    // Suppress opening only for the day it was dismissed. A new day clears it
+    // implicitly (the key no longer matches todayDate()).
+    if (morningDismissedFor === todayDate()) return;
+    showMorningPopup();
+  } else {
+    // Condition satisfied (e.g. a sync just supplied today's wake_time) — always
+    // close, regardless of the dismiss flag. The flag never keeps it alive.
+    hideMorningPopup();
+  }
 }
 
 function refreshScale(selector, value) {
@@ -9431,6 +9453,7 @@ async function initialSync() {
       state = merged;
       saveStateLocalOnly();
       render();
+      maybeShowMorningPopup();   // merged data may now hold today's wake_time -> close the popup
       // Push the merged truth up once so the cloud converges to it.
       await supaPush(state);
     }
@@ -9534,6 +9557,7 @@ async function pullOnReturn() {
     state = merged;
     saveStateLocalOnly();
     render();
+    maybeShowMorningPopup();   // merged data may now hold today's wake_time -> close the popup
     setSyncStatus('synced');
   } catch (e) {
     console.warn('Return pull failed:', e);       // silent — boot sync still covers us
@@ -9647,6 +9671,7 @@ async function syncNow() {
       state = mergeStates(state, remote.data);
       saveStateLocalOnly();            // pull path: never bumps updated_at, never pushes
       render();
+      maybeShowMorningPopup();         // merged data may now hold today's wake_time -> close the popup
       // Converge the cloud to the merged truth; a failure here just marks the
       // push for retry and does NOT roll back the (correct) merged local state.
       try { await supaPush(state); _pushFailed = false; }
@@ -9964,6 +9989,7 @@ document.querySelectorAll('#mc-flags .flag-chip').forEach(b => {
   });
 });
 document.getElementById('mc-submit-btn').addEventListener('click', submitMorningPopup);
+document.getElementById('mc-close-btn').addEventListener('click', dismissMorningPopup);
 
 // Calendar nav
 document.getElementById('cal-prev').addEventListener('click', () => shiftCalendarMonth(-1));
