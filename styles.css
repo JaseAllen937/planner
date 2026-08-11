@@ -3080,15 +3080,6 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 /* ---- People ---- */
 .people-empty { font-size: 13px; color: var(--text-tertiary); padding: 8px 0; line-height: 1.5; }
 .people-list { display: flex; flex-direction: column; }
-.people-row {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  padding: 13px 0; border-top: 1px solid var(--separator); cursor: pointer;
-}
-.people-row:first-child { border-top: none; }
-.people-row-name { font-size: 15px; font-weight: 600; color: var(--text-primary); min-width: 0; overflow-wrap: anywhere; }
-.people-row-threads { font-weight: 400; color: var(--text-tertiary); font-size: 13px; }
-/* Days-since — plain neutral mono number. NEVER danger/red, whatever the value. */
-.people-row-days { flex-shrink: 0; font-family: var(--font-mono); font-feature-settings: var(--num); font-size: 13px; color: var(--text-secondary); }
 
 /* Detail header */
 .people-head { display: flex; align-items: center; gap: 12px; }
