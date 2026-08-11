@@ -3133,6 +3133,42 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 .people-card-threads { font-size: 11px; color: var(--text-tertiary); }
 .people-card-threads-open { color: var(--accent); font-weight: 600; }
 
+/* v92 list → stacked rows (layout A: days top-right, controls bottom-right). */
+.people-list { display: flex; flex-direction: column; gap: 8px; }
+.people-row {
+  background: var(--card); border: 1px solid var(--separator);
+  border-radius: var(--r-card); padding: 12px 14px; cursor: pointer;
+}
+.people-row-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.people-row-name { font-size: 16px; font-weight: 500; color: var(--text-primary); overflow-wrap: anywhere; min-width: 0; }
+.people-row-days { flex-shrink: 0; font-family: var(--font-mono); font-feature-settings: var(--num); font-size: 13px; color: var(--text-secondary); }
+.people-row-about { font-size: 13px; line-height: 1.4; color: var(--text-secondary); margin-top: 3px; overflow-wrap: anywhere; }
+.people-row-note  { font-size: 13px; line-height: 1.4; color: var(--text-tertiary); margin-top: 3px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.people-row-controls { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 10px; }
+.people-row-btn {
+  min-width: 44px; min-height: 44px; padding: 0 16px;
+  border: 1px solid var(--separator); border-radius: var(--r-pill);
+  background: var(--surface-inset); color: var(--text-primary);
+  font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.people-row-btn-saw { background: var(--accent); color: #fff; border-color: transparent; }
+
+/* v92 detail: about line under the name; history body holds recap + remember. */
+.people-head-about { font-size: 13px; color: var(--text-secondary); margin-top: 2px; overflow-wrap: anywhere; }
+.people-hist-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.people-hist-remember { font-size: 13px; line-height: 1.4; color: var(--text-secondary); overflow-wrap: anywhere; white-space: pre-wrap; }
+.people-hist-bare { font-size: 13px; color: var(--text-tertiary); font-style: italic; }
+.people-sheet-sub { font-size: 13px; color: var(--text-secondary); margin: -4px 0 4px; }
+
+/* v92 review Q6: the week's conversations, then the prose box. */
+.review-social-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 8px; }
+.review-social-entry { border-left: 2px solid var(--separator); padding-left: 10px; }
+.review-social-head { font-size: 13px; font-weight: 600; color: var(--text-primary); overflow-wrap: anywhere; }
+.review-social-recap { font-size: 13px; line-height: 1.4; color: var(--text-secondary); margin-top: 2px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.review-social-note  { font-size: 13px; line-height: 1.4; color: var(--text-tertiary); margin-top: 2px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.review-social-count { font-size: 12px; color: var(--text-tertiary); margin-bottom: 8px; }
+.review-social-empty { font-size: 13px; color: var(--text-secondary); margin-bottom: 8px; }
+
 /* Detail → profile-first: slim header band, then the three profile panels
    spread across the full width (single column on phones). */
 .people-header-band {

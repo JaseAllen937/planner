@@ -854,7 +854,7 @@ const SCHEMA_VERSION = 17;
 // Human-facing build tag shown in Settings and stamped into every export legend.
 // BUMP THIS TOGETHER WITH sw.js VERSION on every deploy — a stale tag is how a
 // rolled-back build went unnoticed for two days.
-const APP_VERSION = 'v91';
+const APP_VERSION = 'v92';
 
 let state = loadState();
 
@@ -1253,6 +1253,27 @@ function ensureShape(s) {
     s.meta.version = 16;
   }
   if (!s.personNotes || typeof s.personNotes !== 'object') s.personNotes = {};
+
+  // ---- v92: People simplification. The three-field profile stops being a
+  // capture surface; a person is now a name plus a single `about` line. The
+  // writing already in tag / personNotes.who / personNotes.cares must NOT be
+  // orphaned (the mistake made with virtue essays). ALWAYS-RUN, DEFENSIVE
+  // (check the field, not the version): fold tag, then who, then cares into
+  // `about` — but ONLY when about is empty, and NEVER overwrite an edited about.
+  // personNotes and tag are LEFT in storage untouched (a future build removes
+  // them once this has been lived with). Idempotent: a non-empty about
+  // short-circuits, so a second run is byte-identical.
+  for (const p of (Array.isArray(s.people) ? s.people : [])) {
+    if (!p || !p.id) continue;
+    if ((p.about || '').trim()) continue;                    // never overwrite non-empty about
+    const n = (s.personNotes && s.personNotes[p.id]) || {};
+    const composed = [p.tag, n.who, n.cares]
+      .map(x => (x == null ? '' : String(x)).trim())
+      .filter(Boolean)
+      .join(' · ')
+      .trim();
+    if (composed) p.about = composed;                        // only when there is something to fold
+  }
 
   // ---- v16 -> v17: a rule serves ONE OR MORE virtues. Single `virtueId`
   // becomes `virtueIds` (array). All live records hold null, so no assignment
@@ -5169,7 +5190,6 @@ const PERSON_NOTE_FIELDS = [
 function findPerson(id) { return peopleList().find(p => p.id === id) || null; }
 function contactsForPerson(id) { return contactsList().filter(c => c.personId === id); }
 function threadsForPerson(id)  { return threadsList().filter(t => t.personId === id); }
-function openThreadsForPerson(id) { return threadsForPerson(id).filter(t => !t.done); }
 function lastContactDate(id) {
   const cs = contactsForPerson(id);
   if (!cs.length) return null;
@@ -5178,6 +5198,17 @@ function lastContactDate(id) {
 function daysSinceContact(dateYmd) {
   if (!dateYmd) return null;
   return Math.max(0, daysBetween(dateYmd, todayDate()));
+}
+// The single most recent contact for a person: latest date, ties broken by
+// insertion time `at`. null when none. Used by the list line and by Undo — both
+// must agree on which contact "the most recent" is.
+function mostRecentContact(id) {
+  const cs = contactsForPerson(id).filter(c => c && c.date);
+  if (!cs.length) return null;
+  return cs.slice().sort((a, b) => {
+    if (a.date !== b.date) return String(a.date).localeCompare(String(b.date));
+    return String(a.at || '').localeCompare(String(b.at || ''));
+  }).slice(-1)[0];
 }
 // Longest silence first; never-contacted (null) sorts above all. Name breaks ties.
 function peopleSorted() {
@@ -5239,67 +5270,65 @@ function renderPeopleList(body) {
     body.innerHTML = `<div class="vault-section">${head}<div class="people-empty">Add the people you want to keep up with.</div></div>`;
     return;
   }
-  const cards = people.map(p => {
+  // Layout A — name + about + most-recent note; days-since top-right; Undo then
+  // Saw bottom-right. No scores, streaks, colour or "overdue": days-since is a
+  // plain number and the sort order is the only pressure (law 4).
+  const rows = people.map(p => {
     const last = lastContactDate(p.id);
-    const open = openThreadsForPerson(p.id).length;
     const daysHtml = last == null ? 'never' : `${daysSinceContact(last)}d`;
-    const initial = ((p.name || '?').trim().charAt(0) || '?').toUpperCase();
-    const tag = (p.tag || '').trim();
-    const who = (personNoteFor(p.id).who || '').trim();
-    const whoShort = who.length > 60 ? who.slice(0, 60) + '…' : who;
-    // Description line: tag first (what they are to you), else the who clamp,
-    // else the empty state.
-    const descHtml = tag
-      ? `<div class="people-card-desc people-card-tag">${escapeHtml(tag)}</div>`
-      : who
-        ? `<div class="people-card-desc">${escapeHtml(whoShort)}</div>`
-        : `<div class="people-card-desc people-card-desc-empty">No description yet</div>`;
-    const threadsHtml = open
-      ? `<div class="people-card-threads people-card-threads-open">${open} open thread${open === 1 ? '' : 's'}</div>`
-      : `<div class="people-card-threads">No open threads</div>`;
+    const about = (p.about || '').trim();
+    const recent = mostRecentContact(p.id);
+    const note = recent ? (recent.note || '').trim() : '';
+    const aboutHtml = about ? `<div class="people-row-about">${escapeHtml(about)}</div>` : '';
+    const noteHtml  = note  ? `<div class="people-row-note">${escapeHtml(note)}</div>` : '';
+    // Undo is ABSENT from the DOM (not disabled) when there is no logged contact
+    // — nothing to mis-tap. Same pattern as v89's practising-card minus.
+    const undoBtn = recent
+      ? `<button type="button" class="people-row-btn" data-pact="undo-contact" data-id="${escapeHtml(p.id)}">Undo</button>`
+      : '';
     return `
-      <div class="people-card" data-pact="open-person" data-id="${escapeHtml(p.id)}">
-        <div class="people-card-top">
-          <span class="people-avatar people-card-avatar" aria-hidden="true">${escapeHtml(initial)}</span>
-          <span class="people-card-days">${daysHtml}</span>
+      <div class="people-row" data-pact="open-person" data-id="${escapeHtml(p.id)}">
+        <div class="people-row-top">
+          <span class="people-row-name">${escapeHtml(p.name)}</span>
+          <span class="people-row-days">${escapeHtml(daysHtml)}</span>
         </div>
-        <div class="people-card-name">${escapeHtml(p.name)}</div>
-        ${descHtml}
-        ${threadsHtml}
+        ${aboutHtml}
+        ${noteHtml}
+        <div class="people-row-controls">
+          ${undoBtn}
+          <button type="button" class="people-row-btn people-row-btn-saw" data-pact="saw-person" data-id="${escapeHtml(p.id)}">Saw</button>
+        </div>
       </div>`;
   }).join('');
-  body.innerHTML = `<div class="vault-section">${head}<div class="people-grid">${cards}</div></div>`;
+  body.innerHTML = `<div class="vault-section">${head}<div class="people-list">${rows}</div></div>`;
 }
 
-// The briefing — section order IS the design.
+// The briefing — name + about, one-tap log, then history (newest first).
 function renderPersonDetail(body, p) {
   const last = lastContactDate(p.id);
   const initial = ((p.name || '?').trim().charAt(0) || '?').toUpperCase();
   const headSub = last == null
     ? 'never talked — log your first conversation'
     : `last talked ${daysSinceContact(last)}d ago · ${goalsMonthDay(last)}`;
+  const about = (p.about || '').trim();
 
-  // 2. Open threads — bring these up (oldest first). Omitted entirely when none.
-  const openT = openThreadsForPerson(p.id).slice().sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
-  const threadsBlock = openT.length ? `
-    <div class="people-threads">
-      <div class="people-threads-label">Open threads — bring these up</div>
-      ${openT.map(t => `
-        <div class="people-thread">
-          <button type="button" class="people-thread-check" data-pact="close-thread" data-id="${escapeHtml(t.id)}" aria-label="Close thread"><span class="people-thread-dot"></span></button>
-          <span class="people-thread-text">${escapeHtml(t.text)}</span>
-        </div>`).join('')}
-      <button type="button" class="people-thread-add" data-pact="add-thread" data-id="${escapeHtml(p.id)}">+ Add thread</button>
-    </div>` : '';
-
-  // 5. History — newest first, capped at 15 with "· N earlier".
+  // History — newest first, capped at 15 with "· N earlier". Each row shows the
+  // recap ("what we talked about") and, if present, the "remember" note.
   const cs = contactsForPerson(p.id).slice().sort((a, b) => String(b.date).localeCompare(String(a.date)));
   const CAP = 15;
   const shown = cs.slice(0, CAP);
   const moreN = cs.length - shown.length;
+  const histRow = c => {
+    const recap = (c.recap || '').trim();
+    const note  = (c.note  || '').trim();
+    const parts = [];
+    if (recap) parts.push(`<div class="people-hist-note">${escapeHtml(recap)}</div>`);
+    if (note)  parts.push(`<div class="people-hist-remember">Remember: ${escapeHtml(note)}</div>`);
+    const bodyHtml = parts.length ? parts.join('') : `<span class="people-hist-bare">logged</span>`;
+    return `<div class="people-hist-row"><span class="people-hist-date">${escapeHtml(goalsMonthDay(c.date))}</span><span class="people-hist-body">${bodyHtml}</span></div>`;
+  };
   const historyHtml = shown.length
-    ? shown.map(c => `<div class="people-hist-row"><span class="people-hist-date">${escapeHtml(goalsMonthDay(c.date))}</span>${c.note ? `<span class="people-hist-note">${escapeHtml(c.note)}</span>` : ''}</div>`).join('')
-      + (moreN > 0 ? `<div class="people-hist-more">· ${moreN} earlier</div>` : '')
+    ? shown.map(histRow).join('') + (moreN > 0 ? `<div class="people-hist-more">· ${moreN} earlier</div>` : '')
     : `<div class="people-empty">No conversations logged yet.</div>`;
 
   body.innerHTML = `
@@ -5307,36 +5336,19 @@ function renderPersonDetail(body, p) {
       <div class="people-avatar" aria-hidden="true">${escapeHtml(initial)}</div>
       <div class="people-head-text">
         <div class="people-head-name">${escapeHtml(p.name)}</div>
-        ${p.tag ? `<div class="people-head-tag">${escapeHtml(p.tag)}</div>` : ''}
+        ${about ? `<div class="people-head-about">${escapeHtml(about)}</div>` : ''}
         <div class="people-head-sub">${escapeHtml(headSub)}</div>
       </div>
       <span class="people-head-actions">
-        <button type="button" class="space-arrow" data-pact="rename-person" data-id="${escapeHtml(p.id)}" aria-label="Rename">✎</button>
+        <button type="button" class="space-arrow" data-pact="rename-person" data-id="${escapeHtml(p.id)}" aria-label="Edit">✎</button>
         <button type="button" class="space-arrow" data-pact="delete-person" data-id="${escapeHtml(p.id)}" aria-label="Delete">✕</button>
       </span>
     </div>
-    ${threadsBlock}
-    <div class="people-profile-grid">
-      ${PERSON_NOTE_FIELDS.map(f => `
-        <div class="vault-section people-profile-panel">
-          <label class="people-about-label" for="person-note-${f.key}">${escapeHtml(f.label)}</label>
-          <textarea class="code-textarea people-about" id="person-note-${f.key}" placeholder="${escapeHtml(f.ph)}">${escapeHtml(personNoteFor(p.id)[f.key] || '')}</textarea>
-        </div>`).join('')}
-    </div>
-    <button type="button" class="btn btn-primary people-log-btn" data-pact="log-convo" data-id="${escapeHtml(p.id)}">Log conversation</button>
+    <button type="button" class="btn btn-primary people-log-btn" data-pact="saw-person" data-id="${escapeHtml(p.id)}">Saw ${escapeHtml(p.name)} today</button>
     <div class="vault-section">
       <div class="vault-section-head"><span class="vault-section-title">History</span></div>
       ${historyHtml}
     </div>`;
-
-  // Each field: save-on-blur, autogrow on input, visibility-safe initial sizing.
-  PERSON_NOTE_FIELDS.forEach(f => {
-    const el = document.getElementById('person-note-' + f.key);
-    if (!el) return;
-    el.addEventListener('blur', () => setPersonNote(p.id, f.key, el.value));
-    el.addEventListener('input', () => autoGrowGoalWhy(el));
-    requestAnimationFrame(() => autoGrowGoalWhy(el));
-  });
 }
 
 // Field-wise write: only rewrites the one field; other fields on the record and
@@ -5358,9 +5370,8 @@ function onPeopleBodyClick(e) {
   else if (act === 'open-person')   { peopleSelectedId = id; peopleView = 'detail'; renderPeople(); }
   else if (act === 'rename-person') renamePerson(id);
   else if (act === 'delete-person') deletePerson(id);
-  else if (act === 'close-thread')  closeThread(id);
-  else if (act === 'add-thread')    addThread(id);
-  else if (act === 'log-convo')     openLogSheet(id);
+  else if (act === 'saw-person')    sawPerson(id);
+  else if (act === 'undo-contact')  undoContact(id);
 }
 
 // ---- Mutations (each: mutate -> saveState -> render) ----
@@ -5377,8 +5388,8 @@ function openPersonSheet(id) {
     <div class="people-sheet-head"><h3 class="people-sheet-title">${p ? 'Edit person' : 'Add person'}</h3></div>
     <label class="people-log-label" for="person-name">Name</label>
     <input type="text" id="person-name" class="people-log-date" maxlength="80" autocomplete="off" placeholder="Name" value="${p ? escapeHtml(p.name) : ''}">
-    <label class="people-log-label" for="person-tag">Tag <span class="people-log-hint">(optional)</span></label>
-    <input type="text" id="person-tag" class="people-log-date" maxlength="24" autocomplete="off" placeholder="Best friend · Pastor · Chess rival" value="${p ? escapeHtml(p.tag || '') : ''}">
+    <label class="people-log-label" for="person-about">About <span class="people-log-hint">(optional)</span></label>
+    <input type="text" id="person-about" class="people-log-date" maxlength="120" autocomplete="off" placeholder="A line to remember them by" value="${p ? escapeHtml(p.about || '') : ''}">
     <div class="people-sheet-actions">
       <button type="button" class="btn" data-person="cancel">Cancel</button>
       <button type="button" class="btn btn-primary" data-person="save">Save</button>
@@ -5394,15 +5405,13 @@ function openPersonSheet(id) {
 function savePersonSheet(id) {
   const name = (document.getElementById('person-name').value || '').trim();
   if (!name) return;   // name required
-  const tag = (document.getElementById('person-tag').value || '').trim();
+  const about = (document.getElementById('person-about').value || '').trim();
   const p = id ? findPerson(id) : null;
   if (p) {
     p.name = name;
-    if (tag) p.tag = tag; else delete p.tag;          // presence-based: '' stores no key
+    p.about = about;                                   // the one optional line; tag left untouched
   } else {
-    const rec = { id: uuid(), name, about: '', createdAt: todayDate() };
-    if (tag) rec.tag = tag;
-    peopleList().push(rec);
+    peopleList().push({ id: uuid(), name, about, createdAt: todayDate() });
   }
   closePeopleSheet();
   saveState(); render();
@@ -5427,72 +5436,86 @@ function setPersonAbout(id, text) {
   if ((p.about || '') === text) return; // no-op
   p.about = text; saveState(); render();
 }
-function closeThread(id) {
-  const t = threadsList().find(x => x.id === id);
-  if (!t || t.done) return;
-  t.done = todayDate(); saveState(); render();   // closed = the day it was addressed; record kept
+// ---- Saw: one tap logs a contact dated today, immediately ----
+// No confirm, no gate. The contact exists the instant you tap; the sheet that
+// follows only ADDS optional notes to it. Skipping the sheet keeps the bare
+// contact. Calendar-dated (todayDate()), like habits/focus/slips.
+function sawPerson(personId) {
+  const p = findPerson(personId);
+  if (!p) return;
+  const c = { id: uuid(), personId, date: todayDate(), note: '', recap: '', at: nowIso() };
+  contactsList().push(c);
+  saveState(); render();
+  openLogSheet(personId, c.id);
 }
-function addThread(personId) {
-  const text = (prompt('New thread — something to bring up next time:') || '').trim();
-  if (!text) return;
-  threadsList().push({ id: uuid(), personId, text, done: null, createdAt: todayDate() });
+
+// Undo removes ONLY the most recent contact for a person, and MUST tombstone it
+// — contacts is merge-registered, so a removal without a tombstone is resurrected
+// by the next sync (the defect fixed for code.rules in v85, the two remove* paths
+// in v89). Follows the deleteTally convention exactly.
+function undoContact(personId) {
+  const p = findPerson(personId);
+  const c = mostRecentContact(personId);
+  if (!p || !c) return;
+  const dt = parseYmd(c.date);
+  const dstr = `${dt.getDate()} ${dt.toLocaleDateString(undefined, { month: 'long' })}`;
+  if (!confirm(`Remove the last logged conversation with ${p.name} from ${dstr}? Its notes are deleted and it won't come back.`)) return;
+  tombstone('contacts', c.id);                     // stays deleted across sync
+  state.contacts = contactsList().filter(x => x.id !== c.id);
   saveState(); render();
 }
 
-// ---- Log conversation (bottom-sheet) ----
-function openLogSheet(personId) {
+// ---- Optional-notes sheet for an already-saved contact ----
+// Both fields optional. Skip closes and keeps the bare contact (never deletes it).
+function openLogSheet(personId, contactId) {
   const p = findPerson(personId);
+  const c = contactsList().find(x => x.id === contactId);
   const panel = document.getElementById('people-sheet-panel');
-  if (!p || !panel) return;
-  const openT = openThreadsForPerson(personId).slice().sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+  if (!p || !c || !panel) return;
   panel.innerHTML = `
-    <div class="people-sheet-head"><h3 class="people-sheet-title">Log conversation · ${escapeHtml(p.name)}</h3></div>
-    <label class="people-log-label" for="log-date">Date</label>
-    <input type="date" id="log-date" class="people-log-date" value="${escapeHtml(todayDate())}">
-    <label class="people-log-label" for="log-note">What did you talk about?</label>
-    <textarea class="code-textarea" id="log-note" placeholder="Optional"></textarea>
-    <label class="people-log-label" for="log-thread">Anything to remember for next time? <span class="people-log-hint">(becomes a thread)</span></label>
-    <textarea class="code-textarea" id="log-thread" placeholder="Optional"></textarea>
-    ${openT.length ? `
-      <div class="people-log-threads">
-        <div class="people-log-threads-label">Addressed any of these?</div>
-        ${openT.map(t => `<label class="people-log-thread"><input type="checkbox" data-thread="${escapeHtml(t.id)}"><span>${escapeHtml(t.text)}</span></label>`).join('')}
-      </div>` : ''}
+    <div class="people-sheet-head"><h3 class="people-sheet-title">Saw ${escapeHtml(p.name)} today</h3></div>
+    <div class="people-sheet-sub">Already saved. Both fields are optional.</div>
+    <label class="people-log-label" for="log-note">Remember for next time <span class="people-log-hint">(shows in the list)</span></label>
+    <textarea class="code-textarea" id="log-note" placeholder="Optional">${escapeHtml(c.note || '')}</textarea>
+    <label class="people-log-label" for="log-recap">What we talked about <span class="people-log-hint">(kept in history and the weekly review)</span></label>
+    <textarea class="code-textarea" id="log-recap" placeholder="Optional">${escapeHtml(c.recap || '')}</textarea>
     <div class="people-sheet-actions">
-      <button type="button" class="btn" data-log="cancel">Cancel</button>
+      <button type="button" class="btn" data-log="skip">Skip</button>
       <button type="button" class="btn btn-primary" data-log="save">Save</button>
     </div>`;
   peopleSheet.classList.add('open');
   panel.querySelectorAll('[data-log]').forEach(btn => btn.addEventListener('click', () => {
-    if (btn.dataset.log === 'cancel') closePeopleSheet();
-    else saveLog(personId);
+    if (btn.dataset.log === 'skip') closePeopleSheet();
+    else saveLog(contactId);
   }));
 }
-function saveLog(personId) {
-  const dateEl = document.getElementById('log-date');
-  const date = (dateEl && dateEl.value) || todayDate();
-  const note = (document.getElementById('log-note').value || '').trim();
-  const threadText = (document.getElementById('log-thread').value || '').trim();
-  const ticked = [...document.querySelectorAll('#people-sheet-panel [data-thread]:checked')].map(c => c.dataset.thread);
-  contactsList().push({ id: uuid(), personId, date, note, at: nowIso() });
-  if (threadText) threadsList().push({ id: uuid(), personId, text: threadText, done: null, createdAt: todayDate() });
-  ticked.forEach(tid => { const t = threadsList().find(x => x.id === tid); if (t && !t.done) t.done = date; });
-  saveState(); closePeopleSheet(); render(); toast('Logged');
+function saveLog(contactId) {
+  const c = contactsList().find(x => x.id === contactId);
+  if (!c) { closePeopleSheet(); return; }
+  c.note  = (document.getElementById('log-note').value  || '').trim();
+  c.recap = (document.getElementById('log-recap').value || '').trim();
+  saveState(); closePeopleSheet(); render(); toast('Saved');
 }
 
-// Q6 contact line (review composer) — counts only; the Yes/No stays the user's.
-function reviewContactLine(endYmd) {
+// Q6 data (review composer) — EVERY contact logged in the review week, newest
+// first, one row PER CONVERSATION (not per person). Same 7-day window the rest
+// of the review uses (reviewWeekRanked: [endYmd-6, endYmd]). Counts only —
+// conversations and distinct people. Never interprets.
+function reviewSocialEntries(endYmd) {
   const start = addDays(endYmd, -6);
-  const cs = contactsList().filter(c => c && c.date && c.date >= start && c.date <= endYmd)
-    .slice().sort((a, b) => String(a.date).localeCompare(String(b.date)));
-  if (!cs.length) return 'No conversations logged this week';
-  const names = cs.map(c => {
+  const cs = contactsList()
+    .filter(c => c && c.date && c.date >= start && c.date <= endYmd)
+    .slice()
+    .sort((a, b) => {
+      if (a.date !== b.date) return String(b.date).localeCompare(String(a.date));   // newest first
+      return String(b.at || '').localeCompare(String(a.at || ''));
+    });
+  const entries = cs.map(c => {
     const p = findPerson(c.personId);
-    const wd = parseYmd(c.date).toLocaleDateString(undefined, { weekday: 'short' });
-    return `${p ? p.name : '—'} (${wd})`;
+    return { date: c.date, name: p ? p.name : '—', recap: (c.recap || '').trim(), note: (c.note || '').trim() };
   });
-  const shown = names.slice(0, 4).join(', ');
-  return `${cs.length} this week — ${shown}${names.length > 4 ? ' …' : ''}`;
+  const people = new Set(cs.map(c => c.personId)).size;
+  return { entries, count: cs.length, people };
 }
 
 // ============================================================================
@@ -5514,7 +5537,7 @@ const REVIEW_QS = [
   { key: 'q4', label: 'How did the week go versus what you wanted?' },
   { key: 'q5', label: "What's the one thing that matters most next week?" }
 ];
-const REVIEW_Q6_LABEL = 'Did I have at least one meaningful social contact this week?';
+const REVIEW_Q6_LABEL = 'How did the week go socially?';
 
 function weeklyReviewsList() { if (!Array.isArray(state.weeklyReviews)) state.weeklyReviews = []; return state.weeklyReviews; }
 function reviewForNight() { const d = codeNightDate(); return weeklyReviewsList().find(r => r.date === d) || null; }
@@ -5687,14 +5710,14 @@ const reviewOverlay = document.getElementById('review-overlay');
 // Draft is the source of truth while the page is open, so a background render()
 // (pull-on-return, day rollover) rebuilds from it and never loses an unsaved
 // answer. Seeded from the night's record on open; written to it on Save.
-let reviewDraft = { q1: '', q2: '', q3: '', q4: '', q5: '', q6: null };
+let reviewDraft = { q1: '', q2: '', q3: '', q4: '', q5: '', social: '' };
 
 function openReviewView() {
   const r = reviewForNight();
   reviewDraft = {
     q1: r ? (r.q1 || '') : '', q2: r ? (r.q2 || '') : '', q3: r ? (r.q3 || '') : '',
     q4: r ? (r.q4 || '') : '', q5: r ? (r.q5 || '') : '',
-    q6: r && (r.q6 === 'yes' || r.q6 === 'no') ? r.q6 : null
+    social: r ? (r.social || '') : ''
   };
   renderReview();
   reviewOverlay.classList.add('open');
@@ -5706,7 +5729,7 @@ function renderReview() {
   if (!body) return;
   // Draft-guard (v49 lesson): never rebuild while a review textarea is focused.
   const ae = document.activeElement;
-  if (ae && /^review-q[1-5]$/.test(ae.id || '')) return;
+  if (ae && /^review-(q[1-5]|social)$/.test(ae.id || '')) return;
 
   const night = codeNightDate();
   const dateLabel = parseYmd(night).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
@@ -5760,6 +5783,21 @@ function renderReview() {
 
   const ta = (key, extraClass) =>
     `<textarea class="code-textarea${extraClass ? ' ' + extraClass : ''}" id="review-${key}" placeholder="">${escapeHtml(reviewDraft[key] || '')}</textarea>`;
+
+  // Q6 — the week's ACTUAL conversations (derived, one row per conversation),
+  // then a prose box. Empty state names the fact and NOTHING about how the week
+  // went — absence of a log is not absence of contact.
+  const social = reviewSocialEntries(night);
+  const socialBlock = social.entries.length
+    ? `<div class="review-social-list">${social.entries.map(e => {
+          const dt = parseYmd(e.date);
+          const label = `${dt.toLocaleDateString(undefined, { weekday: 'short' })} ${dt.getDate()} ${dt.toLocaleDateString(undefined, { month: 'short' })}`;
+          const recapHtml = e.recap ? `<div class="review-social-recap">${escapeHtml(e.recap)}</div>` : '';
+          const noteHtml  = e.note  ? `<div class="review-social-note">Remember: ${escapeHtml(e.note)}</div>` : '';
+          return `<div class="review-social-entry"><div class="review-social-head">${escapeHtml(label)} · ${escapeHtml(e.name)}</div>${recapHtml}${noteHtml}</div>`;
+        }).join('')}</div>` +
+      `<div class="review-social-count">${social.count} conversation${social.count === 1 ? '' : 's'} logged · ${social.people} ${social.people === 1 ? 'person' : 'people'}</div>`
+    : `<div class="review-social-empty">No conversations logged this week.</div>`;
 
   // Q3 sleep panel: mean AND range, per metric per week. Ranges are what the
   // mean alone concealed. Counting, not interpreting — no arrows/colours/labels
@@ -5819,13 +5857,9 @@ function renderReview() {
       <div class="review-note">Shown back in next week's review. Nowhere else.</div>
     </div>
     <div class="vault-section">
-      <label class="review-q">${escapeHtml(REVIEW_Q6_LABEL)}</label>
-      <div class="review-contact-line">${escapeHtml(reviewContactLine(night))}</div>
-      <div class="type-tabs review-q6" id="review-q6-tabs">
-        <button type="button" data-q6="yes" class="${reviewDraft.q6 === 'yes' ? 'active' : ''}">Yes</button>
-        <button type="button" data-q6="no" class="${reviewDraft.q6 === 'no' ? 'active' : ''}">No</button>
-      </div>
-      <div class="review-q6-wip">Work in progress — this question upgrades once People has a few weeks of data.</div>
+      <label class="review-q" for="review-social">${escapeHtml(REVIEW_Q6_LABEL)}</label>
+      ${socialBlock}
+      ${ta('social')}
     </div>
 
     <button type="button" class="btn btn-primary review-save" id="review-save-btn">Save review</button>`;
@@ -5840,28 +5874,30 @@ function renderReview() {
       requestAnimationFrame(() => autoGrowGoalWhy(el));
     }
   });
-  // Q6 segmented pair — tap toggles, tapping the active one deselects to null.
-  body.querySelectorAll('#review-q6-tabs button').forEach(btn => {
-    btn.addEventListener('click', () => {
-      reviewDraft.q6 = (reviewDraft.q6 === btn.dataset.q6) ? null : btn.dataset.q6;
-      body.querySelectorAll('#review-q6-tabs button').forEach(b =>
-        b.classList.toggle('active', b.dataset.q6 === reviewDraft.q6));
-    });
-  });
+  // Q6 prose (social) — same draft-survives-background-render + autogrow pattern.
+  const socialEl = document.getElementById('review-social');
+  if (socialEl) {
+    socialEl.addEventListener('input', () => { reviewDraft.social = socialEl.value; autoGrowGoalWhy(socialEl); });
+    requestAnimationFrame(() => autoGrowGoalWhy(socialEl));
+  }
   document.getElementById('review-save-btn').addEventListener('click', saveReview);
 }
 
 function saveReview() {
   const d = codeNightDate();
-  const { q1, q2, q3, q4, q5, q6 } = reviewDraft;
-  const any = [q1, q2, q3, q4, q5].some(s => (s || '').trim()) || q6 === 'yes' || q6 === 'no';
+  // Q6 is now the prose `social` field. `q6` (old yes/no) is LEFT ALONE and no
+  // longer written — Object.assign preserves any pre-existing q6 on an upsert,
+  // and a brand-new record simply omits it (changing q6's type would be a
+  // migration; adding `social` is not).
+  const { q1, q2, q3, q4, q5, social } = reviewDraft;
+  const any = [q1, q2, q3, q4, q5, social].some(s => (s || '').trim());
   if (!any) { toast('Nothing to save yet'); return; }
   const list = weeklyReviewsList();
   const existing = list.find(r => r.date === d);
   if (existing) {
-    Object.assign(existing, { q1, q2, q3, q4, q5, q6, at: nowIso() });   // upsert: same id
+    Object.assign(existing, { q1, q2, q3, q4, q5, social, at: nowIso() });   // upsert: same id; q6 untouched
   } else {
-    list.push({ id: uuid(), date: d, q1, q2, q3, q4, q5, q6, at: nowIso() });
+    list.push({ id: uuid(), date: d, q1, q2, q3, q4, q5, social, at: nowIso() });
   }
   saveState();
   closeReviewView();
