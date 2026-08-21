@@ -854,7 +854,7 @@ const SCHEMA_VERSION = 17;
 // Human-facing build tag shown in Settings and stamped into every export legend.
 // BUMP THIS TOGETHER WITH sw.js VERSION on every deploy — a stale tag is how a
 // rolled-back build went unnoticed for two days.
-const APP_VERSION = 'v93';
+const APP_VERSION = 'v94';
 
 let state = loadState();
 
@@ -1969,6 +1969,21 @@ function renderPractisingCard() {
   const minus = count > 0
     ? `<button type="button" class="prac-step prac-step-minus" data-slip="dec" data-id="${escapeHtml(virtue.id)}" aria-label="Remove a slip">−</button>`
     : '';   // absent (not disabled) at zero — nothing to mis-tap
+  // Bad-habit tallies — one tap adds, dated today. This week's count only (same
+  // map + window the Stats doorway uses, so the two never disagree). No minus:
+  // undo lives in the Franklin room. No tallies -> no markup, no separator, no gap.
+  const tallies = franklinData().tallies || [];
+  const weekArr = weekDates(startOfWeek(todayDate()));
+  const tallyHtml = tallies.length ? `
+      <div class="prac-tallies">
+        ${tallies.map(t => {
+          const wk = franklinWindowCount(franklinDayCounts(t.id), weekArr);
+          return `<button type="button" class="prac-tally" data-tally="${escapeHtml(t.id)}" aria-label="Log one ${escapeHtml(t.label)}">
+            <span class="prac-tally-label">${escapeHtml(t.label)}</span>
+            <span class="prac-tally-count">${wk}</span>
+          </button>`;
+        }).join('')}
+      </div>` : '';
   wrap.innerHTML = `
     <div class="prac-card">
       <div class="prac-label">PRACTISING</div>
@@ -1981,11 +1996,13 @@ function renderPractisingCard() {
           <button type="button" class="prac-step prac-step-plus" data-slip="inc" data-id="${escapeHtml(virtue.id)}" aria-label="Log a slip">+</button>
         </span>
       </div>
+      ${tallyHtml}
     </div>`;
   wrap.querySelectorAll('[data-slip]').forEach(btn => btn.addEventListener('click', () => {
     if (btn.dataset.slip === 'inc') addVirtueSlip(btn.dataset.id);
     else removeVirtueSlipInCycle(btn.dataset.id);
   }));
+  wrap.querySelectorAll('[data-tally]').forEach(btn => btn.addEventListener('click', () => addTallyEvent(btn.dataset.tally)));
 }
 
 function renderFocusCard() {
@@ -3435,13 +3452,20 @@ function renderFranklin() {
   } else {
     // Balanced grid: 1-3 single row, 4=2+2, 5=3+2, 6=3+3.
     const cols = tallies.length <= 3 ? tallies.length : (tallies.length === 4 ? 2 : 3);
+    const today = todayDate();
+    const weekArr = weekDates(startOfWeek(today));
     parts.push(`<div class="fr-tallies" style="grid-template-columns: repeat(${cols}, 1fr);">`);
     for (const t of tallies) {
-      const c = tallyCount(t.id);
+      const c = tallyCount(t.id);                       // all-time — drives the −1 disabled state (unchanged)
+      const map = franklinDayCounts(t.id);
+      const clean = franklinDaysClean(map, today, t.createdAt);   // null (never logged, no createdAt) -> "—"
+      const week = franklinWindowCount(map, weekArr);
       parts.push(`
         <div class="fr-tally">
-          <div class="fr-tally-count">${c}</div>
+          <div class="fr-tally-count">${clean == null ? '—' : clean}</div>
+          <div class="fr-tally-clean-cap">days clean</div>
           <div class="fr-tally-label">${escapeHtml(t.label)}</div>
+          <div class="fr-tally-week">${week} this week</div>
           <div class="fr-ctrls">
             <button type="button" class="fr-btn" data-fact="tally-dec" data-id="${escapeHtml(t.id)}"${c === 0 ? ' disabled' : ''} aria-label="Minus one ${escapeHtml(t.label)}">−1</button>
             <button type="button" class="fr-btn fr-btn-plus" data-fact="tally-inc" data-id="${escapeHtml(t.id)}" aria-label="Plus one ${escapeHtml(t.label)}">+1</button>
@@ -3449,6 +3473,7 @@ function renderFranklin() {
         </div>`);
     }
     parts.push(`</div>`);
+    parts.push(`<div class="fr-tally-doornote">All-time totals are in each tally's stats page.</div>`);
   }
   parts.push(`</div>`);
 

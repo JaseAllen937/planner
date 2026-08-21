@@ -1693,6 +1693,20 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 }
 .prac-step-minus { color: var(--text-secondary); }
 .prac-step-plus  { color: var(--text-primary); }
+/* v94 tally tiles on the practising card — two columns, label left, this-week
+   count right. One tap logs (addTallyEvent); no minus (undo lives in Franklin).
+   The last tile of an odd count sits in column 1 and is not stretched. */
+.prac-tallies {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;
+  border-top: 0.5px solid var(--separator); padding-top: 12px; margin-top: 12px;
+}
+.prac-tally {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  min-height: 44px; padding: 8px 12px; width: 100%; text-align: left;
+  background: var(--surface-inset); border: none; border-radius: var(--r-card); cursor: pointer;
+}
+.prac-tally-label { font-size: 14px; color: var(--text-primary); min-width: 0; overflow-wrap: anywhere; }
+.prac-tally-count { flex-shrink: 0; font-family: var(--font-mono); font-feature-settings: var(--num); font-size: 15px; color: var(--text-secondary); }
 .vault-entry-square {
   flex-direction: column; align-items: center; justify-content: center;
   text-align: center; gap: 7px; padding: 16px 12px;
@@ -2233,6 +2247,11 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
   font-size: 12px; color: var(--text-secondary); text-align: center;
   overflow-wrap: anywhere;
 }
+/* v94: the tile now leads with days-clean; caption hugs the number, week sits
+   quietly under the label. Neutral colours only — no threshold styling. */
+.fr-tally-clean-cap { font-size: 10px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.05em; margin-top: -3px; }
+.fr-tally-week { font-size: 11px; color: var(--text-tertiary); font-family: var(--font-mono); font-feature-settings: var(--num); }
+.fr-tally-doornote { font-size: 11px; color: var(--text-tertiary); margin-top: 10px; }
 .fr-ctrls { display: flex; gap: 6px; justify-content: center; }
 .fr-ctrls-wide { margin-top: 12px; }
 /* Rotation-length stepper row (edit mode): label left, ±1 buttons right. */
