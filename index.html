@@ -854,7 +854,7 @@ const SCHEMA_VERSION = 17;
 // Human-facing build tag shown in Settings and stamped into every export legend.
 // BUMP THIS TOGETHER WITH sw.js VERSION on every deploy — a stale tag is how a
 // rolled-back build went unnoticed for two days.
-const APP_VERSION = 'v94';
+const APP_VERSION = 'v95';
 
 let state = loadState();
 
@@ -2319,9 +2319,29 @@ function renderFocusMain(wrap) {
   const tile = (val, label) =>
     `<div class="focus-tile"><div class="focus-tile-val">${escapeHtml(val)}</div><div class="focus-tile-label">${escapeHtml(label)}</div></div>`;
 
-  // Scatter over the most recent 20 sessions.
-  const scatterSet = byStartDesc.slice(0, 20);
-  const scatter = focusScatterSvg(scatterSet, today);
+  // Scatter: one chart per session type (work, then reading), each capped at the
+  // most recent 20 OF THAT TYPE and scaled to its own domain — work and reading
+  // differ in length and lapse rate, so a shared domain compressed both. Untagged
+  // sessions predate typing (2026-07-25) and are excluded from charting; they stay
+  // stored, logged and counted in the tiles above (law 5). A type with no sessions
+  // renders nothing at all — no header, no empty box.
+  const SCATTER_TYPES = [{ key: 'work', name: 'Work' }, { key: 'reading', name: 'Reading' }];
+  const scatterBlocks = SCATTER_TYPES.map(t => {
+    const all = byStartDesc.filter(s => s.type === t.key);
+    if (!all.length) return '';
+    const svg = focusScatterSvg(all.slice(0, 20), today);
+    if (!svg) return '';
+    return `<div class="fs-chart">
+      <div class="fs-chart-head">
+        <span class="fs-chart-title">${escapeHtml(t.name)} · ${all.length}</span>
+        <span class="fs-zone-key"><span class="fs-zone-swatch" aria-hidden="true"></span>long + clean</span>
+      </div>
+      ${svg}
+    </div>`;
+  }).filter(Boolean);
+  const scatter = scatterBlocks.length
+    ? scatterBlocks.join('<div class="fs-chart-sep"></div>')
+    : `<div class="empty focus-scatter-empty">No tagged sessions to chart yet. Untagged sessions stay in your log and totals.</div>`;
 
   // Recent log — newest first, last 10.
   const logRows = byStartDesc.slice(0, 10).map(s => {
@@ -2353,7 +2373,7 @@ function renderFocusMain(wrap) {
       </div>
       <div class="focus-scatter-head">Length vs lapse rate</div>
       ${scatter}
-      <div class="focus-legend">faded = older · ringed = last 3 days · bottom-right = long &amp; clean · blue = work · purple = reading · grey = untagged</div>
+      <div class="focus-legend">faded = older · ringed = last 3 days · blue = work · purple = reading</div>
       <div class="focus-log-head">Recent sessions</div>
       ${logRows}
     </div>`;
@@ -2509,7 +2529,7 @@ function focusScatterSvg(sessions, today) {
     .sort((a, b) => a.date.localeCompare(b.date)); // oldest -> newest for age rank
 
   if (pts.length === 0) {
-    return `<div class="empty focus-scatter-empty">No completed sessions to chart yet.</div>`;
+    return '';   // no chartable points -> the call site owns the overall empty state
   }
 
   // Domains (padded). Guards for a single point / all-equal / all-clean.
@@ -2523,10 +2543,11 @@ function focusScatterSvg(sessions, today) {
   const x = m => padL + ((m - xMin) / (xMax - xMin)) * plotW;
   const y = r => padT + plotH - (r / yTop) * plotH;
 
-  // Bottom-right "long + clean" zone: right 40% x, lower 45% (low rate) y.
+  // Bottom-right "long + clean" zone: right 40% x, lower 45% (low rate) y. The
+  // label moved to the chart header (a long zero-lapse session plots straight
+  // through the words); only the tinted rect stays here.
   const zoneX = padL + plotW * 0.60, zoneY = padT + plotH * 0.55;
-  const zone = `<rect class="fs-zone" x="${zoneX.toFixed(1)}" y="${zoneY.toFixed(1)}" width="${(padL + plotW - zoneX).toFixed(1)}" height="${(padT + plotH - zoneY).toFixed(1)}" rx="4"/>`
-    + `<text class="fs-zone-label" x="${(padL + plotW - 3).toFixed(1)}" y="${(padT + plotH - 5).toFixed(1)}" text-anchor="end">long + clean</text>`;
+  const zone = `<rect class="fs-zone" x="${zoneX.toFixed(1)}" y="${zoneY.toFixed(1)}" width="${(padL + plotW - zoneX).toFixed(1)}" height="${(padT + plotH - zoneY).toFixed(1)}" rx="4"/>`;
 
   // Axis frame + tiny labels.
   const axis =

@@ -1472,7 +1472,13 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 }
 .focus-scatter-svg { display: block; width: 100%; height: auto; margin: 2px 0; touch-action: none; }
 .fs-zone { fill: var(--ok); opacity: 0.10; }
-.fs-zone-label { font-size: 9px; fill: var(--ok); font-family: var(--font-mono); opacity: 0.9; }
+/* v95 per-type chart header: type name + count on the left, the long+clean zone
+   marker on the right (swatch tinted var(--ok), the same hue as .fs-zone). */
+.fs-chart-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 14px 0 4px; }
+.fs-chart-title { font-size: 11px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; font-family: var(--font-mono); }
+.fs-zone-key { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; color: var(--text-tertiary); font-family: var(--font-mono); flex-shrink: 0; }
+.fs-zone-swatch { width: 10px; height: 10px; border-radius: 3px; background: var(--ok); opacity: 0.35; }
+.fs-chart-sep { border-top: 0.5px solid var(--separator); margin: 14px 0; }
 .fs-axis-line { stroke: var(--separator); stroke-width: 1; }
 .fs-axis { font-size: 9px; fill: var(--text-tertiary); font-family: var(--font-mono); }
 .fs-dot { stroke: var(--card); stroke-width: 0.5; }
