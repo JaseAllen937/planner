@@ -41,7 +41,7 @@
     <div id="review-card-wrap"></div>    <!-- weekly review — reflect -->
     <div id="spaces-hub-wrap"></div>     <!-- do -->
     <div id="focus-card-wrap"></div>     <!-- do -->
-    <div class="today-squares today-squares-4">   <!-- consult (2x2) -->
+    <div class="today-squares today-squares-4" id="rooms-wrap">   <!-- consult (2x2) -->
       <div id="vault-card-wrap"></div>
       <div id="franklin-card-wrap"></div>
       <div id="goals-card-wrap"></div>
@@ -89,6 +89,17 @@
   </section>
 
   <section class="tab-view" id="tab-settings">
+    <div class="settings-section">
+      <h3>Today</h3>
+      <div class="settings-row">
+        <div>
+          <div>Customise Today</div>
+          <div class="meta">Reorder or hide sections; choose a rooms layout</div>
+        </div>
+        <button class="btn" id="today-customise-btn">Customise</button>
+      </div>
+    </div>
+
     <div class="settings-section">
       <h3>Account &amp; Backup</h3>
 
@@ -364,6 +375,11 @@
       <button type="button" class="btn btn-primary" id="form-save-btn">Save</button>
     </div>
   </div>
+</div>
+
+<!-- Customise Today bottom-sheet (v96) — section order/visibility + rooms preset. -->
+<div class="modal vault-sheet-mode" id="today-customise-sheet" role="dialog" aria-modal="true" aria-label="Customise Today">
+  <div class="modal-panel" id="today-customise-panel"></div>
 </div>
 
 <div class="modal" id="action-sheet" role="dialog" aria-modal="true">
@@ -854,7 +870,50 @@ const SCHEMA_VERSION = 17;
 // Human-facing build tag shown in Settings and stamped into every export legend.
 // BUMP THIS TOGETHER WITH sw.js VERSION on every deploy — a stale tag is how a
 // rolled-back build went unnoticed for two days.
-const APP_VERSION = 'v95';
+const APP_VERSION = 'v96';
+
+// ---- Today layout (v96): user-controlled section order + visibility + rooms
+// preset. Defined BEFORE loadState() so ensureShape's defensive guard can read the
+// defaults. TODAY_SECTIONS is the single source of truth (key, label, wrapper id,
+// renderer) — a section added by a future build is APPENDED at render time, never
+// silently absent for users whose stored order predates it. #banner-wrap is pinned
+// (not in order, cannot be hidden). ---------------------------------------------
+const TODAY_SECTIONS = [
+  { key: 'practising', label: 'Practising',    wrap: 'practising-card-wrap', render: () => renderPractisingCard() },
+  { key: 'three-day',  label: 'Next 3 days',   wrap: 'three-day-wrap',       render: () => renderThreeDayTimeline() },
+  { key: 'review',     label: 'Sunday review', wrap: 'review-card-wrap',     render: () => renderReviewCard() },
+  { key: 'spaces',     label: 'Spaces',        wrap: 'spaces-hub-wrap',      render: () => renderSpacesHub() },
+  { key: 'focus',      label: 'Focus',         wrap: 'focus-card-wrap',      render: () => renderFocusCard() },
+  { key: 'rooms',      label: 'Rooms',         wrap: 'rooms-wrap',           render: null },
+  { key: 'code',       label: 'My Code',       wrap: 'code-card-wrap',       render: () => renderCodeCard() },
+];
+const TODAY_DEFAULT_ORDER = TODAY_SECTIONS.map(s => s.key);
+const ROOM_DEFS = [
+  { key: 'vault',    label: 'The Vault', wrap: 'vault-card-wrap' },
+  { key: 'franklin', label: 'Franklin',  wrap: 'franklin-card-wrap' },
+  { key: 'goals',    label: 'Goals',     wrap: 'goals-card-wrap' },
+  { key: 'people',   label: 'People',    wrap: 'people-card-wrap' },
+];
+const ROOMS_STYLES = ['grid', 'list', 'row'];
+function defaultTodayLayout() {
+  return { order: TODAY_DEFAULT_ORDER.slice(), hidden: [], rooms: { hidden: [], style: 'grid' } };
+}
+// Resolve the effective order: keep known stored keys (deduped), drop unknown,
+// then append any canonical key the stored order is missing (so future sections
+// surface at the bottom instead of vanishing). Pure.
+function resolveTodayOrder(order) {
+  const known = new Set(TODAY_SECTIONS.map(s => s.key));
+  const seen = new Set();
+  const out = [];
+  for (const k of (Array.isArray(order) ? order : [])) if (known.has(k) && !seen.has(k)) { out.push(k); seen.add(k); }
+  for (const s of TODAY_SECTIONS) if (!seen.has(s.key)) out.push(s.key);
+  return out;
+}
+// Available rooms presets derived from the visible count (never hardcoded): row
+// is withheld above four (five abreast breaks at 320px).
+function roomsPresetsFor(visibleCount) {
+  return visibleCount <= 4 ? ROOMS_STYLES.slice() : ['grid', 'list'];
+}
 
 let state = loadState();
 
@@ -998,6 +1057,27 @@ function ensureShape(s) {
   // Sticky Focus session-type preference (NOT user data / not version-gated):
   // default to 'work' and normalize any bad merged-in value. Additive.
   if (s.focusLastType !== 'work' && s.focusLastType !== 'reading') s.focusLastType = 'work';
+
+  // v96 todayLayout — ALWAYS-RUN defensive guard (check the field, not the
+  // version; the v86 lesson). Coerce order + both hidden arrays to arrays of
+  // strings and clamp rooms.style to a valid value. No schema bump. Idempotent:
+  // a well-formed value re-coerces to itself. resolveTodayOrder handles unknown
+  // keys and missing-section append at render time; the guard only sanitises types.
+  {
+    const toStrArr = a => Array.isArray(a) ? a.filter(x => typeof x === 'string') : [];
+    let tl = (s.todayLayout && typeof s.todayLayout === 'object' && !Array.isArray(s.todayLayout)) ? s.todayLayout : {};
+    const order = toStrArr(tl.order);
+    const rooms = (tl.rooms && typeof tl.rooms === 'object' && !Array.isArray(tl.rooms)) ? tl.rooms : {};
+    s.todayLayout = {
+      order: order.length ? order : TODAY_DEFAULT_ORDER.slice(),
+      hidden: toStrArr(tl.hidden),
+      rooms: {
+        hidden: toStrArr(rooms.hidden),
+        style: ROOMS_STYLES.indexOf(rooms.style) >= 0 ? rooms.style : 'grid'
+      }
+    };
+    if (typeof s.todayLayoutAt !== 'string') s.todayLayoutAt = null;
+  }
 
   // v3 -> v4: add meta.lastWipe marker (ISO timestamp of the most recent
   // history wipe, or null). Streak/miss math floors its look-back at this date
@@ -5969,6 +6049,174 @@ function reviewArchiveCard(r) {
   </div>`;
 }
 
+// ---------------- Today layout: apply order/visibility + rooms preset ----------
+// DISPLAY ONLY. The section renderers already ran (each fills its wrapper by id);
+// this reorders the existing DOM nodes and toggles visibility. It never rebuilds
+// content and never changes an id.
+
+// Every write goes through here: stamp todayLayoutAt (so SCALAR_MERGES keeps it),
+// persist, re-render.
+function writeTodayLayout(next) {
+  state.todayLayout = next;
+  state.todayLayoutAt = nowIso();
+  saveState();
+  render();
+}
+
+// Per-room visibility + preset + reflow. Sets each room wrapper's hidden flag and
+// the container's column count / preset class. Returns true when EVERY room is
+// hidden (caller then hides the whole container — no header, no empty state).
+function applyRoomsLayout(tl) {
+  const container = document.getElementById('rooms-wrap');
+  if (!container) return true;
+  const hidden = new Set(Array.isArray(tl.rooms && tl.rooms.hidden) ? tl.rooms.hidden : []);
+  const visible = ROOM_DEFS.filter(r => !hidden.has(r.key));
+  for (const r of ROOM_DEFS) {
+    const el = document.getElementById(r.wrap);
+    if (el) el.hidden = hidden.has(r.key);
+  }
+  if (!visible.length) return true;                     // all hidden -> container hidden by caller
+  // Preset, with the row-above-four fallback applied at RENDER time only (never
+  // mutates the stored style).
+  const presets = roomsPresetsFor(visible.length);
+  let style = tl.rooms && tl.rooms.style;
+  if (presets.indexOf(style) < 0) style = 'grid';
+  container.classList.remove('today-squares-list', 'today-squares-row');
+  let cols;
+  if (style === 'list') { container.classList.add('today-squares-list'); cols = 1; }
+  else if (style === 'row') { container.classList.add('today-squares-row'); cols = visible.length; }
+  else { cols = visible.length === 1 ? 1 : 2; }         // grid: 1-up when single, else 2-up (3 -> 2+1)
+  container.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+  return false;
+}
+
+function applyTodayLayout() {
+  const container = document.getElementById('tab-today');
+  if (!container) return;
+  const tl = state.todayLayout || defaultTodayLayout();
+  const order = resolveTodayOrder(tl.order);
+  const sectionHidden = new Set(Array.isArray(tl.hidden) ? tl.hidden : []);
+  const byKey = Object.create(null);
+  for (const s of TODAY_SECTIONS) byKey[s.key] = s;
+
+  const roomsAllHidden = applyRoomsLayout(tl);
+
+  // Banner is pinned first (never in order, cannot be hidden), then each section
+  // in resolved order. appendChild MOVES the existing node — no rebuild, id kept.
+  const banner = document.getElementById('banner-wrap');
+  if (banner) container.appendChild(banner);
+  for (const key of order) {
+    const sec = byKey[key];
+    if (!sec) continue;
+    const el = document.getElementById(sec.wrap);
+    if (!el) continue;
+    container.appendChild(el);
+    const hide = sectionHidden.has(key) || (key === 'rooms' && roomsAllHidden);
+    el.hidden = hide;                                   // display:none -> removed from flow, no gap
+  }
+}
+
+// ---- Mutations (each ends via writeTodayLayout -> saveState + render) ----------
+function moveTodaySection(key, delta) {
+  const order = resolveTodayOrder(state.todayLayout.order);
+  const i = order.indexOf(key);
+  const j = i + delta;
+  if (i < 0 || j < 0 || j >= order.length) return;      // bounds — early return, no wrap (moveBlock)
+  const tmp = order[i]; order[i] = order[j]; order[j] = tmp;
+  writeTodayLayout({ ...state.todayLayout, order });
+}
+function toggleTodaySection(key) {
+  if (key === 'banner') return;                          // banner is pinned, never hideable
+  const hidden = new Set(state.todayLayout.hidden);
+  hidden.has(key) ? hidden.delete(key) : hidden.add(key);
+  writeTodayLayout({ ...state.todayLayout, hidden: [...hidden] });
+}
+function toggleTodayRoom(roomKey) {
+  const rooms = state.todayLayout.rooms || { hidden: [], style: 'grid' };
+  const hidden = new Set(rooms.hidden);
+  hidden.has(roomKey) ? hidden.delete(roomKey) : hidden.add(roomKey);
+  writeTodayLayout({ ...state.todayLayout, rooms: { ...rooms, hidden: [...hidden] } });
+}
+function setTodayRoomsStyle(style) {
+  if (ROOMS_STYLES.indexOf(style) < 0) return;
+  const rooms = state.todayLayout.rooms || { hidden: [], style: 'grid' };
+  writeTodayLayout({ ...state.todayLayout, rooms: { ...rooms, style } });
+}
+function restoreTodayDefault() { writeTodayLayout(defaultTodayLayout()); }
+
+// ---- Customise Today sheet (Settings) -----------------------------------------
+const todayCustomiseSheet = document.getElementById('today-customise-sheet');
+function openTodayCustomiser() { renderTodayCustomiser(); if (todayCustomiseSheet) todayCustomiseSheet.classList.add('open'); }
+function closeTodayCustomiser() { if (todayCustomiseSheet) todayCustomiseSheet.classList.remove('open'); }
+
+function renderTodayCustomiser() {
+  const panel = document.getElementById('today-customise-panel');
+  if (!panel) return;
+  const tl = state.todayLayout || defaultTodayLayout();
+  const order = resolveTodayOrder(tl.order);
+  const sectionHidden = new Set(tl.hidden || []);
+  const byKey = Object.create(null);
+  for (const s of TODAY_SECTIONS) byKey[s.key] = s;
+
+  const arrows = (key, i) =>
+    `${i > 0 ? `<button type="button" class="tc-btn" data-tc="up" data-key="${escapeHtml(key)}" aria-label="Move up">↑</button>` : ''}` +
+    `${i < order.length - 1 ? `<button type="button" class="tc-btn" data-tc="down" data-key="${escapeHtml(key)}" aria-label="Move down">↓</button>` : ''}`;
+  const eye = (key) => {
+    const shown = !sectionHidden.has(key);
+    return `<button type="button" class="tc-btn tc-eye${shown ? '' : ' tc-eye-off'}" data-tc="toggle" data-key="${escapeHtml(key)}" aria-label="${shown ? 'Hide' : 'Show'}">${shown ? 'Shown' : 'Hidden'}</button>`;
+  };
+
+  // Rooms sub-group: SHOW chips + LAYOUT presets (derived from visible count).
+  const roomsHidden = new Set((tl.rooms && tl.rooms.hidden) || []);
+  const visibleRooms = ROOM_DEFS.filter(r => !roomsHidden.has(r.key));
+  const presets = roomsPresetsFor(visibleRooms.length);
+  let effStyle = tl.rooms && tl.rooms.style;
+  if (presets.indexOf(effStyle) < 0) effStyle = 'grid';
+  const roomsGroup = `
+    <div class="tc-rooms-group">
+      <div class="tc-sub-label">SHOW</div>
+      <div class="tc-chips">
+        ${ROOM_DEFS.map(r => `<button type="button" class="tc-chip${roomsHidden.has(r.key) ? '' : ' tc-chip-on'}" data-tc="room" data-room="${escapeHtml(r.key)}">${escapeHtml(r.label)}</button>`).join('')}
+      </div>
+      <div class="tc-sub-label">LAYOUT</div>
+      <div class="tc-chips">
+        ${presets.map(p => `<button type="button" class="tc-chip${p === effStyle ? ' tc-chip-on' : ''}" data-tc="style" data-style="${escapeHtml(p)}">${escapeHtml(p)}</button>`).join('')}
+      </div>
+    </div>`;
+
+  const rows = order.map((key, i) => {
+    const sec = byKey[key];
+    const label = sec ? sec.label : key;
+    const base = `
+      <div class="tc-row">
+        <span class="tc-label">${escapeHtml(label)}</span>
+        <span class="tc-controls">${arrows(key, i)}${eye(key)}</span>
+      </div>`;
+    return key === 'rooms' ? base + roomsGroup : base;
+  }).join('');
+
+  panel.innerHTML = `
+    <div class="people-sheet-head"><h3 class="people-sheet-title">Customise Today</h3></div>
+    <div class="people-sheet-sub">Reorder or hide sections. Tap a room to show or hide it.</div>
+    <div class="tc-list">
+      <div class="tc-row tc-row-fixed"><span class="tc-label">Date banner</span><span class="tc-fixed-note">always on</span></div>
+      ${rows}
+    </div>
+    <button type="button" class="btn tc-restore" data-tc="restore">Restore default order</button>
+    <div class="people-sheet-actions"><button type="button" class="btn btn-primary" data-tc="done">Done</button></div>`;
+
+  panel.querySelectorAll('[data-tc]').forEach(btn => btn.addEventListener('click', () => {
+    const act = btn.dataset.tc;
+    if      (act === 'up')      moveTodaySection(btn.dataset.key, -1);
+    else if (act === 'down')    moveTodaySection(btn.dataset.key, 1);
+    else if (act === 'toggle')  toggleTodaySection(btn.dataset.key);
+    else if (act === 'room')    toggleTodayRoom(btn.dataset.room);
+    else if (act === 'style')   setTodayRoomsStyle(btn.dataset.style);
+    else if (act === 'restore') restoreTodayDefault();
+    else if (act === 'done')    closeTodayCustomiser();
+  }));
+}
+
 // ---------------- main render ----------------
 
 // Date the UI was last built for; used to detect an overnight day rollover.
@@ -6008,6 +6256,8 @@ function render() {
   renderAllTime();
   renderCalendar();
   renderSettings();
+  applyTodayLayout();     // reorder/hide Today sections after every renderer filled its wrapper
+  if (todayCustomiseSheet && todayCustomiseSheet.classList.contains('open')) renderTodayCustomiser();
   maybeShowMorningPopup();
 }
 
@@ -9213,6 +9463,7 @@ const SCALAR_MERGES = [
   { get: s => s.franklin, field: 'anchorDate',    at: 'anchorDateAt'    },
   { get: s => s.franklin, field: 'cycleDays',     at: 'cycleDaysAt'     },
   { get: s => s,          field: 'focusLastType', at: 'focusLastTypeAt' },
+  { get: s => s,          field: 'todayLayout',   at: 'todayLayoutAt'   },
 ];
 
 // Resolve one field-timestamped scalar into `merged`. Later `at` wins; a single
@@ -9982,6 +10233,9 @@ document.getElementById('import-file').addEventListener('change', e => {
 });
 document.getElementById('wipe-history-btn').addEventListener('click', wipeHistory);
 document.getElementById('reset-btn').addEventListener('click', resetData);
+document.getElementById('today-customise-btn').addEventListener('click', openTodayCustomiser);
+// Backdrop tap closes the customiser (tap the dimmed area, not the panel).
+todayCustomiseSheet.addEventListener('click', e => { if (e.target === todayCustomiseSheet) closeTodayCustomiser(); });
 
 // Account & Backup (Supabase)
 (function wireAccountUi() {
