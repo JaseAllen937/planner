@@ -3272,6 +3272,20 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 .tc-chip-on { background: var(--accent); color: #fff; border-color: transparent; }
 .tc-restore { width: 100%; margin-top: 14px; }
 
+/* ---- Reset history sheet (v97) ---- */
+.reset-ts-line { font-size: 13px; line-height: 1.45; color: var(--text-secondary); margin: 4px 0 10px; }
+.reset-ts-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.reset-ts-actions .btn { flex: 1 1 auto; min-height: 44px; }
+.reset-list { display: flex; flex-direction: column; }
+.reset-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  min-height: 48px; padding: 6px 0; border-top: 1px solid var(--separator); cursor: pointer;
+}
+.reset-row:first-child { border-top: none; }
+.reset-row-label { font-size: 15px; color: var(--text-primary); min-width: 0; overflow-wrap: anywhere; }
+.reset-check { width: 24px; height: 24px; flex-shrink: 0; margin: 10px; cursor: pointer; }
+.reset-caveat { font-size: 12px; line-height: 1.4; color: var(--text-tertiary); padding: 2px 0 8px; }
+
 /* Q6 contact line — muted data, no judgment. */
 .review-contact-line { font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; }
 /* Q6 upgrade reminder-by-UI. */

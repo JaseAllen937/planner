@@ -176,10 +176,10 @@
       </div>
       <div class="settings-row">
         <div>
-          <div style="color: var(--danger);">Wipe history</div>
-          <div class="meta">Clears completions, focus sessions, and daily logs. Keeps habits and tasks.</div>
+          <div>Reset history</div>
+          <div class="meta">Choose what to clear, or set a tracking-start date so earlier history stops counting. Habits and tasks are kept.</div>
         </div>
-        <button class="btn btn-danger" id="wipe-history-btn">Wipe history</button>
+        <button class="btn" id="wipe-history-btn">Reset history</button>
       </div>
       <div class="settings-row">
         <div>
@@ -380,6 +380,11 @@
 <!-- Customise Today bottom-sheet (v96) — section order/visibility + rooms preset. -->
 <div class="modal vault-sheet-mode" id="today-customise-sheet" role="dialog" aria-modal="true" aria-label="Customise Today">
   <div class="modal-panel" id="today-customise-panel"></div>
+</div>
+
+<!-- Reset history bottom-sheet (v97) — selective, tombstoned, floors to today. -->
+<div class="modal vault-sheet-mode" id="reset-sheet" role="dialog" aria-modal="true" aria-label="Reset history">
+  <div class="modal-panel" id="reset-panel"></div>
 </div>
 
 <div class="modal" id="action-sheet" role="dialog" aria-modal="true">
@@ -870,7 +875,7 @@ const SCHEMA_VERSION = 17;
 // Human-facing build tag shown in Settings and stamped into every export legend.
 // BUMP THIS TOGETHER WITH sw.js VERSION on every deploy — a stale tag is how a
 // rolled-back build went unnoticed for two days.
-const APP_VERSION = 'v96';
+const APP_VERSION = 'v97';
 
 // ---- Today layout (v96): user-controlled section order + visibility + rooms
 // preset. Defined BEFORE loadState() so ensureShape's defensive guard can read the
@@ -1078,6 +1083,15 @@ function ensureShape(s) {
     };
     if (typeof s.todayLayoutAt !== 'string') s.todayLayoutAt = null;
   }
+
+  // v97 trackingStart — ALWAYS-RUN defensive guard (check the field, not the
+  // version; the v86 lesson). A YYYY-MM-DD string is kept; anything else (''
+  // 'abc', 123, {}, undefined) becomes null. Distinct from meta.lastWipe, which
+  // is untouched here. Idempotent. No schema bump.
+  if (typeof s.meta.trackingStart !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s.meta.trackingStart)) {
+    s.meta.trackingStart = null;
+  }
+  if (typeof s.meta.trackingStartAt !== 'string') s.meta.trackingStartAt = null;
 
   // v3 -> v4: add meta.lastWipe marker (ISO timestamp of the most recent
   // history wipe, or null). Streak/miss math floors its look-back at this date
@@ -1576,6 +1590,23 @@ function streakFloorYmd(habit) {
   const wipe = state.meta && state.meta.lastWipe ? ymd(new Date(state.meta.lastWipe)) : null;
   if (wipe && (!floor || wipe > floor)) floor = wipe;
   return floor;
+}
+
+// v97 — the user's tracking-start date (YYYY-MM-DD) or null. DISTINCT from
+// meta.lastWipe: set only when the user asks, never on a wipe. Read-only helper.
+function trackingStartYmd() {
+  const t = state.meta && state.meta.trackingStart;
+  return (typeof t === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(t)) ? t : null;
+}
+// The earliest date any count, rate or streak may reach back to: the later of the
+// block's own creation and the user's tracking-start date. Dates before it are
+// 'pre' — not applicable, never 'missed'. Either may be absent; both absent -> null
+// and everything behaves exactly as before this build (full reversibility).
+function blockFloorYmd(block) {
+  const created = block && block.createdAt ? String(block.createdAt).slice(0, 10) : null;
+  const ts = trackingStartYmd();
+  if (created && ts) return created > ts ? created : ts;
+  return created || ts || null;
 }
 
 function currentStreak(habitId, endingDate) {
@@ -3559,7 +3590,7 @@ function renderFranklin() {
     for (const t of tallies) {
       const c = tallyCount(t.id);                       // all-time — drives the −1 disabled state (unchanged)
       const map = franklinDayCounts(t.id);
-      const clean = franklinDaysClean(map, today, t.createdAt);   // null (never logged, no createdAt) -> "—"
+      const clean = franklinDaysClean(map, today, franklinCleanCreated(t.createdAt));   // null (never logged, no createdAt) -> "—"
       const week = franklinWindowCount(map, weekArr);
       parts.push(`
         <div class="fr-tally">
@@ -4923,35 +4954,141 @@ function resetData() {
   toast('Reset to sample data');
 }
 
-// Clears only the history/tracking arrays — keeps habits, tasks, templates, meta.
-// NOT resetData(): no re-seed. saveState() bumps meta.updated_at and pushes the
-// wiped blob to the cloud, so it becomes newest and propagates to other devices.
-function wipeHistory() {
-  // Offer a keep-a-copy download before anything is cleared. Reuses the
-  // standard Export path so the user gets the usual agendaai-<date>.json file.
-  if (confirm('Save a backup snapshot before wiping?')) {
-    exportData();
+// v97: history-clearing is now a SELECTIVE sheet. The button's handler keeps the
+// name wipeHistory (it opens the sheet); the real clearing is executeHistoryReset.
+// NOT resetData(): no re-seed. Nothing touches meta.lastWipe — trackingStart is
+// the v97 mechanism (set only when the user asks, never silently on a wipe).
+function wipeHistory() { openResetSheet(); }
+
+// Each sheet row: key, label, and whether it is ticked by default. COUNTS are
+// on by default; WRITING (journal, reviews) must be ticked deliberately.
+const RESET_ROWS = [
+  { key: 'completions', label: 'Task completions',      def: true  },
+  { key: 'focus',       label: 'Focus sessions',        def: true  },
+  { key: 'daily',       label: 'Sleep and daily logs',  def: true  },
+  { key: 'tallyEvents', label: 'Tally taps',            def: true  },
+  { key: 'virtueSlips', label: 'Virtue slips',          def: true  },
+  { key: 'codeReads',   label: 'Nightly read log',      def: true  },
+  { key: 'contacts',    label: 'Logged conversations',  def: true  },
+  { key: 'vaultTx',     label: 'Vault transactions',    def: true  },
+  { key: 'milestones',  label: 'Milestone completions', def: true  },
+  { key: 'checks',      label: 'Habit checks',          def: true  },
+  { key: 'journal',     label: 'Journal entries',       def: false },
+  { key: 'reviews',     label: 'Weekly reviews',        def: false },
+];
+let resetTicks = {};
+function defaultResetTicks() { const o = {}; for (const r of RESET_ROWS) o[r.key] = r.def; return o; }
+
+// Tombstone-then-clear each ticked collection. Everything removed is tombstoned so
+// another device can't resurrect it; milestones and habit-checks are the two that
+// keep their records (milestone text stays, doneDate nulled; checks have no ids).
+function applyResetClears(ticks) {
+  const f     = (state.franklin && typeof state.franklin === 'object') ? state.franklin : (state.franklin = {});
+  const code  = (state.code && typeof state.code === 'object')         ? state.code     : (state.code = {});
+  const vault = (state.vault && typeof state.vault === 'object')       ? state.vault    : (state.vault = {});
+  if (ticks.completions) {
+    tombstoneAll('completions', state.completions); tombstoneAll('missed', state.missed);
+    state.completions = []; state.missed = [];
+    // items[] is structure, not history — leaving it untouched keeps past dated
+    // to-dos exactly as they are (they do not reappear as pending).
   }
-  if (!confirm('Wipe all completion history, focus sessions, and daily logs? Habits and tasks are kept. This cannot be undone.')) return;
-  // One-shot on-device safety backup before clearing (overwrite any prior backup).
-  try { localStorage.setItem('agendaai_prewipe_backup', JSON.stringify(state)); } catch {}
-  // Tombstone every wiped record/day so the wipe propagates via merge instead
-  // of an older device's blob resurrecting the cleared history.
-  tombstoneAll('completions', state.completions);
-  tombstoneAll('missed', state.missed);
-  tombstoneAll('focusSessions', state.focusSessions);
-  for (const d of state.daily_state) if (d && d.date) tombstone('daily_state', d.date);
-  state.completions = [];
-  state.missed = [];
-  state.focusSessions = [];
-  state.daily_state = [];
-  state.activeFocus = null;
-  // Mark the wipe so streak/miss math floors its look-back here (no pre-wipe
-  // "skipped N days" — a freshly-wiped slate reads 0).
-  state.meta.lastWipe = nowIso();
+  if (ticks.focus)       { tombstoneAll('focusSessions', state.focusSessions); state.focusSessions = []; state.activeFocus = null; }
+  if (ticks.daily)       { for (const d of (state.daily_state || [])) if (d && d.date) tombstone('daily_state', d.date); state.daily_state = []; }
+  if (ticks.tallyEvents) { tombstoneAll('franklin.tallyEvents', f.tallyEvents); f.tallyEvents = []; }
+  if (ticks.virtueSlips) { tombstoneAll('franklin.virtueSlips', f.virtueSlips); f.virtueSlips = []; }
+  if (ticks.codeReads)   { tombstoneAll('code.codeReads', code.codeReads); code.codeReads = []; }
+  if (ticks.contacts)    { tombstoneAll('contacts', state.contacts); state.contacts = []; }
+  if (ticks.vaultTx)     { tombstoneAll('vault.transactions', vault.transactions); vault.transactions = []; }
+  if (ticks.milestones)  { for (const m of (state.goalMilestones || [])) if (m) m.doneDate = null; }   // record + text kept
+  if (ticks.checks)      { for (const b of (state.blocks || [])) if (b) b.checks = {}; }                // no ids -> caveat in sheet
+  if (ticks.journal)     { tombstoneAll('code.journal', code.journal); code.journal = []; }
+  if (ticks.reviews)     { tombstoneAll('weeklyReviews', state.weeklyReviews); state.weeklyReviews = []; }
+}
+
+// The destructive-dialog convention: enumerate what clears AND what stays.
+function buildResetConfirmMsg(ticks) {
+  const cleared = RESET_ROWS.filter(r => ticks[r.key]).map(r => r.label);
+  const head = cleared.length
+    ? 'This clears:\n• ' + cleared.join('\n• ')
+    : 'Nothing is ticked, so nothing is deleted.';
+  const kept = 'Kept: habits, tasks, goals, people, virtues, tallies, rules and skills — the structure of everything. Past dated tasks are unaffected.';
+  const tsNote = 'Your tracking-start date is set to today; history before it stops counting. Clearing that date later restores every number.';
+  return `${head}\n\n${kept}\n\n${tsNote}`;
+}
+
+// Order of operations (spec Part 2): export offer -> on-device backup -> confirm
+// enumerating -> tombstone+clear -> set trackingStart (always) -> save + render.
+function executeHistoryReset() {
+  const ticks = { ...resetTicks };
+  if (confirm('Save a backup file before continuing?')) exportData();
+  try { localStorage.setItem('agendaai_prewipe_backup', JSON.stringify(state)); } catch (e) {}
+  if (!confirm(buildResetConfirmMsg(ticks))) return;
+  applyResetClears(ticks);
+  // Set regardless of which boxes were ticked — "history before here does not
+  // count" is true whether or not rows were deleted.
+  state.meta.trackingStart = todayDate();
+  state.meta.trackingStartAt = nowIso();
   saveState();
+  closeResetSheet();
   render();
-  toast('History wiped');
+  toast('History reset');
+}
+
+// Part 1 controls — non-destructive, offered on their own so the floor can be
+// tried before deleting anything, and cleared to restore every number.
+function setTrackingStartToday() {
+  state.meta.trackingStart = todayDate();
+  state.meta.trackingStartAt = nowIso();
+  saveState(); render();   // render() re-renders the open reset sheet too
+  toast('Tracking start set to today');
+}
+function clearTrackingStart() {
+  state.meta.trackingStart = null;
+  state.meta.trackingStartAt = nowIso();
+  saveState(); render();
+  toast('Tracking start cleared');
+}
+
+const resetSheet = document.getElementById('reset-sheet');
+function openResetSheet()  { resetTicks = defaultResetTicks(); renderResetSheet(); if (resetSheet) resetSheet.classList.add('open'); }
+function closeResetSheet() { if (resetSheet) resetSheet.classList.remove('open'); }
+
+function renderResetSheet() {
+  const panel = document.getElementById('reset-panel');
+  if (!panel) return;
+  const ts = trackingStartYmd();
+  const tsLine = ts
+    ? `Tracking starts ${escapeHtml(ts)}. History before it does not count. Clearing the date restores every number.`
+    : 'No tracking-start date set. Setting one hides history before it from every count — nothing is deleted, and clearing it restores every number.';
+  const rows = RESET_ROWS.map(r => `
+      <label class="reset-row">
+        <span class="reset-row-label">${escapeHtml(r.label)}</span>
+        <input type="checkbox" class="reset-check" data-reset-key="${escapeHtml(r.key)}"${resetTicks[r.key] ? ' checked' : ''}>
+      </label>${r.key === 'checks'
+        ? '<div class="reset-caveat">Habit checks have no per-record id, so another device can sync them back. Setting the tracking-start date makes any that return invisible.</div>'
+        : ''}`).join('');
+  panel.innerHTML = `
+    <div class="people-sheet-head"><h3 class="people-sheet-title">Reset history</h3></div>
+    <div class="people-sheet-sub">Tick what to clear. Everything cleared is tombstoned so it stays cleared across devices. Past dated tasks are unaffected.</div>
+    <div class="reset-ts-line">${tsLine}</div>
+    <div class="reset-ts-actions">
+      <button type="button" class="btn" data-reset-act="set-start">Set start to today</button>
+      ${ts ? '<button type="button" class="btn" data-reset-act="clear-start">Clear start date</button>' : ''}
+    </div>
+    <div class="reset-list">${rows}</div>
+    <div class="people-sheet-actions">
+      <button type="button" class="btn" data-reset-act="cancel">Cancel</button>
+      <button type="button" class="btn btn-danger" data-reset-act="run">Clear selected</button>
+    </div>`;
+  panel.querySelectorAll('.reset-check').forEach(cb =>
+    cb.addEventListener('change', () => { resetTicks[cb.dataset.resetKey] = cb.checked; }));
+  panel.querySelectorAll('[data-reset-act]').forEach(btn => btn.addEventListener('click', () => {
+    const act = btn.dataset.resetAct;
+    if      (act === 'set-start')   setTrackingStartToday();
+    else if (act === 'clear-start') clearTrackingStart();
+    else if (act === 'cancel')      closeResetSheet();
+    else if (act === 'run')         executeHistoryReset();
+  }));
 }
 
 // ---------------- toast ----------------
@@ -6258,6 +6395,7 @@ function render() {
   renderSettings();
   applyTodayLayout();     // reorder/hide Today sections after every renderer filled its wrapper
   if (todayCustomiseSheet && todayCustomiseSheet.classList.contains('open')) renderTodayCustomiser();
+  if (resetSheet && resetSheet.classList.contains('open')) renderResetSheet();
   maybeShowMorningPopup();
 }
 
@@ -6362,7 +6500,22 @@ function franklinDayCounts(seriesId) {
       if (e && e.tallyId === seriesId && e.date) m.set(e.date, (m.get(e.date) || 0) + 1);
     }
   }
+  // v97: floor the DISPLAYED counts to trackingStart — days-clean, week, month and
+  // the doorway's all-time all derive from this map, so dropping pre-floor keys
+  // floors every one at once. Stored events are untouched; clearing trackingStart
+  // rebuilds the full map (reversible).
+  const ts = trackingStartYmd();
+  if (ts) for (const k of [...m.keys()]) if (k < ts) m.delete(k);
   return m;
+}
+// v97: the days-clean fallback (used when the floored map has no events) must
+// measure from the later of the tally's createdAt and trackingStart, so a floored
+// tally reads "clean since tracking started", not since it was created.
+function franklinCleanCreated(createdAt) {
+  const ts = trackingStartYmd();
+  const c = createdAt ? String(createdAt).slice(0, 10) : null;
+  if (ts && (!c || ts > c)) return ts;
+  return createdAt;
 }
 function franklinSortedDates(map, today) {
   return [...map.keys()].filter(d => d <= today).sort();
@@ -6490,7 +6643,7 @@ function renderFrankDetail(seriesId) {
   // Real tallies carry a createdAt fallback for days-clean; '__offtrack' is
   // synthetic (no createdAt) and keeps the old null -> "—" when it has no events.
   const tally = (franklinData().tallies || []).find(t => t.id === seriesId);
-  const createdAt = tally ? tally.createdAt : null;
+  const createdAt = franklinCleanCreated(tally ? tally.createdAt : null);   // v97: floor to trackingStart
   const clean = franklinDaysClean(map, today, createdAt);
   const longest = franklinLongestClean(map, today, createdAt);
   const week = franklinWindowCount(map, weekDates(startOfWeek(today)));
@@ -6737,10 +6890,13 @@ function habitWindow70Stats(block, today) {
   today = today || todayDate();
   let dueDays = 0, doneDays = 0;
   const checks = (block.checks && typeof block.checks === 'object') ? block.checks : {};
-  const createdYmd = block.createdAt ? String(block.createdAt).slice(0, 10) : null;
+  // v97: this rate does NOT route through heatCellClass — floor it explicitly to
+  // the later of createdAt and trackingStart, so pre-floor days leave the
+  // denominator entirely (no 0/40) rather than counting as misses.
+  const floorYmd = blockFloorYmd(block);
   for (let i = 0; i < 70; i++) {
     const d = addDays(today, -i);
-    if ((createdYmd == null || d >= createdYmd) && d <= today && isDueToday(block, d)) {
+    if ((floorYmd == null || d >= floorYmd) && d <= today && isDueToday(block, d)) {
       // Today isn't over: a due-but-unchecked today is pending, not a miss —
       // exclude it from the denominator until it's checked (same chart law as
       // heatCellClass 'pending'). Once checked, it counts in both.
@@ -6783,8 +6939,8 @@ function longestBlockStreak(block, today) {
 
 function heatCellClass(block, d, today) {
   if (d > today) return 'future';
-  const createdYmd = block.createdAt ? String(block.createdAt).slice(0, 10) : null;
-  if (createdYmd && d < createdYmd) return 'pre';   // before the habit existed — not applicable (blank)
+  const floorYmd = blockFloorYmd(block);            // later of createdAt and trackingStart
+  if (floorYmd && d < floorYmd) return 'pre';       // before the floor — not applicable (blank), never 'missed'
   if (block.checks && block.checks[d]) return 'done';
   if (!isDueToday(block, d)) return 'notdue';
   // Today isn't over. A due-but-unchecked TODAY is pending, not missed — same
@@ -8054,9 +8210,11 @@ function blockStreak(block, today) {
   if (rec.kind === 'once') return 0;                 // a one-off has no streak
   if (rec.kind === 'weekly') return weeklyBlockStreak(block, today);
 
+  const floorYmd = blockFloorYmd(block);             // v97: don't count below the floor
   let count = 0;
   let d = today;
   for (let i = 0; i < 400; i++) {
+    if (floorYmd && d < floorYmd) break;             // pre-floor days are 'pre', never a streak
     // isDueToday is schedule-based (independent of checks) for daily/weekdays/everyN.
     if (isDueToday(block, d)) {
       if (checks[d]) {
@@ -8076,11 +8234,13 @@ function blockStreak(block, today) {
 // The current, still-open week doesn't break the run if not yet satisfied.
 function weeklyBlockStreak(block, today) {
   const checks = (block.checks && typeof block.checks === 'object') ? block.checks : {};
-  const satisfiedInWeek = ws => weekDates(ws).some(d => checks[d]);
+  const floorYmd = blockFloorYmd(block);             // v97: only post-floor checks count
+  const satisfiedInWeek = ws => weekDates(ws).some(d => checks[d] && (!floorYmd || d >= floorYmd));
   const thisWeekStart = startOfWeek(today);
   let count = 0;
   let ws = thisWeekStart;
   for (let i = 0; i < 400; i++) {
+    if (floorYmd && weekDates(ws).every(d => d < floorYmd)) break;   // whole week pre-floor -> stop
     if (satisfiedInWeek(ws)) {
       count++;
     } else if (ws === thisWeekStart) {
@@ -8945,10 +9105,13 @@ const PAST_DAYS_MAX = 7;         // max eligible rows offered
 // isDueToday reports due, only days >= createdAt. Returns newest-first YMDs.
 function pastDueDaysFor(block) {
   const out = [];
-  const createdYmd = block.createdAt ? String(block.createdAt).slice(0, 10) : null;
+  // v97: this correction tool does NOT route through heatCellClass — floor it
+  // explicitly so pre-floor days (which read 'pre' and count for nothing) are
+  // never offered for re-checking.
+  const floorYmd = blockFloorYmd(block);
   let d = yesterdayDate();
   for (let i = 0; i < PAST_DAYS_LOOKBACK && out.length < PAST_DAYS_MAX; i++) {
-    if ((createdYmd == null || d >= createdYmd) && isDueToday(block, d)) out.push(d);
+    if ((floorYmd == null || d >= floorYmd) && isDueToday(block, d)) out.push(d);
     d = addDays(d, -1);
   }
   return out;
@@ -9464,6 +9627,7 @@ const SCALAR_MERGES = [
   { get: s => s.franklin, field: 'cycleDays',     at: 'cycleDaysAt'     },
   { get: s => s,          field: 'focusLastType', at: 'focusLastTypeAt' },
   { get: s => s,          field: 'todayLayout',   at: 'todayLayoutAt'   },
+  { get: s => s.meta,     field: 'trackingStart', at: 'trackingStartAt' },
 ];
 
 // Resolve one field-timestamped scalar into `merged`. Later `at` wins; a single
@@ -10236,6 +10400,8 @@ document.getElementById('reset-btn').addEventListener('click', resetData);
 document.getElementById('today-customise-btn').addEventListener('click', openTodayCustomiser);
 // Backdrop tap closes the customiser (tap the dimmed area, not the panel).
 todayCustomiseSheet.addEventListener('click', e => { if (e.target === todayCustomiseSheet) closeTodayCustomiser(); });
+// Backdrop tap closes the reset sheet (tap the dimmed area, not the panel).
+if (resetSheet) resetSheet.addEventListener('click', e => { if (e.target === resetSheet) closeResetSheet(); });
 
 // Account & Backup (Supabase)
 (function wireAccountUi() {
