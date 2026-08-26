@@ -875,7 +875,7 @@ const SCHEMA_VERSION = 17;
 // Human-facing build tag shown in Settings and stamped into every export legend.
 // BUMP THIS TOGETHER WITH sw.js VERSION on every deploy — a stale tag is how a
 // rolled-back build went unnoticed for two days.
-const APP_VERSION = 'v97';
+const APP_VERSION = 'v98';
 
 // ---- Today layout (v96): user-controlled section order + visibility + rooms
 // preset. Defined BEFORE loadState() so ensureShape's defensive guard can read the
@@ -6882,10 +6882,10 @@ function checkboxBlocksForSpace(spaceId) {
 }
 
 // Completion over the last 70 days: doneDays / dueDays, where a due day is one
-// on-or-after the habit was created && date<=today && isDueToday. Clamping to
-// createdAt (mirrors blockStreak/longestBlockStreak) keeps pre-creation days —
-// which isDueToday reports as "due" for daily habits — from counting as missed.
-// dueDays===0 -> null ("—"). READ-ONLY (isDueToday itself is untouched).
+// on-or-after the floor (blockFloorYmd: later of createdAt and trackingStart) &&
+// date<=today && isDueToday. Flooring (mirrors blockStreak/longestBlockStreak)
+// keeps pre-floor days — which isDueToday reports as "due" for daily habits —
+// from counting as missed. dueDays===0 -> null ("—"). READ-ONLY.
 function habitWindow70Stats(block, today) {
   today = today || todayDate();
   let dueDays = 0, doneDays = 0;
@@ -6922,8 +6922,13 @@ function longestBlockStreak(block, today) {
   if (!block || block.type !== 'checkbox') return 0;
   const checks = (block.checks && typeof block.checks === 'object') ? block.checks : {};
   let start = addDays(today, -400);
-  const created = block.createdAt ? String(block.createdAt).slice(0, 10) : null;
-  if (created && created > start) start = created;
+  // v98: clamp to blockFloorYmd (later of createdAt and trackingStart) exactly as
+  // blockStreak does — pre-floor checks resurrected by mergeBlockPair's
+  // favouring-checked union no longer form runs. blockFloorYmd subsumes the old
+  // createdAt-only clamp (it returns createdAt when trackingStart is null or
+  // earlier), so the separate createdAt line was redundant and is removed.
+  const floorYmd = blockFloorYmd(block);
+  if (floorYmd && floorYmd > start) start = floorYmd;
   let best = 0, run = 0, d = start;
   for (let i = 0; i <= 400; i++) {
     if (d > today) break;
