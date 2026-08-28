@@ -875,7 +875,7 @@ const SCHEMA_VERSION = 17;
 // Human-facing build tag shown in Settings and stamped into every export legend.
 // BUMP THIS TOGETHER WITH sw.js VERSION on every deploy — a stale tag is how a
 // rolled-back build went unnoticed for two days.
-const APP_VERSION = 'v99';
+const APP_VERSION = 'v100';
 
 // ---- Today layout (v96): user-controlled section order + visibility + rooms
 // preset. Defined BEFORE loadState() so ensureShape's defensive guard can read the
@@ -1676,7 +1676,30 @@ function missStreak(habitId, endingDate) {
 // ---------------- daily summary ----------------
 
 function dailySummary(date) {
+  // Part 2 (v100): a date earlier than meta.trackingStart is NOT APPLICABLE, not
+  // zero. Every judgement field goes null/empty — completion_pct is null (0 would
+  // mean "did none of it"; null means "the question does not apply") — while sleep,
+  // mood and offTrackCount still read through from daily_state, which the user may
+  // have kept. trackingStart null -> behave exactly as before this build.
+  const ts = trackingStartYmd();
+  const dsRaw = state.daily_state.find(d => d.date === date);
+  if (ts && date < ts) {
+    const sl0 = dsRaw ? dsRaw.hours_slept : null;
+    const mA0 = dsRaw ? dsRaw.mood_am : null, mP0 = dsRaw ? dsRaw.mood_pm : null;
+    return {
+      preFloor: true,
+      completion_pct: null, expected: 0, done: 0, missed: [],
+      streaks_updated: [], streaks_broken: [],
+      sleep_hours: sl0, mood_am: mA0, mood_pm: mP0,
+      mood_delta: (mA0 != null && mP0 != null) ? mP0 - mA0 : null,
+      first_task_time: null, last_task_time: null, largest_gap_minutes: 0
+    };
+  }
+
   const dCode = DAY_CODES[parseYmd(date).getDay()];
+  // state.habits is the LEGACY empty collection — habitsToday, and the
+  // currentStreak/previousStreak calls below, are dead paths kept only so the
+  // return shape is unchanged; they contribute nothing (habitsToday is always []).
   const habitsToday = state.habits.filter(h => !h.archived && h.days.includes(dCode));
   // Only trackable to-do items count toward expected/missed — events (trackCompletion:false) are calendar markers.
   const trackItemsToday = state.items.filter(i => i.date === date && i.trackCompletion);
@@ -1684,15 +1707,30 @@ function dailySummary(date) {
   const dueBlocks = (state.blocks || []).filter(b => b.type === 'checkbox' && isDueToday(b, date));
   const doneBlocks = dueBlocks.filter(b => b.checks && b.checks[date]);
   const expected = habitsToday.length + trackItemsToday.length + dueBlocks.length;
+
+  // Part 1 (v100): a completion counts toward THIS date only when the item it
+  // references is itself dated `date` and trackable. writeCompletion stamps the
+  // day the button was pressed (todayDate()), not the day the task belonged to —
+  // so re-ticked backlog counts on its OWN item's day, and a completion whose
+  // ref_id resolves to nothing counts toward NO day (no fallback to c.date). This
+  // makes numerator and denominator describe the same set (trackItemsToday) and
+  // needs no migration, since it derives from the item, not the stored date.
+  const itemById = new Map((state.items || []).map(i => [i.id, i]));
+  const compsForDate = state.completions.filter(c => {
+    const it = itemById.get(c.ref_id);
+    return it && it.date === date && it.trackCompletion;
+  });
+  const done = compsForDate.length + doneBlocks.length;
+  // Activity timeline (first/last/largest-gap) reflects when buttons were pressed
+  // ON this day, so it still keys on the completion's stored date.
   const compsToday = state.completions.filter(c => c.date === date);
-  const done = compsToday.length + doneBlocks.length;
 
   const isToday = date === todayDate();
   const nowMins = isToday ? minsSinceMidnight(nowHHMM()) : 24 * 60;
 
   const missed = [];
   const checkMissed = (item) => {
-    if (compsToday.some(c => c.ref_id === item.id)) return;
+    if (compsForDate.some(c => c.ref_id === item.id)) return;
     if (!isToday) { missed.push(item.title); return; }
     // All-day to-do items have no time — count as missed only if the date is past, not mid-day.
     if (item.time && minsSinceMidnight(item.time) < nowMins) missed.push(item.title);
@@ -1702,8 +1740,8 @@ function dailySummary(date) {
 
   const streaksUpdated = [];
   const streaksBroken = [];
-  for (const h of habitsToday) {
-    const isDone = compsToday.some(c => c.ref_id === h.id);
+  for (const h of habitsToday) {   // dead path: habitsToday is always []
+    const isDone = compsForDate.some(c => c.ref_id === h.id);
     if (isDone) {
       streaksUpdated.push({ title: h.title, streak: currentStreak(h.id, date) });
     } else if (!isToday) {
@@ -1712,7 +1750,7 @@ function dailySummary(date) {
     }
   }
 
-  const ds = state.daily_state.find(d => d.date === date);
+  const ds = dsRaw;
   const sleep = ds ? ds.hours_slept : null;
   const moodAm = ds ? ds.mood_am : null;
   const moodPm = ds ? ds.mood_pm : null;
@@ -1736,7 +1774,8 @@ function dailySummary(date) {
     streaks_updated: streaksUpdated,
     streaks_broken: streaksBroken,
     sleep_hours: sleep,
-    sleep_target_delta: sleep != null ? sleep - 7.5 : null,
+    // sleep_target_delta removed (v100): a hardcoded 7.5h target is a target on
+    // data, against law 1 — same class as the v85 insights panel.
     mood_am: moodAm, mood_pm: moodPm,
     mood_delta: (moodAm != null && moodPm != null) ? moodPm - moodAm : null,
     first_task_time: firstTime, last_task_time: lastTime,
@@ -7204,9 +7243,13 @@ function renderCalendarDetail() {
   const summary = dailySummary(date);
   const today = todayDate();
 
-  const summaryStr = summary.expected > 0
-    ? `${summary.done}/${summary.expected} completed (${Math.round(summary.completion_pct * 100)}%)`
-    : 'Nothing scheduled.';
+  // Pre-floor days (v100): raw logs below may still show, but no completion figure,
+  // no percentage, no verdict — the day predates the tracking-start date.
+  const summaryStr = summary.preFloor
+    ? 'Before your tracking-start date.'
+    : summary.expected > 0
+      ? `${summary.done}/${summary.expected} completed (${Math.round(summary.completion_pct * 100)}%)`
+      : 'Nothing scheduled.';
 
   const addBtnHtml = `<button type="button" class="btn btn-primary cal-add-btn" id="cal-add-btn">+ Add to this day</button>`;
 
@@ -7584,7 +7627,7 @@ function renderHistoryLegacy() {
       <div class="item-row" style="cursor: default;">
         <div class="item-time">${dStr}</div>
         <div class="item-body">
-          <div class="item-title">${summary.done}/${summary.expected} completed</div>
+          <div class="item-title">${summary.preFloor ? 'Before tracking started' : summary.done + '/' + summary.expected + ' completed'}</div>
           <div class="item-meta">${meta.join(' &middot; ') || '—'}</div>
         </div>
       </div>
