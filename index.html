@@ -875,7 +875,7 @@ const SCHEMA_VERSION = 17;
 // Human-facing build tag shown in Settings and stamped into every export legend.
 // BUMP THIS TOGETHER WITH sw.js VERSION on every deploy — a stale tag is how a
 // rolled-back build went unnoticed for two days.
-const APP_VERSION = 'v98';
+const APP_VERSION = 'v99';
 
 // ---- Today layout (v96): user-controlled section order + visibility + rooms
 // preset. Defined BEFORE loadState() so ensureShape's defensive guard can read the
@@ -1140,6 +1140,16 @@ function ensureShape(s) {
   }
   // Defensive post-guard for fresh-v7 states.
   if (!s.meta.tombstones || typeof s.meta.tombstones !== 'object') s.meta.tombstones = {};
+  // v99 — ALWAYS-RUN, idempotent purge of daily_state tombstones (check the field,
+  // not the version; the v86 lesson). daily_state is keyed by DATE, so a
+  // "daily_state:<date>" tombstone key IS that day's record identity — the merge's
+  // blind drop then makes the day permanently unwritable (v97's reset poisoned 60
+  // dates this way). trackingStart already hides pre-floor days from every count,
+  // so nothing here was being protected. ONLY the daily_state: prefix — every
+  // id-keyed prefix stays (those use isTombstoned's timestamp comparison).
+  for (const k of Object.keys(s.meta.tombstones)) {
+    if (k.startsWith('daily_state:')) delete s.meta.tombstones[k];
+  }
   // Hygiene: drop tombstones older than 90 days so the map can't grow forever.
   pruneTombstones(s.meta.tombstones);
 
@@ -4993,7 +5003,12 @@ function applyResetClears(ticks) {
     // to-dos exactly as they are (they do not reappear as pending).
   }
   if (ticks.focus)       { tombstoneAll('focusSessions', state.focusSessions); state.focusSessions = []; state.activeFocus = null; }
-  if (ticks.daily)       { for (const d of (state.daily_state || [])) if (d && d.date) tombstone('daily_state', d.date); state.daily_state = []; }
+  // v99: date-keyed collections CANNOT carry tombstones — the tombstone key
+  // ("daily_state:<date>") and the record identity are the same value, so a
+  // tombstoned day can never be written again. Clearing the array locally is
+  // enough; a day returning from another device is real, and trackingStart hides
+  // pre-floor days from every count. So: clear, do NOT tombstone.
+  if (ticks.daily)       { state.daily_state = []; }
   if (ticks.tallyEvents) { tombstoneAll('franklin.tallyEvents', f.tallyEvents); f.tallyEvents = []; }
   if (ticks.virtueSlips) { tombstoneAll('franklin.virtueSlips', f.virtueSlips); f.virtueSlips = []; }
   if (ticks.codeReads)   { tombstoneAll('code.codeReads', code.codeReads); code.codeReads = []; }
@@ -9507,7 +9522,11 @@ function mergeDayEntry(local, remote, remoteIsNewer) {
   return merged;
 }
 
-function mergeDailyState(localState, remoteState, remoteIsNewer, tomb) {
+// daily_state is keyed by date and carries NO per-record timestamp, so there is
+// nothing for isTombstoned to compare — and a date-keyed tombstone would make the
+// day permanently unwritable (v99). So daily_state does not participate in
+// tombstones at all: union by date, field-merge, keep every day.
+function mergeDailyState(localState, remoteState, remoteIsNewer) {
   const localArr = asArray(localState.daily_state);
   const remoteArr = asArray(remoteState.daily_state);
   const dates = new Set();
@@ -9515,7 +9534,6 @@ function mergeDailyState(localState, remoteState, remoteIsNewer, tomb) {
   remoteArr.forEach(d => { if (d && d.date) dates.add(d.date); });
   const out = [];
   for (const date of dates) {
-    if (tomb['daily_state:' + date]) continue; // day tombstoned -> drop
     const l = localArr.find(d => d.date === date) || null;
     const r = remoteArr.find(d => d.date === date) || null;
     out.push(mergeDayEntry(l, r, remoteIsNewer));
@@ -9701,8 +9719,9 @@ function mergeStates(localState, remoteState) {
     col.set(merged, outArr);
   }
 
-  // 3. daily_state (date-keyed): union by date, field-wise merge.
-  merged.daily_state = mergeDailyState(localState, remoteState, remoteIsNewer, tomb);
+  // 3. daily_state (date-keyed): union by date, field-wise merge. NOT tombstoned
+  // (v99): the key would be the day's identity, making it permanently unwritable.
+  merged.daily_state = mergeDailyState(localState, remoteState, remoteIsNewer);
 
   // 3b. code.virtueNotes (object keyed by virtue id): field-wise merge so a note
   // written on either device survives the scalar whole-object copy.
