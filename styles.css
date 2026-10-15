@@ -39,6 +39,11 @@
   /* Focus session-type accent — purple for Reading. Must match the scatter's
      JS target FOCUS_SCATTER_READING = rgb(138,92,224). */
   --focus-reading: #8a5ce0;
+  /* v101 user focus-type palette additions. Must match FOCUS_TYPE_COLORS in
+     index.html: teal = rgb(48,176,199), rose = rgb(255,45,85). The other four
+     palette keys reuse --accent, --focus-reading, --ok and --prio-medium. */
+  --focus-teal: #30b0c7;
+  --focus-rose: #ff2d55;
 
   /* ---- Priority — DISTINCT from --accent so the amber bar won't clash if accent changes ---- */
   --prio-high:   #ff3b30;
@@ -1526,16 +1531,115 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 }
 .focus-delete-btn:hover { background: var(--danger-dim); }
 
-/* ---------- Focus session types (Work / Reading) ---------- */
-/* Picker on the Focus card — two tabs, so override .type-tabs' 3-col grid. */
-.focus-type-tabs { grid-template-columns: repeat(2, 1fr); margin: 4px 0 12px; }
-/* Small colored dot before a typed session's date in the recent-sessions log. */
+/* ---------- Focus session types (v101: user-defined, up to 6 active) ---------- */
+/* Picker on the Focus card — a WRAPPING flex row, not a fixed grid: buttons size
+   to their label (never truncated or ellipsised) and grow to fill each row, so a
+   long label simply takes a wider button and more rows. */
+.focus-type-tabs { display: flex; flex-wrap: wrap; margin: 4px 0 12px; }
+.focus-type-tabs button {
+  flex: 1 1 auto; min-height: 44px; min-width: 44px; padding: 8px 12px;
+  display: inline-flex; align-items: center; justify-content: center;
+  white-space: nowrap;
+}
+/* Small colored dot before a typed session's label/date. Its color is an inline
+   style whose hex comes only from the JS FOCUS_TYPE_COLORS allowlist. */
 .focus-type-dot {
   display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-  margin-right: 6px; vertical-align: baseline;
+  margin-right: 6px; vertical-align: baseline; flex-shrink: 0;
 }
-.focus-type-work    { background: var(--accent); }
-.focus-type-reading { background: var(--focus-reading); }
+.focus-tiles.focus-tiles-2 { grid-template-columns: repeat(2, 1fr); }
+
+/* Weekly hours by type — dot | label | this week | last week. The label cell is
+   the ONLY flexible column: min-width 0 + overflow hidden + ellipsis, so a long
+   label clips inside the card instead of bleeding past it (the v79 failure). The
+   numeric columns are fixed and never squeezed. */
+.fwh { display: flex; flex-direction: column; }
+.fwh-row {
+  display: flex; align-items: center; gap: 6px;
+  min-height: 32px; padding: 4px 0; border-top: 1px solid var(--separator);
+  font-size: 14px;
+}
+.fwh-row:first-child { border-top: none; }
+.fwh-dot { flex: 0 0 8px; display: inline-flex; }
+.fwh-dot .focus-type-dot { margin-right: 0; }
+.fwh-label {
+  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text-primary);
+}
+.fwh-this, .fwh-last {
+  flex: 0 0 auto; min-width: 56px; text-align: right; white-space: nowrap;
+  font-family: var(--font-mono); font-feature-settings: var(--num); font-size: 13px;
+}
+.fwh-this { color: var(--text-primary); font-weight: 600; }
+.fwh-last { color: var(--text-tertiary); }
+.fwh-colhead { min-height: 0; padding: 0 0 2px; }
+.fwh-colhead .fwh-this, .fwh-colhead .fwh-last {
+  font-size: 10px; font-weight: 600; color: var(--text-tertiary);
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.fwh-archived .fwh-label, .fwh-archived .fwh-this, .fwh-archived .fwh-dot { opacity: 0.55; }
+.fwh-total .fwh-label { font-weight: 600; }
+.fwh-note { font-size: 11px; color: var(--text-tertiary); margin: 6px 0 2px; line-height: 1.4; }
+.focus-types-manage-btn { width: 100%; margin-top: 18px; }
+
+/* Retag pills on the session detail page — same wrapping rules as the picker. */
+.focus-retag { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 6px; }
+.focus-retag-pill {
+  flex: 1 1 auto; min-height: 44px; min-width: 44px; padding: 8px 12px;
+  display: inline-flex; align-items: center; justify-content: center; white-space: nowrap;
+  border: 1px solid var(--separator); border-radius: var(--r-pill);
+  background: var(--surface-inset); color: var(--text-secondary);
+  font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit;
+  -webkit-appearance: none; appearance: none;
+}
+.focus-retag-pill.active { background: var(--card); color: var(--text-primary); border-color: var(--text-tertiary); box-shadow: var(--shadow-sm); }
+
+/* Manage focus types sheet. The .modal-panel scrolls internally (max-height
+   92vh, overflow-y auto), so the page never scrolls behind it. */
+#focus-types-panel { overscroll-behavior: contain; }   /* scrolling the sheet never scrolls the page */
+.ft-list { display: flex; flex-direction: column; }
+.ft-row {
+  display: flex; align-items: center; gap: 8px;
+  min-height: 52px; padding: 4px 0; border-top: 1px solid var(--separator);
+}
+.ft-list > .ft-row:first-child { border-top: none; }
+.ft-dot { flex: 0 0 8px; display: inline-flex; }
+.ft-dot .focus-type-dot { margin-right: 0; }
+.ft-label {
+  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 15px; color: var(--text-primary);
+}
+.ft-count {
+  flex: 0 0 auto; font-size: 12px; color: var(--text-tertiary); white-space: nowrap;
+  font-family: var(--font-mono); font-feature-settings: var(--num);
+}
+.ft-edit-btn { flex: 0 0 auto; padding: 8px 12px; font-size: 14px; }
+.ft-row-archived .ft-label, .ft-row-archived .ft-dot { opacity: 0.55; }
+.ft-row-editing { flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 0; }
+.ft-edit-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.ft-edit-actions .btn { flex: 1 1 auto; }
+.ft-group-head {
+  margin: 18px 0 6px; font-size: 11px; color: var(--text-tertiary);
+  text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; font-family: var(--font-mono);
+}
+.ft-field-label { font-size: 12px; color: var(--text-secondary); }
+.ft-input { width: 100%; min-height: 44px; }
+.ft-new { display: flex; flex-direction: column; gap: 8px; }
+.ft-add-btn { width: 100%; }
+/* Six 44x44 swatches never wrap: 6 x 44 = 264px + 5 x 2px minimum gap = 274px,
+   which fits the sheet's 278px content width at a 320px viewport (measured: the
+   row spans 278px with ~2.8px gaps; 333px with ~13.8px gaps at 375px). */
+.ft-swatches { display: flex; flex-wrap: nowrap; justify-content: space-between; gap: 2px; }
+.ft-swatch {
+  flex: 0 0 44px; width: 44px; height: 44px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 2px solid transparent; border-radius: 50%; background: var(--surface-inset);
+  cursor: pointer; -webkit-appearance: none; appearance: none;
+}
+.ft-swatch .focus-type-dot { width: 20px; height: 20px; margin-right: 0; }
+.ft-swatch.active { border-color: var(--text-primary); }
+.ft-msg { font-size: 13px; line-height: 1.4; color: var(--danger); padding: 4px 0 8px; }
+.ft-cap-note { font-size: 13px; line-height: 1.45; color: var(--text-secondary); padding: 4px 0; }
 /* Muted type suffix on the detail page title (e.g. "· Reading"). */
 .focus-detail-type { color: var(--text-secondary); font-weight: 500; font-size: 0.9em; }
 

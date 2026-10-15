@@ -387,6 +387,11 @@
   <div class="modal-panel" id="reset-panel"></div>
 </div>
 
+<!-- Focus types bottom-sheet (v101) — add, rename, recolor, archive, restore. Never delete. -->
+<div class="modal vault-sheet-mode" id="focus-types-sheet" role="dialog" aria-modal="true" aria-label="Focus types">
+  <div class="modal-panel" id="focus-types-panel"></div>
+</div>
+
 <div class="modal" id="action-sheet" role="dialog" aria-modal="true">
   <div class="modal-panel action-panel">
     <div class="action-title" id="action-title">Item</div>
@@ -875,7 +880,7 @@ const SCHEMA_VERSION = 17;
 // Human-facing build tag shown in Settings and stamped into every export legend.
 // BUMP THIS TOGETHER WITH sw.js VERSION on every deploy — a stale tag is how a
 // rolled-back build went unnoticed for two days.
-const APP_VERSION = 'v100';
+const APP_VERSION = 'v101';
 
 // ---- Today layout (v96): user-controlled section order + visibility + rooms
 // preset. Defined BEFORE loadState() so ensureShape's defensive guard can read the
@@ -919,6 +924,30 @@ function resolveTodayOrder(order) {
 function roomsPresetsFor(visibleCount) {
   return visibleCount <= 4 ? ROOMS_STYLES.slice() : ['grid', 'list'];
 }
+
+// ---- Focus types (v101): user-defined, stored in state.focusTypes. Defined
+// BEFORE loadState() so ensureShape's always-run guard can read them. ----------
+// Fixed palette for focus-type dots and scatter age-ramp targets. A type's
+// `color` field is a KEY into this map, never a stored hex or CSS string — a
+// user-typed value must never reach a style attribute. Unknown key -> 'blue'.
+// rgb triples must match the CSS custom props exactly (the v95 contract).
+const FOCUS_TYPE_COLORS = {
+  blue:   { hex: '#0a84ff', rgb: [10, 132, 255] },
+  purple: { hex: '#8a5ce0', rgb: [138, 92, 224] },
+  green:  { hex: '#34c759', rgb: [52, 199, 89] },
+  amber:  { hex: '#ff9f0a', rgb: [255, 159, 10] },
+  teal:   { hex: '#30b0c7', rgb: [48, 176, 199] },
+  rose:   { hex: '#ff2d55', rgb: [255, 45, 85] }
+};
+// The two seeded types keep these STABLE ids forever: every pre-v101
+// focusSessions record already stores one of these strings as `type`, so they are
+// foreign keys into focusTypes and no session record ever needs migrating.
+const FOCUS_TYPE_SEEDS = [
+  { id: 'work',    label: 'Work',    color: 'blue',   order: 0 },
+  { id: 'reading', label: 'Reading', color: 'purple', order: 1 }
+];
+const FOCUS_TYPE_LABEL_MAX = 14;   // characters (code points), enforced on input and in the guard
+const FOCUS_TYPE_ACTIVE_MAX = 6;   // unarchived types; archived ones do not count
 
 let state = loadState();
 
@@ -1059,9 +1088,40 @@ function ensureShape(s) {
   // Defensive defaults for fresh-v3 states (seedState already sets these).
   if (!Array.isArray(s.focusSessions)) s.focusSessions = [];
   if (typeof s.activeFocus === 'undefined') s.activeFocus = null;
-  // Sticky Focus session-type preference (NOT user data / not version-gated):
-  // default to 'work' and normalize any bad merged-in value. Additive.
-  if (s.focusLastType !== 'work' && s.focusLastType !== 'reading') s.focusLastType = 'work';
+  // v101 focusTypes — ALWAYS-RUN defensive guard (check the field, not the
+  // version; the v86 lesson). A device on stale cached JS can push a blob with no
+  // focusTypes; a one-shot migration would leave that hole open, this cannot.
+  // Idempotent and self-healing; mergeStates step 5 runs it after every merge.
+  // No schema bump. It also normalises the sticky focusLastType preference
+  // (replaces the old two-literal check). Never touches focusSessions.
+  {
+    const codePoints = v => Array.from(String(v).trim());
+    let list = Array.isArray(s.focusTypes) ? s.focusTypes : [];                          // 1
+    list = list.filter(r => r && typeof r === 'object' && !Array.isArray(r)
+                         && typeof r.id === 'string' && r.id);                           // 2
+    for (const r of list) {                                                              // 3
+      const seed = FOCUS_TYPE_SEEDS.find(x => x.id === r.id);
+      let label = typeof r.label === 'string' ? codePoints(r.label).slice(0, FOCUS_TYPE_LABEL_MAX).join('') : '';
+      if (!label) label = seed ? seed.label : codePoints(r.id).slice(0, FOCUS_TYPE_LABEL_MAX).join('');
+      r.label = label;
+      if (typeof r.color !== 'string' || !Object.prototype.hasOwnProperty.call(FOCUS_TYPE_COLORS, r.color)) r.color = 'blue';
+      r.order = (typeof r.order === 'number' && isFinite(r.order)) ? Math.round(r.order) : 1e6;
+      r.archived = r.archived === true;
+      if (typeof r.createdAt !== 'string' || !/^\d{4}-\d{2}-\d{2}/.test(r.createdAt)) r.createdAt = todayDate();
+    }
+    const seen = new Set();                                                              // 4
+    list = list.filter(r => (seen.has(r.id) ? false : (seen.add(r.id), true)));
+    for (const sd of FOCUS_TYPE_SEEDS) {                                                 // 5
+      if (!seen.has(sd.id)) list.push({ ...sd, archived: false, createdAt: todayDate() });
+    }
+    const byOrder = (a, b) => (a.order - b.order) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+    list.sort(byOrder);
+    if (!list.some(r => !r.archived)) list[0].archived = false;                          // 6 (list is never empty: seeds)
+    list.forEach((r, i) => { r.order = i; });                                            // 7 (array order = order)
+    s.focusTypes = list;
+    const live = list.filter(r => !r.archived);                                          // 8
+    if (!live.some(r => r.id === s.focusLastType)) s.focusLastType = live[0].id;
+  }
 
   // v96 todayLayout — ALWAYS-RUN defensive guard (check the field, not the
   // version; the v86 lesson). Coerce order + both hidden arrays to arrays of
@@ -1444,6 +1504,7 @@ function seedState() {
     daily_state: [],
     templates: [],
     focusSessions: [],
+    focusTypes: [],          // ensureShape's v101 guard seeds work + reading
     activeFocus: null,
     vault: { transactions: [], goals: [] },
     spaces: [],
@@ -2182,18 +2243,19 @@ function renderFocusCard() {
     summary = 'Tap to start a deep-work block. Log each time you notice your focus slipped.';
   }
   // While a session runs, surface its type in the summary line (in place of the
-  // picker, which is hidden mid-session). Untyped (pre-deploy) sessions: no suffix.
+  // picker, which is hidden mid-session). Untyped (pre-deploy) sessions and an
+  // id whose type record is gone: focusTypeLabel returns '' -> no suffix.
   if (active) {
-    const t = state.activeFocus.type;
-    if (t === 'work' || t === 'reading') summary += ` · ${focusTypeLabel(t)}`;
+    const tl = focusTypeLabel(state.activeFocus.type);
+    if (tl) summary += ` · ${tl}`;
   }
   const btnLabel = active ? 'Resume Focus Session' : 'Start Focus Session';
 
   // Type picker: only when NO session is active (mid-session the type is fixed).
+  // One button per unarchived type, in `order`; labels escaped, dot from the palette.
   const typePicker = active ? '' : `
       <div class="type-tabs focus-type-tabs" id="focus-type-tabs">
-        <button type="button" data-ftype="work" class="${state.focusLastType === 'work' ? 'active' : ''}">Work</button>
-        <button type="button" data-ftype="reading" class="${state.focusLastType === 'reading' ? 'active' : ''}">Reading</button>
+        ${focusTypesActive().map(t => `<button type="button" data-ftype="${escapeHtml(t.id)}" class="${state.focusLastType === t.id ? 'active' : ''}">${focusTypeDot(t.id)}${escapeHtml(t.label)}</button>`).join('')}
       </div>`;
 
   wrap.innerHTML = `
@@ -2212,17 +2274,55 @@ function renderFocusCard() {
   if (typeTabs) typeTabs.addEventListener('click', e => {
     const b = e.target.closest('[data-ftype]');
     if (!b) return;
-    state.focusLastType = b.dataset.ftype;   // 'work' | 'reading' — stored preference, syncs
+    // Only an UNARCHIVED type id is accepted — a stale DOM node after a sync can
+    // name a type archived on the other device; ignore it.
+    const t = focusTypeById(b.dataset.ftype);
+    if (!t || t.archived) return;
+    state.focusLastType = t.id;              // a focusTypes id — stored preference, syncs
     state.focusLastTypeAt = nowIso();         // field stamp -> per-field newest-wins merge
     saveState();
     render();
   });
 }
 
-// Display label for a focus session type. Returns '' for absent/untagged.
-function focusTypeLabel(t) { return t === 'work' ? 'Work' : t === 'reading' ? 'Reading' : ''; }
-// Small colored dot for a typed session; '' for untagged (absence reads cleaner).
-function focusTypeDot(t) { return (t === 'work' || t === 'reading') ? `<span class="focus-type-dot focus-type-${t}"></span>` : ''; }
+// ---- Focus type derive helpers (v101). state.focusTypes is normalised by the
+// ensureShape guard: array order === `order`, ids unique, >= 1 unarchived. ----
+function focusTypesOrdered() { return (state.focusTypes || []).slice().sort((a, b) => a.order - b.order); }
+// Unarchived, in order — what the picker, the scatter and the retag pills use.
+function focusTypesActive() { return focusTypesOrdered().filter(t => !t.archived); }
+function focusTypeById(id) {
+  if (typeof id !== 'string' || !id) return null;
+  return (state.focusTypes || []).find(t => t.id === id) || null;
+}
+// Display label for a focus session type. Returns '' for absent/untagged AND for
+// an id whose type record is gone (e.g. lost in a merge) — '' is what makes a
+// pre-2026-07-25 untagged session render with no suffix.
+function focusTypeLabel(id) { const t = focusTypeById(id); return t ? t.label : ''; }
+// Palette lookup through the record; an unresolvable id gets the untagged grey.
+function focusTypeColorRgb(id) {
+  const t = focusTypeById(id);
+  const c = t && FOCUS_TYPE_COLORS[t.color];
+  return c ? c.rgb : FOCUS_SCATTER_UNTAGGED;
+}
+function focusTypeColorHex(id) {
+  const t = focusTypeById(id);
+  const c = t && FOCUS_TYPE_COLORS[t.color];
+  return c ? c.hex : FOCUS_SCATTER_UNTAGGED_HEX;
+}
+// Small colored dot for a typed session; '' for untagged/unresolvable (absence
+// reads cleaner). A user-created type has no CSS class at build time, so the
+// color is an inline style — and that hex comes ONLY from the FOCUS_TYPE_COLORS
+// allowlist via the record's color KEY. Stored text is never interpolated here.
+function focusTypeDot(id) {
+  const t = focusTypeById(id);
+  const c = t && FOCUS_TYPE_COLORS[t.color];
+  return c ? `<span class="focus-type-dot" style="background: ${c.hex}"></span>` : '';
+}
+// Dot for a palette KEY (the manage sheet's swatches/new-type preview). Same allowlist rule.
+function focusColorDot(key) {
+  const c = FOCUS_TYPE_COLORS[key] || FOCUS_TYPE_COLORS.blue;
+  return `<span class="focus-type-dot" style="background: ${c.hex}"></span>`;
+}
 
 // ---------------- sleep (bedtime) ----------------
 // The daily log already carries a `bedtime` field ("HH:MM" | null). This card
@@ -2278,7 +2378,8 @@ function renderSleepCard() {
 function startFocusSession() {
   // lapseOffsets: seconds-from-start for each lapse (for a future timeline view).
   // Optional/additive — older sessions have only the `lapses` total.
-  // type: sticky Work/Reading choice, captured at start (guarded to a valid value).
+  // type: sticky focusTypes id, captured at start (the guard keeps focusLastType
+  // pointing at an unarchived type).
   state.activeFocus = { start: nowIso(), type: state.focusLastType, lapses: 0, lapseOffsets: [] };
   saveState();
   openFocusOverlay();
@@ -2296,9 +2397,11 @@ function endFocusSession() {
     lapses: af.lapses | 0,
     lapseOffsets: Array.isArray(af.lapseOffsets) ? af.lapseOffsets.slice() : []
   };
-  // type only when valid — a session started pre-deploy has no af.type, so the
-  // record stays untagged (absent field = old session, same as lapseOffsets).
-  if (af.type === 'work' || af.type === 'reading') rec.type = af.type;
+  // type only when it resolves to a focusTypes record — ARCHIVED OR NOT: a session
+  // started before its type was archived keeps its tag. A session started
+  // pre-deploy has no af.type (and an id lost in a merge resolves to nothing), so
+  // the record stays untagged (absent field = old session, same as lapseOffsets).
+  if (focusTypeById(af.type)) rec.type = af.type;
   state.focusSessions.push(rec);
   state.activeFocus = null;
   saveState();
@@ -2465,11 +2568,12 @@ function renderFocusMain(wrap) {
   // Companion tiles (context, NOT goals). Week time/count INCLUDE today (real
   // logged time); only the headline RATE excludes today.
   const thisWeekSet = new Set(weekDates(thisStart));
-  let weekHoursAll = 0, weekCount = 0;
+  let weekCount = 0;
   for (const s of sessionsAll) {
     if (!thisWeekSet.has(s.date)) continue;
-    if (focusSessHours(s) > 0) { weekHoursAll += focusSessHours(s); weekCount++; }
+    if (focusSessHours(s) > 0) weekCount++;
   }
+  const hoursBlock = focusWeekHoursHtml(focusWeekHoursByType(sessionsAll, today));
   const byStartDesc = [...sessionsAll].sort((a, b) => (b.start || '').localeCompare(a.start || ''));
   const avgSample = byStartDesc.slice(0, 20);
   const avgHours = avgSample.length
@@ -2484,8 +2588,9 @@ function renderFocusMain(wrap) {
   // differ in length and lapse rate, so a shared domain compressed both. Untagged
   // sessions predate typing (2026-07-25) and are excluded from charting; they stay
   // stored, logged and counted in the tiles above (law 5). A type with no sessions
-  // renders nothing at all — no header, no empty box.
-  const SCATTER_TYPES = [{ key: 'work', name: 'Work' }, { key: 'reading', name: 'Reading' }];
+  // renders nothing at all — no header, no empty box — which is what keeps six
+  // user types from producing six empty charts. v101: unarchived types, in order.
+  const SCATTER_TYPES = focusTypesActive().map(t => ({ key: t.id, name: t.label }));
   const scatterBlocks = SCATTER_TYPES.map(t => {
     const all = byStartDesc.filter(s => s.type === t.key);
     if (!all.length) return '';
@@ -2526,17 +2631,88 @@ function renderFocusMain(wrap) {
         <span class="focus-headline-unit">lapses / hour</span>
       </div>
       ${nudge}
-      <div class="focus-tiles">
+      <div class="focus-tiles focus-tiles-2">
         ${tile(hoursToHuman(avgHours) || '0m', avgLabel)}
-        ${tile(hoursToHuman(weekHoursAll) || '0m', 'focus this week')}
         ${tile(String(weekCount), weekCount === 1 ? 'session this week' : 'sessions this week')}
       </div>
+      ${hoursBlock}
       <div class="focus-scatter-head">Length vs lapse rate</div>
       ${scatter}
-      <div class="focus-legend">faded = older · ringed = last 3 days · blue = work · purple = reading</div>
+      <div class="focus-legend">faded = older · ringed = last 3 days · color = session type</div>
       <div class="focus-log-head">Recent sessions</div>
       ${logRows}
+      <button type="button" class="btn focus-types-manage-btn" data-ftmanage>Manage focus types</button>
     </div>`;
+}
+
+// ---- Weekly hours by type (v101) — hours only (laws 1 and 3): no percentages,
+// targets, progress bars or verdict words. Weeks are the SAME Sunday-start
+// startOfWeek/weekDates the panel already uses (a trailing-7-day window is the
+// v94 mismatch). This week includes today; last week is the complete prior
+// Sunday-start week. Pure over the passed sessions + state.focusTypes.
+function focusWeekHoursByType(sessionsAll, today) {
+  const thisStart = startOfWeek(today);
+  const lastStart = startOfWeek(addDays(thisStart, -1));
+  const thisDates = weekDates(thisStart), lastDates = weekDates(lastStart);
+  const thisSet = new Set(thisDates), lastSet = new Set(lastDates);
+  const sums = new Map();          // key: type id, or '' for untagged/unresolvable
+  const add = (key, wk, h) => {
+    if (!sums.has(key)) sums.set(key, { this: 0, last: 0 });
+    sums.get(key)[wk] += h;
+  };
+  for (const s of sessionsAll) {
+    const h = focusSessHours(s);
+    if (!(h > 0)) continue;
+    const wk = thisSet.has(s.date) ? 'this' : lastSet.has(s.date) ? 'last' : null;
+    if (!wk) continue;
+    // An id with no type record (lost in a merge) is counted as Untagged so the
+    // Total always equals the sum of its parts.
+    add(focusTypeById(s.type) ? s.type : '', wk, h);
+  }
+  const get = k => sums.get(k) || { this: 0, last: 0 };
+  const rows = [];
+  for (const t of focusTypesOrdered().filter(x => !x.archived)) {
+    const v = get(t.id);
+    if (v.this > 0 || v.last > 0) rows.push({ id: t.id, label: t.label, archived: false, ...v });
+  }
+  for (const t of focusTypesOrdered().filter(x => x.archived)) {
+    const v = get(t.id);
+    if (v.this > 0 || v.last > 0) rows.push({ id: t.id, label: t.label, archived: true, ...v });
+  }
+  // Untagged renders only when THIS week has untagged hours (> 0); zero -> no row.
+  const un = get('');
+  if (un.this > 0) rows.push({ id: null, label: 'Untagged', archived: false, ...un });
+  let totThis = 0, totLast = 0;
+  for (const v of sums.values()) { totThis += v.this; totLast += v.last; }
+  return { thisStart, thisEnd: thisDates[6], lastStart, lastEnd: lastDates[6], today,
+           rows, total: { this: totThis, last: totLast } };
+}
+
+function focusWeekHoursHtml(wh) {
+  const h = v => v > 0 ? (hoursToHuman(v) || '—') : '—';   // a week with no hours shows —, not 0m
+  const dot = r => r.id === null
+    ? `<span class="focus-type-dot" style="background: ${focusTypeColorHex(null)}"></span>`   // palette-free untagged grey
+    : focusTypeDot(r.id);
+  const row = (r, cls) => `
+      <div class="fwh-row${cls ? ' ' + cls : ''}">
+        <span class="fwh-dot">${r.dotHtml}</span>
+        <span class="fwh-label">${escapeHtml(r.label)}</span>
+        <span class="fwh-this">${escapeHtml(h(r.this))}</span>
+        <span class="fwh-last">${escapeHtml(h(r.last))}</span>
+      </div>`;
+  const md = d => parseYmd(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const body = wh.rows.map(r => row({ ...r, dotHtml: dot(r) }, r.archived ? 'fwh-archived' : '')).join('');
+  return `
+      <div class="focus-scatter-head">Hours this week</div>
+      <div class="fwh">
+        <div class="fwh-row fwh-colhead">
+          <span class="fwh-dot"></span><span class="fwh-label"></span>
+          <span class="fwh-this">This wk</span><span class="fwh-last">Last wk</span>
+        </div>
+        ${body}
+        ${row({ label: 'Total', dotHtml: '', this: wh.total.this, last: wh.total.last }, 'fwh-total')}
+      </div>
+      <div class="fwh-note">This week is ${escapeHtml(md(wh.thisStart))} – ${escapeHtml(md(wh.thisEnd))} and includes today. Last week is ${escapeHtml(md(wh.lastStart))} – ${escapeHtml(md(wh.lastEnd))}, complete.</div>`;
 }
 
 // ---- Focus per-session detail — stats + within-session lapse timeline ----
@@ -2633,12 +2809,23 @@ function renderFocusDetail(sess) {
     timeline = `<div class="focus-scatter-head">Lapse timeline</div>${chart}${note}`;
   }
 
+  // Retag (v101): unarchived types plus this session's own type if archived, the
+  // current one marked. There is deliberately NO "clear tag" pill: untagged is
+  // legacy-only state (pre-2026-07-25) and nothing in the app may create it.
+  const ownType = focusTypeById(sess.type);
+  const pillTypes = focusTypesActive();
+  if (ownType && ownType.archived) pillTypes.push(ownType);
+  const retag = `<div class="focus-retag" role="group" aria-label="Session type">
+      ${pillTypes.map(t => `<button type="button" class="focus-retag-pill${t.id === sess.type ? ' active' : ''}" data-focus-retag="${escapeHtml(t.id)}" aria-pressed="${t.id === sess.type ? 'true' : 'false'}">${focusTypeDot(t.id)}${escapeHtml(t.label)}</button>`).join('')}
+    </div>`;
+
   return `
     <div class="summary-panel focus-stats-panel">
       <div class="focus-detail-head">
         <button type="button" class="focus-back" data-focus-back aria-label="Back to Focus">‹ Back</button>
-        <h3 class="focus-detail-title">${escapeHtml(dLabel)}${focusTypeLabel(sess.type) ? `<span class="focus-detail-type"> · ${focusTypeLabel(sess.type)}</span>` : ''}</h3>
+        <h3 class="focus-detail-title">${escapeHtml(dLabel)}${focusTypeLabel(sess.type) ? `<span class="focus-detail-type"> · ${escapeHtml(focusTypeLabel(sess.type))}</span>` : ''}</h3>
       </div>
+      ${retag}
       ${tiles}
       ${timeline}
       <button type="button" class="focus-delete-btn" data-focus-delete="${escapeHtml(sess.id || '')}">Delete session</button>
@@ -2664,15 +2851,30 @@ function deleteFocusSession(id) {
   toast('Session deleted');
 }
 
+// Retag one saved session (v101). A field edit on a focusSessions record — it
+// merges newer-wins like any other edit; no tombstone, no new merge entry. Only
+// an existing type id is accepted (the pills offer unarchived types plus the
+// session's own archived one); there is no path that clears the tag.
+function retagFocusSession(sessId, typeId) {
+  const sess = (state.focusSessions || []).find(s => s && s.id === sessId);
+  const t = focusTypeById(typeId);
+  if (!sess || !t || sess.type === t.id) return;
+  if (t.archived) return;                         // can't move a session INTO an archived type
+  sess.type = t.id;
+  saveState();
+  render();
+}
+
 // Scatter: x = duration (minutes), y = lapse rate (lapses/hr, 0 at BOTTOM), so the
 // desirable corner is BOTTOM-RIGHT (long + clean). Dots shade oldest(pale)->newest
 // (--accent); sessions within the last 3 days get a ring. READ-ONLY; no target line.
 // Scatter age-ramp TARGET colors by session type. The ramp START is the shared
 // pale-grey c0 inside focusScatterSvg, so age-fade reads identically across
-// types; only the target hue differs. These must visually match the CSS:
-// FOCUS_SCATTER_READING <-> --focus-reading / .focus-type-reading (purple).
+// types; only the target hue differs. v101: typed targets come from
+// FOCUS_TYPE_COLORS (purple there === FOCUS_SCATTER_READING === --focus-reading).
 const FOCUS_SCATTER_READING = [138, 92, 224];    // purple — unclaimed hue in this app's charts
 const FOCUS_SCATTER_UNTAGGED = [150, 155, 162];  // neutral grey — quiet pre-feature history
+const FOCUS_SCATTER_UNTAGGED_HEX = '#969ba2';    // the same grey, for the weekly-hours Untagged dot
 
 function focusScatterSvg(sessions, today) {
   const W = 340, H = 184, padL = 34, padR = 14, padT = 14, padB = 30;
@@ -2682,8 +2884,7 @@ function focusScatterSvg(sessions, today) {
     .map(s => {
       const h = focusSessHours(s);
       if (h <= 0) return null;
-      const type = s.type === 'reading' ? 'reading' : s.type === 'work' ? 'work' : null;
-      return { min: h * 60, rate: (s.lapses | 0) / h, date: s.date || '', type };
+      return { min: h * 60, rate: (s.lapses | 0) / h, date: s.date || '', typeId: s.type || null };
     })
     .filter(Boolean)
     .sort((a, b) => a.date.localeCompare(b.date)); // oldest -> newest for age rank
@@ -2721,17 +2922,17 @@ function focusScatterSvg(sessions, today) {
     `<text class="fs-axis fs-axis-y" x="10" y="${(padT + plotH / 2).toFixed(1)}" text-anchor="middle" transform="rotate(-90 10 ${(padT + plotH / 2).toFixed(1)})">lapses/hr</text>`;
 
   // Dots: age-shaded pale-grey -> type-target by rank; recent (<= 2 days old) ringed.
-  // c1 (accent blue) is the WORK target; reading/untagged swap only the target hue,
-  // so work-only input renders byte-identically to the pre-type-encoding scatter.
+  // c1 (accent blue) is the original WORK target and still the ramp's reference
+  // hue; v101 looks the target up through the type's palette KEY (work = blue =
+  // c1, reading = purple = FOCUS_SCATTER_READING), so work-only and reading-only
+  // input render byte-identically to v100. Null/unresolvable id -> untagged grey.
   const c0 = [174, 174, 178], c1 = [10, 132, 255];
   const n = pts.length;
   const recentCut = addDays(today, -2);
   let dots = '';
   pts.forEach((p, i) => {
     const t = n <= 1 ? 1 : i / (n - 1);
-    const target = p.type === 'reading' ? FOCUS_SCATTER_READING
-                 : p.type === null ? FOCUS_SCATTER_UNTAGGED
-                 : c1; // 'work' -> accent (byte-identical to old behavior)
+    const target = p.typeId === null ? FOCUS_SCATTER_UNTAGGED : focusTypeColorRgb(p.typeId);
     const col = c0.map((c, k) => Math.round(c + (target[k] - c) * t));
     const fill = `rgb(${col[0]},${col[1]},${col[2]})`;
     const cx = x(p.min).toFixed(1), cy = y(p.rate).toFixed(1);
@@ -5145,6 +5346,177 @@ function renderResetSheet() {
   }));
 }
 
+// ---------------- Focus types sheet (v101) ----------------
+// Types ARCHIVE, never delete. A type's id is stored inside focusSessions
+// records; deleting it would orphan that history, and tombstoning a collection
+// whose ids are referenced from other records is the v97 failure class.
+// Archiving is a field edit on a registered collection: it merges newer-wins,
+// needs no tombstone and cannot orphan anything. There is no delete path.
+const focusTypesSheet = document.getElementById('focus-types-sheet');
+let ftEditId = null;                                    // type id whose inline editor is open
+let ftEditDraft = { label: '', color: 'blue' };         // that editor's unsaved values
+let ftNewDraft = { label: '', color: null };            // the New type form's unsaved values
+let ftMsg = null;                                       // { where: 'new' | <type id>, text } — a refusal reason
+function openFocusTypesSheet() {
+  ftEditId = null; ftMsg = null; ftNewDraft = { label: '', color: null };
+  renderFocusTypesSheet();
+  if (focusTypesSheet) focusTypesSheet.classList.add('open');
+}
+function closeFocusTypesSheet() { if (focusTypesSheet) focusTypesSheet.classList.remove('open'); }
+
+// Label rule shared by add + rename: trimmed, 1–14 characters, unique (case-
+// insensitive) across ALL types incl. archived. Returns { label } or { error }.
+function focusTypeLabelCheck(raw, selfId) {
+  const label = String(raw || '').trim();
+  const n = Array.from(label).length;
+  if (!n) return { error: 'Give the type a name.' };
+  if (n > FOCUS_TYPE_LABEL_MAX) return { error: `Names are at most ${FOCUS_TYPE_LABEL_MAX} characters.` };
+  const clash = (state.focusTypes || []).find(t => t.id !== selfId && t.label.toLowerCase() === label.toLowerCase());
+  if (clash) return { error: `"${clash.label}" already exists${clash.archived ? ' (archived — restore it instead)' : ''}.` };
+  return { label };
+}
+function focusTypeSessionCount(id) {
+  return (state.focusSessions || []).filter(s => s && s.type === id).length;
+}
+function ftSwatches(selected, act) {
+  return `<div class="ft-swatches" role="group" aria-label="Color">${Object.keys(FOCUS_TYPE_COLORS).map(k =>
+    `<button type="button" class="ft-swatch${k === selected ? ' active' : ''}" data-ftact="${act}" data-color="${k}" aria-label="${k}" aria-pressed="${k === selected ? 'true' : 'false'}">${focusColorDot(k)}</button>`).join('')}</div>`;
+}
+
+function renderFocusTypesSheet() {
+  const panel = document.getElementById('focus-types-panel');
+  if (!panel) return;
+  // Draft guard (the #goals-why-input pattern): never clobber a half-typed label.
+  // The drafts are also held in ftNewDraft / ftEditDraft, so a re-render after
+  // the input blurs restores the text rather than losing it.
+  const ae = document.activeElement;
+  if (ae && (ae.id === 'ft-new-input' || ae.id === 'ft-edit-input')) return;
+  const all = focusTypesOrdered();
+  const active = all.filter(t => !t.archived), archived = all.filter(t => t.archived);
+  const msg = where => (ftMsg && ftMsg.where === where) ? `<div class="ft-msg" role="alert">${escapeHtml(ftMsg.text)}</div>` : '';
+  const count = id => { const n = focusTypeSessionCount(id); return `${n} session${n === 1 ? '' : 's'}`; };
+
+  const activeRows = active.map(t => {
+    if (t.id === ftEditId) return `
+      <div class="ft-row ft-row-editing">
+        <label class="ft-field-label" for="ft-edit-input">Name</label>
+        <input type="text" id="ft-edit-input" class="ft-input" maxlength="${FOCUS_TYPE_LABEL_MAX}" autocomplete="off" value="${escapeHtml(ftEditDraft.label)}">
+        ${ftSwatches(ftEditDraft.color, 'edit-color')}
+        <div class="ft-edit-actions">
+          <button type="button" class="btn" data-ftact="archive" data-ftid="${escapeHtml(t.id)}">Archive</button>
+          <button type="button" class="btn" data-ftact="edit-cancel">Cancel</button>
+          <button type="button" class="btn btn-primary" data-ftact="edit-save" data-ftid="${escapeHtml(t.id)}">Save</button>
+        </div>
+        ${msg(t.id)}
+      </div>`;
+    return `
+      <div class="ft-row">
+        <span class="ft-dot">${focusTypeDot(t.id)}</span>
+        <span class="ft-label">${escapeHtml(t.label)}</span>
+        <span class="ft-count">${count(t.id)}</span>
+        <button type="button" class="btn ft-edit-btn" data-ftact="edit" data-ftid="${escapeHtml(t.id)}">Edit</button>
+      </div>${msg(t.id)}`;
+  }).join('');
+
+  const archivedBlock = archived.length ? `
+    <div class="ft-group-head">Archived</div>
+    <div class="ft-list">${archived.map(t => `
+      <div class="ft-row ft-row-archived">
+        <span class="ft-dot">${focusTypeDot(t.id)}</span>
+        <span class="ft-label">${escapeHtml(t.label)}</span>
+        <span class="ft-count">${count(t.id)}</span>
+        <button type="button" class="btn ft-edit-btn" data-ftact="restore" data-ftid="${escapeHtml(t.id)}">Restore</button>
+      </div>${msg(t.id)}`).join('')}
+    </div>` : '';
+
+  const atCap = active.length >= FOCUS_TYPE_ACTIVE_MAX;
+  const newColor = ftNewDraft.color || (Object.keys(FOCUS_TYPE_COLORS).find(k => !active.some(t => t.color === k)) || 'blue');
+  const newBlock = atCap
+    ? `<div class="ft-cap-note">${FOCUS_TYPE_ACTIVE_MAX} types are active, the most the picker holds. Archive one to add another.</div>`
+    : `<div class="ft-new">
+        <label class="ft-field-label" for="ft-new-input">Name</label>
+        <input type="text" id="ft-new-input" class="ft-input" maxlength="${FOCUS_TYPE_LABEL_MAX}" autocomplete="off" placeholder="e.g. Study" value="${escapeHtml(ftNewDraft.label)}">
+        ${ftSwatches(newColor, 'new-color')}
+        <button type="button" class="btn btn-primary ft-add-btn" data-ftact="add">Add type</button>
+        ${msg('new')}
+      </div>`;
+
+  panel.innerHTML = `
+    <div class="people-sheet-head"><h3 class="people-sheet-title">Focus types</h3></div>
+    <div class="people-sheet-sub">Archiving removes a type from the picker and keeps every session it already holds.</div>
+    <div class="ft-list">${activeRows}</div>
+    ${archivedBlock}
+    <div class="ft-group-head">New type</div>
+    ${newBlock}
+    <div class="people-sheet-actions">
+      <button type="button" class="btn" data-ftact="close">Done</button>
+    </div>`;
+}
+
+// One delegated handler for every sheet action. Each mutation ends saveState()
+// then render() (render re-renders this sheet while it is open).
+function handleFocusTypesAction(btn) {
+  const act = btn.dataset.ftact, id = btn.dataset.ftid;
+  if (document.activeElement && document.activeElement.blur) document.activeElement.blur();   // release the draft guard
+  ftMsg = null;
+  const t = id ? focusTypeById(id) : null;
+  const activeCount = () => (state.focusTypes || []).filter(x => !x.archived).length;
+  if (act === 'close') { closeFocusTypesSheet(); return; }
+  if (act === 'edit' && t) { ftEditId = t.id; ftEditDraft = { label: t.label, color: t.color }; renderFocusTypesSheet(); return; }
+  if (act === 'edit-cancel') { ftEditId = null; renderFocusTypesSheet(); return; }
+  if (act === 'edit-color') { ftEditDraft.color = btn.dataset.color; renderFocusTypesSheet(); return; }
+  if (act === 'new-color')  { ftNewDraft.color = btn.dataset.color;  renderFocusTypesSheet(); return; }
+  if (act === 'edit-save' && t) {
+    const chk = focusTypeLabelCheck(ftEditDraft.label, t.id);
+    if (chk.error) { ftMsg = { where: t.id, text: chk.error }; renderFocusTypesSheet(); return; }
+    // Only the id is stored on sessions, so a rename/recolor shows everywhere at
+    // once — log, detail, scatter, weekly rows — with no backfill.
+    t.label = chk.label;
+    t.color = FOCUS_TYPE_COLORS[ftEditDraft.color] ? ftEditDraft.color : 'blue';
+    ftEditId = null;
+    saveState(); render();
+    return;
+  }
+  if (act === 'archive' && t && !t.archived) {
+    if (activeCount() <= 1) {
+      ftMsg = { where: t.id, text: 'This is the only active type. Sessions need at least one to start with — add another before archiving this one.' };
+      renderFocusTypesSheet(); return;
+    }
+    t.archived = true;
+    ftEditId = null;
+    // Move the sticky preference now so the picker is right without a reload
+    // (the ensureShape guard would do it on the next load anyway). A RUNNING
+    // session of this type keeps its tag: endFocusSession accepts archived ids.
+    if (state.focusLastType === t.id) {
+      state.focusLastType = focusTypesActive()[0].id;
+      state.focusLastTypeAt = nowIso();
+    }
+    saveState(); render();
+    return;
+  }
+  if (act === 'restore' && t && t.archived) {
+    if (activeCount() >= FOCUS_TYPE_ACTIVE_MAX) {
+      ftMsg = { where: t.id, text: `${FOCUS_TYPE_ACTIVE_MAX} types are already active. Archive one to restore this one.` };
+      renderFocusTypesSheet(); return;
+    }
+    t.archived = false;
+    saveState(); render();
+    return;
+  }
+  if (act === 'add') {
+    if (activeCount() >= FOCUS_TYPE_ACTIVE_MAX) { renderFocusTypesSheet(); return; }
+    const chk = focusTypeLabelCheck(ftNewDraft.label, null);
+    if (chk.error) { ftMsg = { where: 'new', text: chk.error }; renderFocusTypesSheet(); return; }
+    const active = focusTypesActive();
+    const color = ftNewDraft.color || (Object.keys(FOCUS_TYPE_COLORS).find(k => !active.some(x => x.color === k)) || 'blue');
+    state.focusTypes.push({ id: uuid(), label: chk.label, color, order: state.focusTypes.length,
+                            archived: false, createdAt: todayDate() });
+    renumberOrder(state.focusTypes);
+    ftNewDraft = { label: '', color: null };
+    saveState(); render();
+  }
+}
+
 // ---------------- toast ----------------
 
 let toastTimer;
@@ -6450,6 +6822,7 @@ function render() {
   applyTodayLayout();     // reorder/hide Today sections after every renderer filled its wrapper
   if (todayCustomiseSheet && todayCustomiseSheet.classList.contains('open')) renderTodayCustomiser();
   if (resetSheet && resetSheet.classList.contains('open')) renderResetSheet();
+  if (focusTypesSheet && focusTypesSheet.classList.contains('open')) renderFocusTypesSheet();
   maybeShowMorningPopup();
 }
 
@@ -9473,6 +9846,9 @@ const MERGE_COLLECTIONS = [
   { key: 'completions',        get: s => s.completions,  set: (s, v) => { s.completions = v; } },
   { key: 'missed',             get: s => s.missed,       set: (s, v) => { s.missed = v; } },
   { key: 'focusSessions',      get: s => s.focusSessions, set: (s, v) => { s.focusSessions = v; } },
+  // v101 focus types — editable definitions, so they MUST be registered or edits
+  // do not sync. Archive-only (never tombstoned): their ids live inside session records.
+  { key: 'focusTypes', get: s => s.focusTypes, set: (s, v) => { s.focusTypes = v; } },
   { key: 'blocks',             get: s => s.blocks,       set: (s, v) => { s.blocks = v; } },
   { key: 'spaces',             get: s => s.spaces,       set: (s, v) => { s.spaces = v; } },
   { key: 'vault.transactions', get: s => s.vault && s.vault.transactions,
@@ -10469,6 +10845,24 @@ document.getElementById('today-customise-btn').addEventListener('click', openTod
 todayCustomiseSheet.addEventListener('click', e => { if (e.target === todayCustomiseSheet) closeTodayCustomiser(); });
 // Backdrop tap closes the reset sheet (tap the dimmed area, not the panel).
 if (resetSheet) resetSheet.addEventListener('click', e => { if (e.target === resetSheet) closeResetSheet(); });
+if (focusTypesSheet) {
+  focusTypesSheet.addEventListener('click', e => {
+    if (e.target === focusTypesSheet) { closeFocusTypesSheet(); return; }
+    const btn = e.target.closest('[data-ftact]');
+    if (btn) handleFocusTypesAction(btn);
+  });
+  // Drafts: keep half-typed labels in memory so no re-render can lose them.
+  focusTypesSheet.addEventListener('input', e => {
+    if (e.target.id === 'ft-new-input')  ftNewDraft.label = e.target.value;
+    if (e.target.id === 'ft-edit-input') ftEditDraft.label = e.target.value;
+  });
+  focusTypesSheet.addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    const sel = e.target.id === 'ft-new-input' ? '[data-ftact="add"]' : e.target.id === 'ft-edit-input' ? '[data-ftact="edit-save"]' : null;
+    const btn = sel && focusTypesSheet.querySelector(sel);
+    if (btn) { e.preventDefault(); handleFocusTypesAction(btn); }
+  });
+}
 
 // Account & Backup (Supabase)
 (function wireAccountUi() {
@@ -10692,6 +11086,9 @@ document.getElementById('focusstats-close-btn').addEventListener('click', closeF
 // Focus doorway list<->detail: tap a session row to open its detail, Back to return.
 document.getElementById('focus-stats-wrap').addEventListener('click', e => {
   if (e.target.closest('[data-focus-back]')) { focusSelectedSession = null; renderFocusStats(); return; }
+  const rt = e.target.closest('[data-focus-retag]');
+  if (rt) { retagFocusSession(focusSelectedSession, rt.getAttribute('data-focus-retag')); return; }
+  if (e.target.closest('[data-ftmanage]')) { openFocusTypesSheet(); return; }
   const del = e.target.closest('[data-focus-delete]');
   if (del) { deleteFocusSession(del.getAttribute('data-focus-delete')); return; }
   const row = e.target.closest('[data-session-id]');
