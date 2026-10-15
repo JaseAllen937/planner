@@ -880,7 +880,7 @@ const SCHEMA_VERSION = 17;
 // Human-facing build tag shown in Settings and stamped into every export legend.
 // BUMP THIS TOGETHER WITH sw.js VERSION on every deploy — a stale tag is how a
 // rolled-back build went unnoticed for two days.
-const APP_VERSION = 'v101';
+const APP_VERSION = 'v101a';
 
 // ---- Today layout (v96): user-controlled section order + visibility + rooms
 // preset. Defined BEFORE loadState() so ensureShape's defensive guard can read the
@@ -2679,11 +2679,14 @@ function focusWeekHoursByType(sessionsAll, today) {
     const v = get(t.id);
     if (v.this > 0 || v.last > 0) rows.push({ id: t.id, label: t.label, archived: true, ...v });
   }
-  // Untagged renders only when THIS week has untagged hours (> 0); zero -> no row.
+  // Untagged follows the SAME both-weeks rule as every other row (v101a): it
+  // renders when either week has untagged hours, omitted only when both are zero.
   const un = get('');
-  if (un.this > 0) rows.push({ id: null, label: 'Untagged', archived: false, ...un });
+  if (un.this > 0 || un.last > 0) rows.push({ id: null, label: 'Untagged', archived: false, ...un });
+  // Total is summed over the VISIBLE rows, so it equals the sum of the rows in
+  // both columns by construction (every key with hours has a row).
   let totThis = 0, totLast = 0;
-  for (const v of sums.values()) { totThis += v.this; totLast += v.last; }
+  for (const r of rows) { totThis += r.this; totLast += r.last; }
   return { thisStart, thisEnd: thisDates[6], lastStart, lastEnd: lastDates[6], today,
            rows, total: { this: totThis, last: totLast } };
 }
@@ -2701,6 +2704,9 @@ function focusWeekHoursHtml(wh) {
         <span class="fwh-last">${escapeHtml(h(r.last))}</span>
       </div>`;
   const md = d => parseYmd(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  // No row in either week -> one quiet line of fact; no heading, no Total, no note.
+  if (!wh.rows.length) return `
+      <div class="empty focus-scatter-empty">No focus hours this week or last.</div>`;
   const body = wh.rows.map(r => row({ ...r, dotHtml: dot(r) }, r.archived ? 'fwh-archived' : '')).join('');
   return `
       <div class="focus-scatter-head">Hours this week</div>
