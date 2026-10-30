@@ -882,7 +882,7 @@ const SCHEMA_VERSION = 17;
 // Human-facing build tag shown in Settings and stamped into every export legend.
 // BUMP THIS TOGETHER WITH sw.js VERSION on every deploy — a stale tag is how a
 // rolled-back build went unnoticed for two days.
-const APP_VERSION = 'v106';
+const APP_VERSION = 'v107';
 
 // ---- Today layout (v96): user-controlled section order + visibility + rooms
 // preset. Defined BEFORE loadState() so ensureShape's defensive guard can read the
@@ -2278,7 +2278,7 @@ function renderFocusCard() {
   `;
   document.getElementById('focus-start-btn').addEventListener('click', () => {
     if (state.activeFocus) openFocusOverlay();
-    else                   openFocusPlanSheet();
+    else                   startFocusSession(null);
   });
   const typeTabs = document.getElementById('focus-type-tabs');
   if (typeTabs) typeTabs.addEventListener('click', e => {
@@ -2452,77 +2452,6 @@ function finishFocusSession(endAt, stated) {
 // ---- v105: focus sheets (reuse the space bottom sheet) ----
 const FOCUS_MIN_SAVE_MS = 60 * 1000;
 const FOCUS_FORGOT_MS = 3 * 60 * 60 * 1000;
-
-// v106: only the checkbox blocks he marked "Offer when starting focus", every
-// day (due or checked or not), spaces in order, then block order.
-function focusPlanCandidates() {
-  const out = [];
-  for (const sp of spacesSorted()) {
-    for (const b of blocksForSpace(sp.id)) {
-      if (b.type !== 'checkbox' || b.focusOption !== true) continue;
-      out.push({ kind: 'block', id: b.id, title: b.label || '' });
-    }
-  }
-  return out;
-}
-
-function openFocusPlanSheet() {
-  if (state.activeFocus) return;
-  const rows = focusPlanCandidates();
-  spaceForm = { mode: 'focus-plan', sel: -1 };
-  const panel = document.getElementById('space-sheet-panel');
-  const cols = Math.min(rows.length, 3);
-  const tiles = rows.length
-    ? `<div class="scale focus-tiles" id="focus-plan-list" style="grid-template-columns: repeat(${cols}, minmax(0, 1fr))">${rows.map((r, i) =>
-        `<button type="button" class="scale-btn" data-plan-i="${i}" aria-pressed="false">${escapeHtml(r.title)}</button>`).join('')}</div>`
-    : '<div class="space-hint">Choose what shows here: turn on Offer when starting focus in a block\'s settings.</div>';
-  panel.innerHTML = `
-    <h2>What are you working on?</h2>
-    <div class="field">${tiles}</div>
-    <div class="field">
-      <input type="text" id="focus-plan-input" maxlength="200" autocomplete="off" placeholder="Something else" aria-label="Something else">
-    </div>
-    <div class="focus-sheet-actions">
-      <button type="button" class="btn btn-primary" id="focus-plan-start">Start</button>
-      <button type="button" class="btn btn-ghost focus-sheet-skip" id="focus-plan-skip">Skip</button>
-    </div>`;
-  const input = document.getElementById('focus-plan-input');
-  const listEl = document.getElementById('focus-plan-list');
-  const paint = () => {
-    if (!listEl) return;
-    listEl.querySelectorAll('[data-plan-i]').forEach(x => {
-      const on = Number(x.dataset.planI) === spaceForm.sel;
-      x.classList.toggle('active', on);
-      x.setAttribute('aria-pressed', on ? 'true' : 'false');
-    });
-  };
-  // A tile or typed text, never both: picking a tile clears the field,
-  // typing clears the tile.
-  if (listEl) listEl.addEventListener('click', e => {
-    const b = e.target.closest('[data-plan-i]');
-    if (!b || !spaceForm || spaceForm.mode !== 'focus-plan') return;
-    const i = Number(b.dataset.planI);
-    spaceForm.sel = spaceForm.sel === i ? -1 : i;     // tap the selected tile again -> unselect
-    input.value = '';
-    paint();
-  });
-  input.addEventListener('input', () => {
-    if (!spaceForm || spaceForm.mode !== 'focus-plan' || spaceForm.sel < 0) return;
-    spaceForm.sel = -1;
-    paint();
-  });
-  document.getElementById('focus-plan-skip').addEventListener('click', () => { closeSpaceSheet(); startFocusSession(null); });
-  document.getElementById('focus-plan-start').addEventListener('click', () => {
-    const r = spaceForm && spaceForm.sel >= 0 ? rows[spaceForm.sel] : null;
-    const text = r ? r.title.trim().slice(0, 200) : input.value.trim().slice(0, 200);
-    closeSpaceSheet();
-    if (!text) { startFocusSession(null); return; }
-    const plan = { text };
-    if (r) plan.ref = { kind: r.kind, id: r.id };
-    startFocusSession(plan);
-  });
-  openSpaceSheetOverlay();
-}
 
 function openFocusDoneSheet(sessionId) {
   spaceForm = { mode: 'focus-done', sessionId };
@@ -9564,14 +9493,13 @@ function openBlockSheet(editing) {
       target: (typeof editing.target === 'number' && isFinite(editing.target)) ? String(editing.target) : '',
       current: (typeof editing.current === 'number' && isFinite(editing.current)) ? String(editing.current) : '',
       note: editing.note || '',
-      text: typeof editing.text === 'string' ? editing.text : '',
-      focusOption: editing.focusOption === true
+      text: typeof editing.text === 'string' ? editing.text : ''
     };
   } else {
     spaceForm = {
       mode: 'block', editingId: null, blockType: 'checkbox',
       label: '', unit: '', recKind: 'daily', recDays: [], recN: '3',
-      target: '', current: '', note: '', text: '', focusOption: false
+      target: '', current: '', note: '', text: ''
     };
   }
   buildBlockSheet();
@@ -9617,12 +9545,6 @@ function buildBlockSheet() {
       <div class="field" id="rec-everyn-row" ${f.recKind === 'everyN' ? '' : 'hidden'}>
         <label for="rec-n-input">Every N days</label>
         <input type="number" id="rec-n-input" inputmode="numeric" min="1" step="1" value="${escapeHtml(f.recN)}">
-      </div>
-      <div class="field">
-        <label class="toggle-row" for="block-focus-option">
-          <input type="checkbox" id="block-focus-option"${f.focusOption ? ' checked' : ''}>
-          <span>Offer when starting focus</span>
-        </label>
       </div>`;
   } else if (f.blockType === 'counter') {
     typeFields = `
@@ -9709,7 +9631,6 @@ function syncBlockInputs() {
   const cu = document.getElementById('goal-current-input'); if (cu) f.current = cu.value;
   const gn = document.getElementById('goal-note-input'); if (gn) f.note = gn.value;
   const tx = document.getElementById('notes-text-input'); if (tx) f.text = tx.value;
-  const fo = document.getElementById('block-focus-option'); if (fo) f.focusOption = fo.checked;
 }
 
 // Build the recurrence object from the form state.
@@ -9759,10 +9680,7 @@ function saveBlockForm() {
   if (f.editingId) {
     const b = findBlock(f.editingId);
     if (!b) { closeSpaceSheet(); return; }
-    if (b.type === 'checkbox') {
-      Object.assign(b, { label, recurrence: buildRecurrenceFromForm(f, b) });
-      if (f.focusOption) b.focusOption = true; else delete b.focusOption;
-    }
+    if (b.type === 'checkbox')      Object.assign(b, { label, recurrence: buildRecurrenceFromForm(f, b) });
     else if (b.type === 'counter')  Object.assign(b, { label, unit: (f.unit || '').trim() });
     else if (b.type === 'goal') {
       const g = parseGoalFields(f, errEl);
@@ -9789,7 +9707,6 @@ function saveBlockForm() {
       block = Object.assign(base, { type: 'notes', text: f.text || '' });
     } else {
       block = Object.assign(base, { type: 'checkbox', recurrence: buildRecurrenceFromForm(f, null), checks: {} });
-      if (f.focusOption) block.focusOption = true;
     }
     blocksData().push(block);
   }
@@ -10821,9 +10738,21 @@ const INBOX_MIN_MS = 10 * 1000;
 const INBOX_YMD = /^\d{4}-\d{2}-\d{2}$/;
 const INBOX_HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 const INBOX_PRIORITIES = ['normal', 'medium', 'high'];
-// v104: kinds a v102 copy of the app turned away as 'unknown op'.
+// v104: kinds a v102 copy of the app turned away as 'unknown op' (v107: plus
+// the restore ops, for a copy still on v106).
 const INBOX_V104_OPS = ['edit_item', 'delete_item', 'uncomplete_item', 'uncheck_block', 'add_block',
-  'edit_block', 'delete_block', 'log_counter', 'delete_focus_session', 'set_sleep'];
+  'edit_block', 'delete_block', 'log_counter', 'delete_focus_session', 'set_sleep',
+  'restore_item', 'restore_block', 'restore_focus_session'];
+const INBOX_BLOCK_TYPES = ['checkbox', 'counter', 'cycle', 'goal', 'notes'];
+
+// v107: a copy of a deleted record from payload.record, under the new id
+// (op_id), every other field kept as given. Null when it isn't an object.
+function inboxRestoredCopy(rec, id) {
+  if (!rec || typeof rec !== 'object' || Array.isArray(rec)) return null;
+  const copy = JSON.parse(JSON.stringify(rec));
+  copy.id = id;
+  return copy;
+}
 const INBOX_RETRY_DAYS = 3;
 
 // Null when `date` is a YYYY-MM-DD inside the lookback window (same as
@@ -11045,7 +10974,7 @@ function applyInboxRow(row) {
     const set = (p.set && typeof p.set === 'object' && !Array.isArray(p.set)) ? p.set : null;
     if (!set || !Object.keys(set).length) return reject('nothing to change');
     const allowed = ['label'];
-    if (b.type === 'checkbox') allowed.push('recurrence', 'focus_option');
+    if (b.type === 'checkbox') allowed.push('recurrence');
     if (b.type === 'counter') allowed.push('unit');
     if (b.type === 'notes') allowed.push('text');
     for (const k of Object.keys(set)) if (!allowed.includes(k)) return reject('invalid field ' + k);
@@ -11068,19 +10997,11 @@ function applyInboxRow(row) {
       if (typeof set.text !== 'string') return reject('invalid text');
       next.text = set.text;
     }
-    let focusOpt;   // undefined = not in this change
-    if ('focus_option' in set) {
-      if (typeof set.focus_option !== 'boolean') return reject('invalid field focus_option');
-      focusOpt = set.focus_option;
-    }
     const same = Object.keys(next).every(k => k === 'recurrence'
       ? sameRecurrence(b.recurrence, next.recurrence)
-      : (b[k] ?? null) === next[k])
-      && (focusOpt === undefined || (b.focusOption === true) === focusOpt);
+      : (b[k] ?? null) === next[k]);
     if (same) return done('already so');
     Object.assign(b, next);
-    if (focusOpt === true) b.focusOption = true;
-    else if (focusOpt === false) delete b.focusOption;
     return done(null, true);
   }
 
@@ -11099,6 +11020,11 @@ function applyInboxRow(row) {
     if (!b || b.type !== 'counter' || isTombstoned(tomb, 'blocks', b)) return reject('block not found');
     const err = inboxWindowError(p.date);
     if (err) return reject(err);
+    if (p.value === null) {   // v107: undo a log -> remove that date's entry
+      if (!(Array.isArray(b.entries) && b.entries.some(e => e.date === p.date))) return done('already so');
+      b.entries = b.entries.filter(e => e.date !== p.date);
+      return done(null, true);
+    }
     if (typeof p.value !== 'number' || !isFinite(p.value)) return reject('invalid value');
     const date = p.date;
     const value = Math.round(p.value * 100) / 100;
@@ -11124,7 +11050,12 @@ function applyInboxRow(row) {
     if (err) return reject(err);
     const wake = p.wake_time == null ? null : p.wake_time;
     const bed = p.bedtime_night_before == null ? null : p.bedtime_night_before;
-    if (wake == null && bed == null) return reject('no time given');
+    // v107: optional clear: ['wake_time', 'bedtime_night_before'] -> set to null.
+    const clear = p.clear == null ? [] : p.clear;
+    if (!Array.isArray(clear) || clear.some(k => k !== 'wake_time' && k !== 'bedtime_night_before')) return reject('invalid clear');
+    const clearWake = clear.includes('wake_time'), clearBed = clear.includes('bedtime_night_before');
+    if (wake == null && bed == null && !clear.length) return reject('no time given');
+    if ((clearWake && wake != null) || (clearBed && bed != null)) return reject('clear and set the same time');
     if (wake != null && !(typeof wake === 'string' && INBOX_HHMM.test(wake) && isPlausibleWakeTime(wake))) return reject('implausible wake time');
     if (bed != null && !(typeof bed === 'string' && INBOX_HHMM.test(bed) && isPlausibleBedtime(bed))) return reject('implausible bedtime');
     const prev = addDays(p.date, -1);
@@ -11132,10 +11063,60 @@ function applyInboxRow(row) {
     const dsPrev = state.daily_state.find(d => d.date === prev);
     const wakeSame = wake == null || (dsDay && dsDay.wake_time === wake);
     const bedSame = bed == null || (dsPrev && dsPrev.bedtime === bed);
-    if (wakeSame && bedSame) return done('already so');
+    const wakeCleared = !clearWake || !dsDay || dsDay.wake_time == null;
+    const bedCleared = !clearBed || !dsPrev || dsPrev.bedtime == null;
+    if (wakeSame && bedSame && wakeCleared && bedCleared) return done('already so');
     if (wake != null) ensureDailyState(p.date).wake_time = wake;
     if (bed != null) ensureDailyState(prev).bedtime = bed;
+    if (clearWake && dsDay) dsDay.wake_time = null;
+    if (clearBed && dsPrev) dsPrev.bedtime = null;
     computeAndStoreHoursSlept(p.date);
+    return done(null, true);
+  }
+
+  // v107: put a deleted record back. The old id stays tombstoned across sync,
+  // so the copy lives under op_id (like add_item / add_block).
+  if (row.op === 'restore_item') {
+    if (state.items.some(x => x.id === row.op_id)) return done('already present');
+    if (tomb['items:' + row.op_id]) return done('deleted in app');
+    const rec = inboxRestoredCopy(p.record, row.op_id);
+    if (!rec || typeof rec.title !== 'string' || !rec.title.trim() || typeof rec.trackCompletion !== 'boolean') return reject('invalid record');
+    const comp = (p.completion && typeof p.completion === 'object' && !Array.isArray(p.completion)) ? p.completion : null;
+    state.items.push(rec);
+    if (comp) {
+      // Keeps its id. A delete leaves the old completion (pointing at the old
+      // id) behind, and editing that record would lose to a newer remote copy
+      // of it, so when the id is taken or tombstoned the copy gets its own id.
+      const copy = Object.assign(JSON.parse(JSON.stringify(comp)), { ref_type: 'item', ref_id: row.op_id });
+      const taken = id => id == null || state.completions.some(c => c.id === id) || !!tomb['completions:' + id];
+      if (taken(copy.id)) copy.id = row.op_id + '-completion';
+      if (!taken(copy.id)) state.completions.push(copy);
+    }
+    return done(null, true);
+  }
+
+  if (row.op === 'restore_block') {
+    if (blocksData().some(b => b.id === row.op_id)) return done('already present');
+    if (tomb['blocks:' + row.op_id]) return done('deleted in app');
+    const rec = inboxRestoredCopy(p.record, row.op_id);
+    if (!rec || typeof rec.label !== 'string' || !INBOX_BLOCK_TYPES.includes(rec.type)) return reject('invalid record');
+    const space = findSpace(rec.spaceId);
+    if (!space || isTombstoned(tomb, 'spaces', space)) return reject('space not found');
+    const siblings = blocksForSpace(space.id);
+    const want = Number.isInteger(rec.order) ? rec.order : siblings.length;
+    siblings.splice(Math.max(0, Math.min(want, siblings.length)), 0, rec);
+    blocksData().push(rec);
+    renumberOrder(siblings);
+    return done(null, true);
+  }
+
+  if (row.op === 'restore_focus_session') {
+    if ((state.focusSessions || []).some(s => s && s.id === row.op_id)) return done('already present');
+    if (tomb['focusSessions:' + row.op_id]) return done('deleted in app');
+    const rec = inboxRestoredCopy(p.record, row.op_id);
+    if (!rec || typeof rec.start !== 'string') return reject('invalid record');
+    if (!Array.isArray(state.focusSessions)) state.focusSessions = [];
+    state.focusSessions.push(rec);
     return done(null, true);
   }
 

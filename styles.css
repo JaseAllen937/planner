@@ -3601,14 +3601,7 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 }
 .heat-legend-item .heat-cell { width: 12px; height: 12px; aspect-ratio: auto; }
 
-/* v106 focus sheets: tiles reuse .scale / .scale-btn from the morning check-in,
-   with wrapping text labels instead of mono digits; column count is set inline
-   (up to 3 per row, then wrap). Full-width primary, small centered Skip. */
-.focus-tiles .scale-btn {
-  font-family: inherit; font-feature-settings: normal;
-  padding: 12px 8px; min-height: 56px; line-height: 1.25;
-  overflow-wrap: anywhere; word-break: break-word;
-}
+/* v106 focus sheets (done / forgotten): full-width primary, small centered Skip. */
 .focus-sheet-plan { margin: -6px 0 12px; }
 .focus-sheet-actions {
   display: flex; flex-direction: column; gap: 6px;
