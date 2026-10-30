@@ -882,7 +882,7 @@ const SCHEMA_VERSION = 17;
 // Human-facing build tag shown in Settings and stamped into every export legend.
 // BUMP THIS TOGETHER WITH sw.js VERSION on every deploy — a stale tag is how a
 // rolled-back build went unnoticed for two days.
-const APP_VERSION = 'v105';
+const APP_VERSION = 'v106';
 
 // ---- Today layout (v96): user-controlled section order + visibility + rooms
 // preset. Defined BEFORE loadState() so ensureShape's defensive guard can read the
@@ -2453,20 +2453,14 @@ function finishFocusSession(endAt, stated) {
 const FOCUS_MIN_SAVE_MS = 60 * 1000;
 const FOCUS_FORGOT_MS = 3 * 60 * 60 * 1000;
 
-// Today's open to-dos, then today's due, unchecked checkbox blocks.
+// v106: only the checkbox blocks he marked "Offer when starting focus", every
+// day (due or checked or not), spaces in order, then block order.
 function focusPlanCandidates() {
-  const today = todayDate();
   const out = [];
-  for (const it of state.items) {
-    if (!it || !it.trackCompletion || it.date !== today) continue;
-    if (state.completions.some(c => c.ref_type === 'item' && c.ref_id === it.id)) continue;
-    out.push({ kind: 'item', id: it.id, title: it.title || '', sub: 'To-do' });
-  }
   for (const sp of spacesSorted()) {
     for (const b of blocksForSpace(sp.id)) {
-      if (b.type !== 'checkbox' || !isDueToday(b, today)) continue;
-      if (b.checks && typeof b.checks === 'object' && b.checks[today]) continue;
-      out.push({ kind: 'block', id: b.id, title: b.label || '', sub: sp.name || '' });
+      if (b.type !== 'checkbox' || b.focusOption !== true) continue;
+      out.push({ kind: 'block', id: b.id, title: b.label || '' });
     }
   }
   return out;
@@ -2477,42 +2471,50 @@ function openFocusPlanSheet() {
   const rows = focusPlanCandidates();
   spaceForm = { mode: 'focus-plan', sel: -1 };
   const panel = document.getElementById('space-sheet-panel');
-  const list = rows.length ? `<div class="past-days-list" id="focus-plan-list">${rows.map((r, i) => `
-      <button type="button" class="past-days-row" data-plan-i="${i}" aria-pressed="false">
-        <span class="space-tick" aria-hidden="true"><span class="space-tick-mark"></span></span>
-        <span class="space-block-mid"><span class="space-block-label">${escapeHtml(r.title)}</span>${r.sub ? `<span class="space-block-sub">${escapeHtml(r.sub)}</span>` : ''}</span>
-      </button>`).join('')}</div>` : '';
+  const cols = Math.min(rows.length, 3);
+  const tiles = rows.length
+    ? `<div class="scale focus-tiles" id="focus-plan-list" style="grid-template-columns: repeat(${cols}, minmax(0, 1fr))">${rows.map((r, i) =>
+        `<button type="button" class="scale-btn" data-plan-i="${i}" aria-pressed="false">${escapeHtml(r.title)}</button>`).join('')}</div>`
+    : '<div class="space-hint">Choose what shows here: turn on Offer when starting focus in a block\'s settings.</div>';
   panel.innerHTML = `
     <h2>What are you working on?</h2>
-    ${list}
+    <div class="field">${tiles}</div>
     <div class="field">
-      <label for="focus-plan-input">Or type it</label>
-      <input type="text" id="focus-plan-input" maxlength="200" autocomplete="off">
+      <input type="text" id="focus-plan-input" maxlength="200" autocomplete="off" placeholder="Something else" aria-label="Something else">
     </div>
-    <div class="form-actions">
-      <div class="spacer"></div>
-      <button type="button" class="btn btn-ghost" id="focus-plan-skip">Skip</button>
+    <div class="focus-sheet-actions">
       <button type="button" class="btn btn-primary" id="focus-plan-start">Start</button>
+      <button type="button" class="btn btn-ghost focus-sheet-skip" id="focus-plan-skip">Skip</button>
     </div>`;
   const input = document.getElementById('focus-plan-input');
   const listEl = document.getElementById('focus-plan-list');
+  const paint = () => {
+    if (!listEl) return;
+    listEl.querySelectorAll('[data-plan-i]').forEach(x => {
+      const on = Number(x.dataset.planI) === spaceForm.sel;
+      x.classList.toggle('active', on);
+      x.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  };
+  // A tile or typed text, never both: picking a tile clears the field,
+  // typing clears the tile.
   if (listEl) listEl.addEventListener('click', e => {
     const b = e.target.closest('[data-plan-i]');
     if (!b || !spaceForm || spaceForm.mode !== 'focus-plan') return;
     const i = Number(b.dataset.planI);
-    spaceForm.sel = spaceForm.sel === i ? -1 : i;     // tap the selected row again -> unselect
-    if (spaceForm.sel === i) input.value = rows[i].title.slice(0, 200);
-    listEl.querySelectorAll('[data-plan-i]').forEach(x => {
-      const on = Number(x.dataset.planI) === spaceForm.sel;
-      x.setAttribute('aria-pressed', on ? 'true' : 'false');
-      x.querySelector('.space-tick').classList.toggle('on', on);
-      x.querySelector('.space-tick-mark').innerHTML = on ? '&check;' : '';
-    });
+    spaceForm.sel = spaceForm.sel === i ? -1 : i;     // tap the selected tile again -> unselect
+    input.value = '';
+    paint();
+  });
+  input.addEventListener('input', () => {
+    if (!spaceForm || spaceForm.mode !== 'focus-plan' || spaceForm.sel < 0) return;
+    spaceForm.sel = -1;
+    paint();
   });
   document.getElementById('focus-plan-skip').addEventListener('click', () => { closeSpaceSheet(); startFocusSession(null); });
   document.getElementById('focus-plan-start').addEventListener('click', () => {
-    const text = input.value.trim().slice(0, 200);
     const r = spaceForm && spaceForm.sel >= 0 ? rows[spaceForm.sel] : null;
+    const text = r ? r.title.trim().slice(0, 200) : input.value.trim().slice(0, 200);
     closeSpaceSheet();
     if (!text) { startFocusSession(null); return; }
     const plan = { text };
@@ -2524,16 +2526,18 @@ function openFocusPlanSheet() {
 
 function openFocusDoneSheet(sessionId) {
   spaceForm = { mode: 'focus-done', sessionId };
+  const sess = (state.focusSessions || []).find(s => s && s.id === sessionId);
+  const planText = sess && sess.plan && typeof sess.plan.text === 'string' ? sess.plan.text : '';
   const panel = document.getElementById('space-sheet-panel');
   panel.innerHTML = `
     <h2>What did you get done?</h2>
+    ${planText ? `<div class="space-hint focus-sheet-plan">Working on: ${escapeHtml(planText)}</div>` : ''}
     <div class="field">
-      <textarea id="focus-done-input" maxlength="1000" aria-label="What did you get done?"></textarea>
+      <textarea id="focus-done-input" maxlength="1000" placeholder="A line is enough" aria-label="What did you get done?"></textarea>
     </div>
-    <div class="form-actions">
-      <div class="spacer"></div>
-      <button type="button" class="btn btn-ghost" id="focus-done-skip">Skip</button>
+    <div class="focus-sheet-actions">
       <button type="button" class="btn btn-primary" id="focus-done-save">Save</button>
+      <button type="button" class="btn btn-ghost focus-sheet-skip" id="focus-done-skip">Skip</button>
     </div>`;
   document.getElementById('focus-done-skip').addEventListener('click', () => finishFocusDone(false));
   document.getElementById('focus-done-save').addEventListener('click', () => finishFocusDone(true));
@@ -2599,11 +2603,12 @@ function openFocusForgotSheet() {
       <input type="datetime-local" id="focus-forgot-end" value="${defV}" min="${minV}" max="${maxV}" aria-label="When you stopped">
     </div>
     <div id="space-form-error" class="error-msg" hidden></div>
-    <div class="form-actions">
-      <button type="button" class="btn btn-danger" id="focus-forgot-discard">Discard</button>
-      <div class="spacer"></div>
-      ${canStill ? '<button type="button" class="btn btn-ghost" id="focus-forgot-still">Still going</button>' : ''}
+    <div class="focus-sheet-actions">
       <button type="button" class="btn btn-primary" id="focus-forgot-save">Save with this time</button>
+      <div class="focus-sheet-pair">
+        ${canStill ? '<button type="button" class="btn" id="focus-forgot-still">Still going</button>' : ''}
+        <button type="button" class="btn focus-sheet-discard" id="focus-forgot-discard">Discard</button>
+      </div>
     </div>`;
   document.getElementById('focus-forgot-save').addEventListener('click', () => {
     const errEl = document.getElementById('space-form-error');
@@ -9559,13 +9564,14 @@ function openBlockSheet(editing) {
       target: (typeof editing.target === 'number' && isFinite(editing.target)) ? String(editing.target) : '',
       current: (typeof editing.current === 'number' && isFinite(editing.current)) ? String(editing.current) : '',
       note: editing.note || '',
-      text: typeof editing.text === 'string' ? editing.text : ''
+      text: typeof editing.text === 'string' ? editing.text : '',
+      focusOption: editing.focusOption === true
     };
   } else {
     spaceForm = {
       mode: 'block', editingId: null, blockType: 'checkbox',
       label: '', unit: '', recKind: 'daily', recDays: [], recN: '3',
-      target: '', current: '', note: '', text: ''
+      target: '', current: '', note: '', text: '', focusOption: false
     };
   }
   buildBlockSheet();
@@ -9611,6 +9617,12 @@ function buildBlockSheet() {
       <div class="field" id="rec-everyn-row" ${f.recKind === 'everyN' ? '' : 'hidden'}>
         <label for="rec-n-input">Every N days</label>
         <input type="number" id="rec-n-input" inputmode="numeric" min="1" step="1" value="${escapeHtml(f.recN)}">
+      </div>
+      <div class="field">
+        <label class="toggle-row" for="block-focus-option">
+          <input type="checkbox" id="block-focus-option"${f.focusOption ? ' checked' : ''}>
+          <span>Offer when starting focus</span>
+        </label>
       </div>`;
   } else if (f.blockType === 'counter') {
     typeFields = `
@@ -9697,6 +9709,7 @@ function syncBlockInputs() {
   const cu = document.getElementById('goal-current-input'); if (cu) f.current = cu.value;
   const gn = document.getElementById('goal-note-input'); if (gn) f.note = gn.value;
   const tx = document.getElementById('notes-text-input'); if (tx) f.text = tx.value;
+  const fo = document.getElementById('block-focus-option'); if (fo) f.focusOption = fo.checked;
 }
 
 // Build the recurrence object from the form state.
@@ -9746,7 +9759,10 @@ function saveBlockForm() {
   if (f.editingId) {
     const b = findBlock(f.editingId);
     if (!b) { closeSpaceSheet(); return; }
-    if (b.type === 'checkbox')      Object.assign(b, { label, recurrence: buildRecurrenceFromForm(f, b) });
+    if (b.type === 'checkbox') {
+      Object.assign(b, { label, recurrence: buildRecurrenceFromForm(f, b) });
+      if (f.focusOption) b.focusOption = true; else delete b.focusOption;
+    }
     else if (b.type === 'counter')  Object.assign(b, { label, unit: (f.unit || '').trim() });
     else if (b.type === 'goal') {
       const g = parseGoalFields(f, errEl);
@@ -9773,6 +9789,7 @@ function saveBlockForm() {
       block = Object.assign(base, { type: 'notes', text: f.text || '' });
     } else {
       block = Object.assign(base, { type: 'checkbox', recurrence: buildRecurrenceFromForm(f, null), checks: {} });
+      if (f.focusOption) block.focusOption = true;
     }
     blocksData().push(block);
   }
@@ -11028,7 +11045,7 @@ function applyInboxRow(row) {
     const set = (p.set && typeof p.set === 'object' && !Array.isArray(p.set)) ? p.set : null;
     if (!set || !Object.keys(set).length) return reject('nothing to change');
     const allowed = ['label'];
-    if (b.type === 'checkbox') allowed.push('recurrence');
+    if (b.type === 'checkbox') allowed.push('recurrence', 'focus_option');
     if (b.type === 'counter') allowed.push('unit');
     if (b.type === 'notes') allowed.push('text');
     for (const k of Object.keys(set)) if (!allowed.includes(k)) return reject('invalid field ' + k);
@@ -11051,11 +11068,19 @@ function applyInboxRow(row) {
       if (typeof set.text !== 'string') return reject('invalid text');
       next.text = set.text;
     }
+    let focusOpt;   // undefined = not in this change
+    if ('focus_option' in set) {
+      if (typeof set.focus_option !== 'boolean') return reject('invalid field focus_option');
+      focusOpt = set.focus_option;
+    }
     const same = Object.keys(next).every(k => k === 'recurrence'
       ? sameRecurrence(b.recurrence, next.recurrence)
-      : (b[k] ?? null) === next[k]);
+      : (b[k] ?? null) === next[k])
+      && (focusOpt === undefined || (b.focusOption === true) === focusOpt);
     if (same) return done('already so');
     Object.assign(b, next);
+    if (focusOpt === true) b.focusOption = true;
+    else if (focusOpt === false) delete b.focusOption;
     return done(null, true);
   }
 

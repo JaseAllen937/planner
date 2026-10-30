@@ -3600,3 +3600,23 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
   color: var(--text-secondary);
 }
 .heat-legend-item .heat-cell { width: 12px; height: 12px; aspect-ratio: auto; }
+
+/* v106 focus sheets: tiles reuse .scale / .scale-btn from the morning check-in,
+   with wrapping text labels instead of mono digits; column count is set inline
+   (up to 3 per row, then wrap). Full-width primary, small centered Skip. */
+.focus-tiles .scale-btn {
+  font-family: inherit; font-feature-settings: normal;
+  padding: 12px 8px; min-height: 56px; line-height: 1.25;
+  overflow-wrap: anywhere; word-break: break-word;
+}
+.focus-sheet-plan { margin: -6px 0 12px; }
+.focus-sheet-actions {
+  display: flex; flex-direction: column; gap: 6px;
+  margin-top: 18px; padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.focus-sheet-actions > .btn-primary { width: 100%; }
+.focus-sheet-skip { align-self: center; color: var(--text-secondary); font-size: 14px; font-weight: 500; }
+.focus-sheet-pair { display: flex; gap: 8px; }
+.focus-sheet-pair .btn { flex: 1; font-size: 14px; }
+.focus-sheet-discard { color: var(--danger); }
