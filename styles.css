@@ -178,6 +178,7 @@ main {
 .btn-danger { background: var(--danger); color: white; }
 .btn-ghost  { background: transparent; color: var(--accent); }
 .btn-ghost:hover { background: var(--accent-soft); }
+a.btn { text-decoration: none; }
 
 /* ---------- Banner ---------- */
 
