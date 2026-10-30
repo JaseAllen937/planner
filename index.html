@@ -880,7 +880,7 @@ const SCHEMA_VERSION = 17;
 // Human-facing build tag shown in Settings and stamped into every export legend.
 // BUMP THIS TOGETHER WITH sw.js VERSION on every deploy — a stale tag is how a
 // rolled-back build went unnoticed for two days.
-const APP_VERSION = 'v101a';
+const APP_VERSION = 'v102';
 
 // ---- Today layout (v96): user-controlled section order + visibility + rooms
 // preset. Defined BEFORE loadState() so ensureShape's defensive guard can read the
@@ -1597,13 +1597,19 @@ function findMissed(refId, date) {
 function isCompletedToday(refId) { return !!findCompletion(refId, todayDate()); }
 function isSkippedToday(refId)   { return !!findMissed(refId, todayDate()); }
 
-function writeCompletion(refId, refType, plannedTime) {
+// v102: optional opts — opts.id replaces uuid(); opts.at (ISO) replaces "now"
+// for every time-derived field (local time). No opts -> exactly as before.
+function writeCompletion(refId, refType, plannedTime, opts = {}) {
+  const at = opts.at ? new Date(opts.at) : null;
+  const day = at ? ymd(at) : todayDate();
   // remove any existing miss for today, since done overrides
-  tombstoneAll('missed', state.missed.filter(m => m.ref_id === refId && m.date === todayDate()));
-  state.missed = state.missed.filter(m => !(m.ref_id === refId && m.date === todayDate()));
+  tombstoneAll('missed', state.missed.filter(m => m.ref_id === refId && m.date === day));
+  state.missed = state.missed.filter(m => !(m.ref_id === refId && m.date === day));
 
-  const now = new Date();
-  const time_done = nowHHMM();
+  const now = at || new Date();
+  const time_done = at
+    ? `${String(at.getHours()).padStart(2,'0')}:${String(at.getMinutes()).padStart(2,'0')}`
+    : nowHHMM();
   let minutes_from_planned = 0;
   if (plannedTime) {
     minutes_from_planned = minsSinceMidnight(time_done) - minsSinceMidnight(plannedTime);
@@ -1611,10 +1617,10 @@ function writeCompletion(refId, refType, plannedTime) {
     if (minutes_from_planned > 600)  minutes_from_planned = 600;
   }
   state.completions.push({
-    id: uuid(),
+    id: opts.id || uuid(),
     ref_id: refId,
     ref_type: refType,
-    date: todayDate(),
+    date: day,
     time_done,
     completed_at: now.toISOString(),
     time_bucket: timeBucket(time_done),
@@ -10411,6 +10417,7 @@ async function initialSync() {
     setSyncStatus('synced');
     // Flush any pending push that happened mid-sync
     if (_pendingPush) triggerSync();
+    applyAgentInbox();   // v102 — fire-and-forget; never throws
   } catch (e) {
     console.warn('Initial sync failed:', e);
     setSyncStatus(navigator.onLine ? 'error' : 'offline');
@@ -10533,6 +10540,157 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden) { rerenderIfDayChanged(); pullOnReturn(); }
 });
 window.addEventListener('focus', () => { rerenderIfDayChanged(); pullOnReturn(); });
+
+// ---- v102: agent inbox ----
+// Supabase table agent_inbox holds changes Jase already approved in agentkit.
+// Pending rows are applied here through the app's OWN write paths (same record
+// shapes as the item sheet / checkbox tap / writeCompletion), persisted with
+// saveState() (the normal push), then marked applied/rejected in the inbox.
+// Nothing about the inbox is stored in the state blob. Idempotent by op_id, so
+// a re-fetched row (failed PATCH, second device) never duplicates.
+let _inboxRunning = false;
+let _lastInboxTrigger = 0;
+const INBOX_MIN_MS = 10 * 1000;
+
+const INBOX_YMD = /^\d{4}-\d{2}-\d{2}$/;
+const INBOX_HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+const INBOX_PRIORITIES = ['normal', 'medium', 'high'];
+
+// Returns { status: 'applied'|'rejected', note, changed: bool }. Never throws.
+function applyInboxRow(row) {
+  const tomb = (state.meta && state.meta.tombstones) || {};
+  const p = (row.payload && typeof row.payload === 'object') ? row.payload : {};
+  const reject = note => ({ status: 'rejected', note, changed: false });
+  const done = (note, changed) => ({ status: 'applied', note: note || null, changed: !!changed });
+  if (!row.op_id) return reject('missing op_id');
+  const createdAt = row.created_at ? new Date(row.created_at) : null;
+  if (!createdAt || isNaN(createdAt.getTime())) return reject('bad created_at');
+
+  if (row.op === 'add_item') {
+    if (state.items.some(x => x.id === row.op_id)) return done('already present');
+    if (tomb['items:' + row.op_id]) return done('deleted in app');
+    const title = typeof p.title === 'string' ? p.title.trim() : '';
+    if (!title) return reject('empty title');
+    if (p.kind !== 'todo' && p.kind !== 'event') return reject('invalid kind');
+    if (!INBOX_PRIORITIES.includes(p.priority)) return reject('invalid priority');
+    const date = p.date == null ? null : p.date;
+    if (date !== null && !(typeof date === 'string' && INBOX_YMD.test(date))) return reject('invalid date');
+    const notes = typeof p.notes === 'string' ? p.notes.trim() : '';
+    const created_at = createdAt.toISOString();
+    if (p.kind === 'todo') {
+      state.items.push({
+        id: row.op_id,
+        title, trackCompletion: true, priority: p.priority,
+        date, notes,
+        created_at
+      });
+    } else {
+      if (!date) return reject('event needs a date');
+      let time = null, duration = null;
+      if (p.time != null) {
+        if (!(typeof p.time === 'string' && INBOX_HHMM.test(p.time))) return reject('invalid time');
+        const durMin = Number(p.duration_min);
+        if (!Number.isInteger(durMin) || durMin <= 0) return reject('timed event needs duration_min');
+        time = p.time;
+        duration = durMin / 60;
+      }
+      state.items.push({
+        id: row.op_id,
+        title, trackCompletion: false, priority: p.priority,
+        date, time, duration, notes,
+        created_at
+      });
+    }
+    return done(null, true);
+  }
+
+  if (row.op === 'check_block') {
+    const b = findBlock(p.block_id);
+    if (!b || b.type !== 'checkbox' || isTombstoned(tomb, 'blocks', b)) return reject('block not found');
+    const date = p.date;
+    if (!(typeof date === 'string' && INBOX_YMD.test(date))) return reject('invalid date');
+    const today = todayDate();
+    if (date > today) return reject('date is in the future');
+    if (date < addDays(today, -PAST_DAYS_LOOKBACK)) return reject(`older than ${PAST_DAYS_LOOKBACK} days`);
+    const floorYmd = blockFloorYmd(b);
+    if (floorYmd && date < floorYmd) return reject('before tracking start');
+    if (b.checks && typeof b.checks === 'object' && b.checks[date]) return done('already checked');
+    if (!isDueToday(b, date)) return reject('not due on ' + date);
+    if (!b.checks || typeof b.checks !== 'object') b.checks = {};
+    b.checks[date] = true;
+    return done(null, true);
+  }
+
+  if (row.op === 'complete_item') {
+    const it = state.items.find(x => x.id === p.item_id);
+    if (!it || !it.trackCompletion || isTombstoned(tomb, 'items', it)) return reject('item not found');
+    if (state.completions.some(c => (c.ref_type === 'item' && c.ref_id === it.id) || c.id === row.op_id)) {
+      return done('already completed');
+    }
+    writeCompletion(it.id, 'item', it.time || null, { id: row.op_id, at: row.created_at });
+    return done(null, true);
+  }
+
+  return reject('unknown op');
+}
+
+async function applyAgentInbox() {
+  if (!getSession() || !supaConfigured() || !navigator.onLine) return;
+  if (_inboxRunning) return;
+  _inboxRunning = true;
+  try {
+    let rows;
+    try {
+      const r = await supaFetch('/agent_inbox?status=eq.pending&order=created_at.asc&limit=50', { method: 'GET' });
+      rows = await r.json();
+    } catch (e) {
+      console.warn('Agent inbox fetch failed:', e);
+      return;
+    }
+    if (!Array.isArray(rows) || !rows.length) return;
+
+    const results = [];
+    let changed = 0;
+    for (const row of rows) {
+      let res;
+      try { res = applyInboxRow(row); }
+      catch (e) { res = { status: 'rejected', note: 'apply error', changed: false }; console.warn('Agent inbox row failed:', e); }
+      if (res.changed) changed++;
+      if (row && row.op_id) results.push({ op_id: row.op_id, status: res.status, note: res.note });
+    }
+
+    if (changed) {
+      saveState();
+      render();
+      toast(`Applied ${changed} from your assistant`);
+    }
+
+    for (const res of results) {
+      try {
+        await supaFetch(`/agent_inbox?op_id=eq.${encodeURIComponent(res.op_id)}`, {
+          method: 'PATCH',
+          headers: { Prefer: 'return=minimal' },
+          body: JSON.stringify({ status: res.status, applied_at: nowIso(), note: res.note })
+        });
+      } catch (e) {
+        console.warn('Agent inbox PATCH failed (will re-apply idempotently next run):', e);
+      }
+    }
+  } catch (e) {
+    console.warn('Agent inbox failed:', e);
+  } finally {
+    _inboxRunning = false;
+  }
+}
+
+function applyAgentInboxThrottled() {
+  const now = Date.now();
+  if (now - _lastInboxTrigger < INBOX_MIN_MS) return;
+  _lastInboxTrigger = now;
+  applyAgentInbox();
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) applyAgentInboxThrottled(); });
+window.addEventListener('online', applyAgentInboxThrottled);
 
 // ---- UI render for the Account & Backup settings section ----
 
