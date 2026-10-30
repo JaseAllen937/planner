@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Hub">
+<meta name="theme-color" content="#f2f2f7">
+<link rel="manifest" href="hub.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<title>Hub · AgendaAI</title>
+<link rel="stylesheet" href="./styles.css">
+<style>
+  html, body { height: 100%; overflow: hidden; }
+  body { height: 100vh; height: 100dvh; min-height: 0; }
+
+  .hub {
+    display: flex; flex-direction: column;
+    height: 100%; width: 100%; max-width: 720px; margin: 0 auto;
+    background: var(--bg);
+  }
+
+  /* ---- Header ---- */
+  .hub-head {
+    padding: calc(env(safe-area-inset-top, 0px) + 10px) 16px 8px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  }
+  .hub-head h1 { margin: 0; font-size: 22px; font-weight: 800; letter-spacing: -0.02em; color: var(--text); }
+  .hub-head-links { display: flex; gap: 14px; align-items: center; font-size: 14px; }
+  .hub-head-links a, .hub-link {
+    color: var(--accent); text-decoration: none; font-weight: 500;
+    background: none; border: none; padding: 6px 0; cursor: pointer; font-size: 14px;
+  }
+  .hub-head-links a:hover, .hub-link:hover { text-decoration: underline; }
+
+  /* ---- Quick buttons ---- */
+  .hub-quick {
+    display: flex; gap: 8px; padding: 8px 16px; overflow-x: auto;
+    border-bottom: 1px solid var(--border); scrollbar-width: none;
+  }
+  .hub-quick::-webkit-scrollbar { display: none; }
+  .hub-quick .btn { min-height: 34px; padding: 6px 14px; font-size: 14px; flex: 0 0 auto; background: var(--card); border: 1px solid var(--border); }
+
+  /* ---- Message list ---- */
+  .hub-list-wrap { position: relative; flex: 1; min-height: 0; }
+  .hub-list {
+    height: 100%; overflow-y: auto; padding: 12px 16px 16px;
+    -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+  }
+  .hub-older { display: flex; justify-content: center; margin: 4px 0 12px; }
+  .hub-older .btn { min-height: 32px; padding: 4px 14px; font-size: 13px; }
+  .hub-empty { color: var(--muted); text-align: center; padding: 48px 16px; font-size: 14px; }
+
+  .hub-day {
+    text-align: center; color: var(--muted); font-size: 12px; font-weight: 600;
+    margin: 16px 0 8px; letter-spacing: 0.02em;
+  }
+  .hub-msg { display: flex; flex-direction: column; margin: 6px 0; }
+  .hub-msg.me { align-items: flex-end; }
+  .hub-msg.them { align-items: flex-start; }
+  .hub-bubble {
+    max-width: 85%; padding: 9px 13px; border-radius: 18px;
+    white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
+    font-size: 15px; line-height: 1.4;
+  }
+  .hub-msg.me .hub-bubble { background: var(--accent); color: #fff; border-bottom-right-radius: 6px; }
+  .hub-msg.them .hub-bubble { background: var(--card); color: var(--text); border-bottom-left-radius: 6px; box-shadow: var(--shadow-sm); }
+  .hub-bubble a { color: var(--accent); text-decoration: underline; }
+  .hub-time { color: var(--muted); font-size: 11px; margin: 3px 6px 0; }
+
+  .hub-status {
+    text-align: center; color: var(--muted); font-size: 12px;
+    margin: 8px 24px; white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+
+  .hub-card {
+    max-width: 90%; background: var(--card); border: 1px solid var(--border-strong);
+    border-radius: var(--radius); padding: 12px 14px;
+  }
+  .hub-card-body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 15px; line-height: 1.4; }
+  .hub-card-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .hub-card-row .btn { min-height: 38px; padding: 6px 18px; font-size: 14px; }
+  .hub-card-row .btn:disabled { opacity: 0.5; cursor: default; }
+  .hub-card-note { color: var(--muted); font-size: 13px; margin-top: 10px; }
+
+  .hub-pill {
+    position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%);
+    background: var(--accent); color: #fff; border: none; border-radius: 999px;
+    padding: 6px 14px; font-size: 13px; font-weight: 600; cursor: pointer;
+    box-shadow: var(--shadow-lg);
+  }
+
+  /* ---- Notices, working line, composer ---- */
+  .hub-notice {
+    margin: 6px 16px 0; padding: 8px 12px; border-radius: var(--radius-sm);
+    font-size: 13px; background: var(--card); border: 1px solid var(--border); color: var(--muted);
+  }
+  .hub-notice.setup { color: var(--danger); border-color: var(--danger-dim); }
+  .hub-working { padding: 6px 16px 0; font-size: 13px; color: var(--muted); }
+  .hub-working.warn { color: var(--danger); }
+  .hub-dots::after { content: ''; display: inline-block; width: 1.2em; text-align: left; animation: hub-dots 1.2s steps(4, end) infinite; }
+  @keyframes hub-dots {
+    0% { content: ''; } 25% { content: '.'; } 50% { content: '..'; } 75%, 100% { content: '...'; }
+  }
+
+  .hub-composer {
+    padding: 8px 16px calc(env(safe-area-inset-bottom, 0px) + 10px);
+    border-top: 1px solid var(--border); margin-top: 6px;
+  }
+  .hub-compose-row { display: flex; gap: 8px; align-items: flex-end; }
+  .hub-compose-row textarea {
+    flex: 1; resize: none; border: 1px solid var(--border-strong); border-radius: 18px;
+    background: var(--card); color: var(--text); padding: 9px 14px;
+    font-size: 16px; line-height: 22px; max-height: calc(22px * 6 + 20px); overflow-y: auto;
+    outline: none;
+  }
+  .hub-compose-row textarea:focus { border-color: var(--accent); }
+  .hub-compose-row .btn { min-height: 42px; border-radius: 21px; }
+  .hub-compose-row .btn:disabled { opacity: 0.5; cursor: default; }
+  .hub-compose-meta { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; margin-top: 4px; min-height: 0; }
+  .hub-err { color: var(--danger); overflow-wrap: anywhere; }
+  .hub-count { color: var(--muted); margin-left: auto; }
+  .hub-count.over { color: var(--danger); }
+
+  /* ---- Sign-in ---- */
+  .hub-signin { flex: 1; overflow-y: auto; padding: 32px 16px; }
+  .hub-signin form {
+    max-width: 360px; margin: 0 auto; background: var(--card);
+    border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow-card);
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .hub-signin h2 { margin: 0 0 4px; font-size: 18px; }
+  .hub-signin p { margin: 0 0 6px; color: var(--muted); font-size: 13px; }
+  .hub-signin input {
+    border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+    padding: 10px 12px; font-size: 16px; background: var(--card); color: var(--text);
+  }
+  .hub-signin .btn:disabled { opacity: 0.5; }
+
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="hub">
+  <header class="hub-head">
+    <h1>Hub</h1>
+    <div class="hub-head-links">
+      <a href="./index.html">Back to app</a>
+      <button type="button" class="hub-link" id="signout" hidden>Sign out of Hub</button>
+    </div>
+  </header>
+
+  <section class="hub-signin" id="signin-view" hidden>
+    <form id="signin-form" novalidate>
+      <h2>Sign in to the Hub</h2>
+      <p>Same account as AgendaAI. The Hub keeps its own sign-in, so this won't sign the app out.</p>
+      <input type="email" id="signin-email" autocomplete="username" placeholder="Email" required>
+      <input type="password" id="signin-password" autocomplete="current-password" placeholder="Password" required>
+      <button type="submit" class="btn btn-primary" id="signin-btn">Sign in</button>
+      <div class="hub-err" id="signin-err"></div>
+    </form>
+  </section>
+
+  <div id="chat-view" hidden style="display:flex;flex-direction:column;flex:1;min-height:0">
+    <nav class="hub-quick" aria-label="Quick messages">
+      <button type="button" class="btn" data-cmd="/morning">Morning</button>
+      <button type="button" class="btn" data-cmd="/night">Night</button>
+      <button type="button" class="btn" data-cmd="/review">Review</button>
+      <button type="button" class="btn" data-cmd="/report">Report</button>
+      <button type="button" class="btn" data-cmd="/new">New chat</button>
+    </nav>
+
+    <div class="hub-list-wrap">
+      <div class="hub-list" id="list" aria-live="polite"></div>
+      <button type="button" class="hub-pill" id="new-pill" hidden>New messages ↓</button>
+    </div>
+
+    <div class="hub-notice setup" id="setup-notice" hidden>The Hub isn't set up yet: run sql/hub_messages.sql in Supabase.</div>
+    <div class="hub-notice" id="retry-notice" hidden>Can't reach the Hub right now. Retrying…</div>
+    <div class="hub-working" id="working" hidden></div>
+
+    <form class="hub-composer" id="composer" novalidate>
+      <div class="hub-compose-row">
+        <textarea id="input" rows="1" maxlength="4000" placeholder="Message your assistant" aria-label="Message"></textarea>
+        <button type="submit" class="btn btn-primary" id="send">Send</button>
+      </div>
+      <div class="hub-compose-meta">
+        <span class="hub-err" id="send-err"></span>
+        <span class="hub-count" id="count" hidden></span>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+// ---- Supabase config (copied from index.html) ----
+const SUPABASE_URL = "https://jmvetxcxvabrzoppoxwm.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImptdmV0eGN4dmFicnpvcHBveHdtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2NjQ5NDgsImV4cCI6MjA5NzI0MDk0OH0.R1ll_ccsBp4t4D3lDm7ZFJJAlKVekPaw907wUQm7bZw";
+
+// The Hub's own session. Supabase rotates refresh tokens on every use, so
+// sharing the app's session key would sign the app out. Never touch it.
+const HUB_SESSION_KEY = 'agendaai_hub_session';   // { access_token, refresh_token, user_id, email }
+
+const SELECT = 'select=id,created_at,role,body,buttons,ref_id,status';
+const PAGE = 100;
+const POLL_LIMIT = 30;
+const MAX_LEN = 4000;
+const COUNT_FROM = 3500;
+const STALE_MS = 45000;
+const FAST_MS = 2500;
+const SLOW_MS = 10000;
+
+const COMMAND_LABELS = {
+  '/morning': 'Morning check-in',
+  '/night': 'Night check-in',
+  '/review': 'Sunday review',
+  '/report': 'Report',
+  '/new': 'New chat'
+};
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
+// ---- Session (Hub key only) ----
+
+function getHubSession() {
+  try {
+    const raw = localStorage.getItem(HUB_SESSION_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+function setHubSession(s) {
+  try { localStorage.setItem(HUB_SESSION_KEY, JSON.stringify(s)); } catch {}
+}
+function clearHubSession() {
+  try { localStorage.removeItem(HUB_SESSION_KEY); } catch {}
+}
+
+// ---- Auth (same requests as supaSignIn / supaRefreshToken) ----
+
+async function hubSignIn(email, password) {
+  const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+    method: 'POST',
+    headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password })
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error_description || data.msg || data.error || `Sign-in failed (${r.status})`);
+  setHubSession({
+    access_token: data.access_token,
+    refresh_token: data.refresh_token,
+    user_id: data.user.id,
+    email: data.user.email
+  });
+}
+
+// Shared so two requests that hit 401 together don't both spend the
+// (single-use) refresh token.
+let refreshInFlight = null;
+function hubRefreshToken() {
+  if (!refreshInFlight) {
+    refreshInFlight = (async () => {
+      const session = getHubSession();
+      if (!session || !session.refresh_token) return false;
+      try {
+        const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+          method: 'POST',
+          headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refresh_token: session.refresh_token })
+        });
+        if (!r.ok) return false;
+        const data = await r.json();
+        if (!data.access_token) return false;
+        setHubSession({
+          access_token: data.access_token,
+          refresh_token: data.refresh_token || session.refresh_token,
+          user_id: session.user_id,
+          email: session.email
+        });
+        return true;
+      } catch { return false; }
+    })().finally(() => { refreshInFlight = null; });
+  }
+  return refreshInFlight;
+}
+
+class HubError extends Error {
+  constructor(message, status, code) { super(message); this.status = status; this.code = code; }
+}
+function isMissingTable(e) {
+  return e && (e.status === 404 || e.code === 'PGRST205');
+}
+
+// Like supaFetch: apikey + bearer, one 401 -> refresh -> retry. A failed
+// refresh clears only the Hub session and shows the sign-in form.
+async function hubFetch(path, opts = {}) {
+  const session = getHubSession();
+  if (!session) { showSignIn(); throw new HubError('Not signed in', 401); }
+
+  const buildOpts = (token) => ({
+    ...opts,
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      ...(opts.headers || {})
+    }
+  });
+
+  let r = await fetch(`${SUPABASE_URL}/rest/v1${path}`, buildOpts(session.access_token));
+  if (r.status === 401) {
+    const refreshed = await hubRefreshToken();
+    if (!refreshed) {
+      clearHubSession();
+      showSignIn('Your Hub sign-in expired. Please sign in again.');
+      throw new HubError('Session expired', 401);
+    }
+    r = await fetch(`${SUPABASE_URL}/rest/v1${path}`, buildOpts(getHubSession().access_token));
+  }
+  if (!r.ok) {
+    const txt = await r.text().catch(() => '');
+    let code, msg;
+    try { const j = JSON.parse(txt); code = j.code; msg = j.message; } catch {}
+    throw new HubError(msg || `Request failed (${r.status})`, r.status, code);
+  }
+  return r;
+}
+
+// ---- State ----
+
+const rowsById = new Map();      // id -> row
+let hasOlder = false;
+let loadingOlder = false;
+const cardState = new Map();     // approval id -> 'sending' | 'sent'
+let lastSig = '';
+let lastMaxId = 0;
+
+// ---- DOM ----
+
+const $ = id => document.getElementById(id);
+const listEl = $('list');
+const pillEl = $('new-pill');
+const inputEl = $('input');
+const sendBtn = $('send');
+const sendErrEl = $('send-err');
+const countEl = $('count');
+const workingEl = $('working');
+
+function showSignIn(message) {
+  stopPolling();
+  rowsById.clear(); cardState.clear(); hasOlder = false; lastSig = ''; lastMaxId = 0;
+  listEl.innerHTML = '';
+  $('chat-view').hidden = true;
+  $('signout').hidden = true;
+  $('signin-view').hidden = false;
+  $('signin-err').textContent = message || '';
+  $('signin-btn').disabled = false;
+}
+
+function showChat() {
+  $('signin-view').hidden = true;
+  $('chat-view').hidden = false;
+  $('signout').hidden = false;
+}
+
+// ---- Formatting ----
+
+function sortedRows() {
+  return [...rowsById.values()].sort((a, b) => a.id - b.id);
+}
+
+function fmtTime(d) {
+  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+}
+function dayKey(d) {
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+}
+function fmtDay(d) {
+  const today = new Date();
+  const yest = new Date(); yest.setDate(today.getDate() - 1);
+  if (dayKey(d) === dayKey(today)) return 'Today';
+  if (dayKey(d) === dayKey(yest)) return 'Yesterday';
+  const opts = { weekday: 'long', month: 'short', day: 'numeric' };
+  if (d.getFullYear() !== today.getFullYear()) opts.year = 'numeric';
+  return d.toLocaleDateString('en-US', opts);
+}
+
+// Assistant formatting. Input is escaped FIRST; after that the only markup
+// added is <strong> for **text** and <a> for https:// URLs. Bold runs before
+// links so the ** pass can never land inside an href attribute; the URL pass
+// stops at '<' so it can never swallow a <strong> tag.
+function formatAssistant(body) {
+  let html = escapeHtml(body);
+  html = html.replace(/\*\*([^*\n]+?)\*\*/g, '<strong>$1</strong>');
+  // A URL ends at whitespace, '<', or an escaped < > " ' entity.
+  html = html.replace(/https:\/\/(?:(?!&lt;|&gt;|&quot;|&#39;)[^\s<])+/g, (m) => {
+    // Leave trailing punctuation out of the link (but not the ';' of '&amp;').
+    let url = m, tail = '';
+    while (/[.,!?:;)\]]$/.test(url) && !/&amp;$/.test(url)) {
+      tail = url.slice(-1) + tail;
+      url = url.slice(0, -1);
+    }
+    if (url.length <= 'https://'.length) return m;
+    return `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>${tail}`;
+  });
+  return html;
+}
+
+function cardIsSent(row) {
+  if (cardState.has(row.id)) return true;
+  for (const r of rowsById.values()) if (r.role === 'button' && r.ref_id === row.id) return true;
+  return false;
+}
+
+function renderApproval(row) {
+  let actions;
+  const groups = Array.isArray(row.buttons) ? row.buttons.filter(Array.isArray) : null;
+  if (!groups || !groups.length) {
+    actions = '<div class="hub-card-note">Decided</div>';
+  } else {
+    const state = cardState.get(row.id) || (cardIsSent(row) ? 'sent' : null);
+    const disabled = state ? ' disabled' : '';
+    actions = groups.map((group, gi) => {
+      const btns = group.map((btn, bi) => {
+        if (!Array.isArray(btn) || btn.length < 2) return '';
+        const label = String(btn[0]);
+        const primary = /^approve$/i.test(label.trim()) ? ' btn-primary' : '';
+        return `<button type="button" class="btn${primary}" data-card="${Number(row.id)}" data-g="${gi}" data-b="${bi}"${disabled}>${escapeHtml(label)}</button>`;
+      }).join('');
+      return `<div class="hub-card-row">${btns}</div>`;
+    }).join('');
+    if (state === 'sending') actions += '<div class="hub-card-note">Sending…</div>';
+    else if (state === 'sent') actions += '<div class="hub-card-note">Sent. Waiting for your PC…</div>';
+  }
+  return `<div class="hub-card"><div class="hub-card-body">${escapeHtml(row.body || '')}</div>${actions}</div>`;
+}
+
+function renderRow(row) {
+  const d = new Date(row.created_at);
+  const time = isNaN(d) ? '' : `<div class="hub-time">${escapeHtml(fmtTime(d))}</div>`;
+  const body = row.body == null ? '' : String(row.body);
+  switch (row.role) {
+    case 'user': {
+      const label = COMMAND_LABELS[body.trim()];
+      return `<div class="hub-msg me"><div class="hub-bubble">${escapeHtml(label || body)}</div>${time}</div>`;
+    }
+    case 'assistant':
+      return `<div class="hub-msg them"><div class="hub-bubble">${formatAssistant(body)}</div>${time}</div>`;
+    case 'status':
+      return `<div class="hub-status">${escapeHtml(body)}</div>`;
+    case 'approval':
+      return `<div class="hub-msg them">${renderApproval(row)}${time}</div>`;
+    default:
+      return '';   // 'button' rows (and anything unknown) aren't shown
+  }
+}
+
+function nearBottom() {
+  return listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight < 80;
+}
+function scrollToBottom() {
+  listEl.scrollTop = listEl.scrollHeight;
+  pillEl.hidden = true;
+}
+
+// Re-renders the list only when something visible changed.
+function render({ forceBottom = false, keepTopAnchor = false } = {}) {
+  const rows = sortedRows();
+  const sig = JSON.stringify([hasOlder, loadingOlder, [...cardState], rows.map(r => [r.id, r.status, r.buttons, r.body])]);
+  updateWorking();
+  if (sig === lastSig && !forceBottom) return;
+  lastSig = sig;
+
+  const wasNearBottom = nearBottom();
+  const prevHeight = listEl.scrollHeight;
+  const prevTop = listEl.scrollTop;
+
+  let html = '';
+  if (hasOlder) {
+    html += `<div class="hub-older"><button type="button" class="btn" id="load-older"${loadingOlder ? ' disabled' : ''}>${loadingOlder ? 'Loading…' : 'Load older'}</button></div>`;
+  }
+  let lastDay = '';
+  let shown = 0;
+  for (const row of rows) {
+    const piece = renderRow(row);
+    if (!piece) continue;
+    const d = new Date(row.created_at);
+    if (!isNaN(d) && dayKey(d) !== lastDay) {
+      lastDay = dayKey(d);
+      html += `<div class="hub-day">${escapeHtml(fmtDay(d))}</div>`;
+    }
+    html += piece;
+    shown++;
+  }
+  if (!shown) html += '<div class="hub-empty">No messages yet. Say hi, or tap Morning to start a check-in.</div>';
+  listEl.innerHTML = html;
+
+  const maxId = rows.length ? rows[rows.length - 1].id : 0;
+  const grew = maxId > lastMaxId;
+  lastMaxId = Math.max(lastMaxId, maxId);
+
+  if (keepTopAnchor) {
+    listEl.scrollTop = prevTop + (listEl.scrollHeight - prevHeight);
+  } else if (forceBottom || wasNearBottom) {
+    scrollToBottom();
+  } else {
+    listEl.scrollTop = prevTop;
+    if (grew) pillEl.hidden = false;
+  }
+}
+
+// ---- "Is it working" line ----
+
+function workingState() {
+  const rows = sortedRows();
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const r = rows[i];
+    if (r.role === 'status') continue;
+    if (r.role !== 'user' && r.role !== 'button') return null;
+    if (r.status === 'done') return 'working';
+    if (r.status === 'new') {
+      const age = Date.now() - new Date(r.created_at).getTime();
+      return age >= STALE_MS ? 'stale' : 'sending';
+    }
+    return null;
+  }
+  return null;
+}
+
+function updateWorking() {
+  const s = workingState();
+  workingEl.classList.toggle('warn', s === 'stale');
+  if (s === 'sending') workingEl.innerHTML = 'Sending to your PC…';
+  else if (s === 'stale') workingEl.innerHTML = "Your PC hasn't picked this up. Is it on, with the Hub running?";
+  else if (s === 'working') workingEl.innerHTML = 'Working<span class="hub-dots"></span>';
+  else workingEl.innerHTML = '';
+  workingEl.hidden = !s;
+  return s;
+}
+
+// ---- Errors ----
+
+function noteSuccess() {
+  $('setup-notice').hidden = true;
+  $('retry-notice').hidden = true;
+}
+function noteError(e) {
+  if (e && e.status === 401) return;       // hubFetch already showed sign-in
+  if (isMissingTable(e)) {
+    $('setup-notice').hidden = false;
+    $('retry-notice').hidden = true;
+  } else {
+    $('retry-notice').hidden = false;
+  }
+}
+
+// ---- Loading and polling ----
+
+function mergeRows(rows) {
+  for (const r of rows) if (r && typeof r.id === 'number') rowsById.set(r.id, r);
+}
+
+async function loadInitial() {
+  try {
+    const r = await hubFetch(`/hub_messages?${SELECT}&order=id.desc&limit=${PAGE}`, { method: 'GET' });
+    const rows = await r.json();
+    rowsById.clear();
+    mergeRows(rows.reverse());
+    hasOlder = rows.length === PAGE;
+    noteSuccess();
+    render({ forceBottom: true });
+  } catch (e) {
+    noteError(e);
+    if (pollingOn) render({ forceBottom: true });
+  }
+}
+
+async function loadOlder() {
+  if (loadingOlder || !rowsById.size) return;
+  const oldest = Math.min(...rowsById.keys());
+  loadingOlder = true;
+  render({ keepTopAnchor: true });
+  try {
+    const r = await hubFetch(`/hub_messages?${SELECT}&id=lt.${oldest}&order=id.desc&limit=${PAGE}`, { method: 'GET' });
+    const rows = await r.json();
+    mergeRows(rows);
+    hasOlder = rows.length === PAGE;
+    noteSuccess();
+  } catch (e) {
+    noteError(e);
+  }
+  loadingOlder = false;
+  render({ keepTopAnchor: true });
+}
+
+// Exactly one poll timer. Every path that schedules goes through
+// schedulePoll(), which clears the previous timer first.
+let pollTimer = null;
+let polling = false;        // a poll request is in flight
+let pollAgain = false;      // pollNow() was called during an in-flight poll
+let pollingOn = false;      // signed in and showing the chat
+
+function stopPolling() {
+  pollingOn = false;
+  clearTimeout(pollTimer);
+  pollTimer = null;
+}
+function schedulePoll() {
+  clearTimeout(pollTimer);
+  pollTimer = null;
+  if (!pollingOn || document.hidden) return;
+  pollTimer = setTimeout(poll, workingState() ? FAST_MS : SLOW_MS);
+}
+function pollNow() {
+  if (polling) { pollAgain = true; return; }
+  clearTimeout(pollTimer);
+  pollTimer = null;
+  poll();
+}
+
+async function poll() {
+  pollTimer = null;
+  if (!pollingOn || document.hidden) return;
+  polling = true;
+  try {
+    const r = await hubFetch(`/hub_messages?${SELECT}&order=id.desc&limit=${POLL_LIMIT}`, { method: 'GET' });
+    mergeRows(await r.json());
+    noteSuccess();
+  } catch (e) {
+    noteError(e);
+  }
+  polling = false;
+  if (!pollingOn) return;
+  render();
+  if (pollAgain) { pollAgain = false; pollNow(); return; }
+  schedulePoll();
+}
+
+async function startChat() {
+  showChat();
+  pollingOn = true;
+  await loadInitial();
+  if (pollingOn) schedulePoll();
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    clearTimeout(pollTimer);
+    pollTimer = null;
+  } else if (pollingOn) {
+    pollNow();
+  }
+});
+
+// ---- Sending ----
+
+async function insertRow(payload) {
+  const r = await hubFetch('/hub_messages', {
+    method: 'POST',
+    headers: { Prefer: 'return=representation' },
+    body: JSON.stringify(payload)
+  });
+  const rows = await r.json().catch(() => []);
+  mergeRows(Array.isArray(rows) ? rows : [rows]);
+}
+
+let sending = false;
+async function sendText(raw, fromComposer) {
+  const text = String(raw || '').trim();
+  if (!text || sending) return;
+  if (text.length > MAX_LEN) { sendErrEl.textContent = `Too long: ${text.length} / ${MAX_LEN} characters.`; return; }
+  sending = true;
+  sendBtn.disabled = true;
+  document.querySelectorAll('.hub-quick .btn').forEach(b => { b.disabled = true; });
+  sendErrEl.textContent = '';
+  try {
+    await insertRow({ role: 'user', body: text });
+    if (fromComposer) { inputEl.value = ''; onInput(); }
+    noteSuccess();
+    render({ forceBottom: true });
+    pollNow();
+  } catch (e) {
+    if (e.status !== 401) {
+      sendErrEl.textContent = isMissingTable(e)
+        ? "Couldn't send: the Hub isn't set up yet."
+        : `Couldn't send: ${e.message || 'network error'}. Your message is still here.`;
+      noteError(e);
+    }
+  } finally {
+    sending = false;
+    sendBtn.disabled = false;
+    document.querySelectorAll('.hub-quick .btn').forEach(b => { b.disabled = false; });
+  }
+}
+
+async function tapCardButton(cardId, gi, bi) {
+  const row = rowsById.get(cardId);
+  if (!row || row.role !== 'approval' || cardIsSent(row)) return;   // already tapped
+  const btn = Array.isArray(row.buttons) && Array.isArray(row.buttons[gi]) ? row.buttons[gi][bi] : null;
+  if (!Array.isArray(btn) || btn.length < 2) return;
+  const data = String(btn[1]);
+  cardState.set(cardId, 'sending');     // set synchronously: a second tap returns above
+  render();
+  try {
+    await insertRow({ role: 'button', body: data, ref_id: cardId });
+    cardState.set(cardId, 'sent');
+    noteSuccess();
+    render();
+    pollNow();
+  } catch (e) {
+    cardState.delete(cardId);
+    if (e.status !== 401) {
+      sendErrEl.textContent = `Couldn't send your choice: ${e.message || 'network error'}. Try again.`;
+      noteError(e);
+      render();
+    }
+  }
+}
+
+// ---- Composer ----
+
+const finePointer = window.matchMedia && window.matchMedia('(pointer: fine)').matches;
+
+function onInput() {
+  inputEl.style.height = 'auto';
+  inputEl.style.height = inputEl.scrollHeight + 2 + 'px';   // max-height in CSS caps it at ~6 lines
+  const n = inputEl.value.length;
+  countEl.hidden = n <= COUNT_FROM;
+  countEl.textContent = `${n} / ${MAX_LEN}`;
+  countEl.classList.toggle('over', n >= MAX_LEN);
+}
+inputEl.addEventListener('input', onInput);
+inputEl.addEventListener('keydown', (e) => {
+  if (finePointer && e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+    e.preventDefault();
+    sendText(inputEl.value, true);
+  }
+});
+$('composer').addEventListener('submit', (e) => {
+  e.preventDefault();
+  sendText(inputEl.value, true);
+});
+document.querySelector('.hub-quick').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-cmd]');
+  if (b) sendText(b.dataset.cmd, false);
+});
+
+listEl.addEventListener('click', (e) => {
+  if (e.target.closest('#load-older')) { loadOlder(); return; }
+  const b = e.target.closest('button[data-card]');
+  if (b && !b.disabled) tapCardButton(Number(b.dataset.card), Number(b.dataset.g), Number(b.dataset.b));
+});
+listEl.addEventListener('scroll', () => { if (nearBottom()) pillEl.hidden = true; });
+pillEl.addEventListener('click', scrollToBottom);
+
+// ---- Sign in / out ----
+
+$('signin-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const email = $('signin-email').value.trim();
+  const password = $('signin-password').value;
+  const errEl = $('signin-err');
+  if (!email || !password) { errEl.textContent = 'Enter your email and password.'; return; }
+  $('signin-btn').disabled = true;
+  errEl.textContent = '';
+  try {
+    await hubSignIn(email, password);
+    $('signin-password').value = '';
+    startChat();
+  } catch (err) {
+    errEl.textContent = err.message || 'Sign-in failed.';
+  } finally {
+    $('signin-btn').disabled = false;
+  }
+});
+
+$('signout').addEventListener('click', () => {
+  clearHubSession();
+  showSignIn();
+});
+
+// ---- Boot ----
+
+if (getHubSession()) startChat();
+else showSignIn();
+</script>
+</body>
+</html>
