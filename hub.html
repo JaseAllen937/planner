@@ -52,6 +52,11 @@
   }
   .hub-older { display: flex; justify-content: center; margin: 4px 0 12px; }
   .hub-older .btn { min-height: 32px; padding: 4px 14px; font-size: 13px; }
+  .hub-divider {
+    display: flex; align-items: center; gap: 10px;
+    color: var(--muted); font-size: 11px; font-weight: 600; margin: 14px 0 6px;
+  }
+  .hub-divider::before, .hub-divider::after { content: ''; flex: 1; border-top: 1px solid var(--border); }
   .hub-empty { color: var(--muted); text-align: center; padding: 48px 16px; font-size: 14px; }
 
   .hub-day {
@@ -166,6 +171,7 @@
 
   <div id="chat-view" hidden style="display:flex;flex-direction:column;flex:1;min-height:0">
     <nav class="hub-quick" aria-label="Quick messages">
+      <button type="button" class="btn" data-cmd="/today">Today</button>
       <button type="button" class="btn" data-cmd="/morning">Morning</button>
       <button type="button" class="btn" data-cmd="/night">Night</button>
       <button type="button" class="btn" data-cmd="/review">Review</button>
@@ -215,8 +221,11 @@ const STALE_MS = 45000;
 const SILENT_MS = 5 * 60 * 1000;   // "Working…" with no new rows this long -> 'silent'
 const FAST_MS = 2500;
 const SLOW_MS = 10000;
+const CONVO_GAP_MS = 45 * 60 * 1000;   // the PC ends a conversation after this much quiet
+const AWAY_MS = 5 * 60 * 1000;         // hidden this long -> back to the bottom on return
 
 const COMMAND_LABELS = {
+  '/today': 'Today',
   '/morning': 'Morning check-in',
   '/night': 'Night check-in',
   '/review': 'Sunday review',
@@ -343,6 +352,11 @@ let loadingOlder = false;
 const cardState = new Map();     // approval id -> 'sending' | 'sent'
 let lastSig = '';
 let lastMaxId = 0;
+let showEarlier = false;         // "Show earlier messages" tapped; until reload or New chat
+let floorId = 0;                 // on open, rows up to this id belong to an old conversation
+let opening = true;              // the next successful load is the page opening
+let bottomNext = false;          // the next render scrolls to the bottom
+let hiddenAt = 0;
 
 // ---- DOM ----
 
@@ -358,6 +372,7 @@ const workingEl = $('working');
 function showSignIn(message) {
   stopPolling();
   rowsById.clear(); cardState.clear(); hasOlder = false; lastSig = ''; lastMaxId = 0;
+  showEarlier = false; floorId = 0; opening = true;
   listEl.innerHTML = '';
   $('chat-view').hidden = true;
   $('signout').hidden = true;
@@ -464,6 +479,40 @@ function renderRow(row) {
   }
 }
 
+// ---- Conversations (display only) ----
+
+function isNewChat(row) {
+  return row.role === 'user' && row.body != null && String(row.body).trim() === '/new';
+}
+// Indices where a conversation starts: the row after a /new, or a row 45+
+// minutes after the one before it.
+function boundaryStarts(rows) {
+  const starts = new Set();
+  for (let i = 1; i < rows.length; i++) {
+    if (isNewChat(rows[i - 1])) starts.add(i);
+    const gap = new Date(rows[i].created_at) - new Date(rows[i - 1].created_at);
+    if (gap >= CONVO_GAP_MS) starts.add(i);
+  }
+  if (rows.length && isNewChat(rows[rows.length - 1])) starts.add(rows.length);
+  return starts;
+}
+// Index of the first row of the current conversation.
+function currentStart(rows, starts) {
+  let start = 0;
+  for (const i of starts) start = Math.max(start, i);
+  while (start < rows.length && rows[start].id <= floorId) start++;
+  return start;
+}
+// Runs on the first successful load after sign-in or page load.
+function applyOpen() {
+  if (!opening) return;
+  opening = false;
+  const rows = sortedRows();
+  const newest = rows[rows.length - 1];
+  if (newest && Date.now() - new Date(newest.created_at).getTime() >= CONVO_GAP_MS) floorId = newest.id;
+  bottomNext = true;
+}
+
 function nearBottom() {
   return listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight < 80;
 }
@@ -474,8 +523,9 @@ function scrollToBottom() {
 
 // Re-renders the list only when something visible changed.
 function render({ forceBottom = false, keepTopAnchor = false } = {}) {
+  if (bottomNext && !keepTopAnchor) { forceBottom = true; bottomNext = false; }
   const rows = sortedRows();
-  const sig = JSON.stringify([hasOlder, loadingOlder, [...cardState], rows.map(r => [r.id, r.status, r.buttons, r.body])]);
+  const sig = JSON.stringify([hasOlder, loadingOlder, showEarlier, floorId, [...cardState], rows.map(r => [r.id, r.status, r.buttons, r.body])]);
   updateWorking();
   if (sig === lastSig && !forceBottom) return;
   lastSig = sig;
@@ -484,15 +534,25 @@ function render({ forceBottom = false, keepTopAnchor = false } = {}) {
   const prevHeight = listEl.scrollHeight;
   const prevTop = listEl.scrollTop;
 
+  const starts = boundaryStarts(rows);
+  const start = showEarlier ? 0 : currentStart(rows, starts);
+
   let html = '';
-  if (hasOlder) {
+  if (!showEarlier && (start > 0 || hasOlder)) {
+    html += '<div class="hub-older"><button type="button" class="btn" id="show-earlier">Show earlier messages</button></div>';
+  } else if (hasOlder) {
     html += `<div class="hub-older"><button type="button" class="btn" id="load-older"${loadingOlder ? ' disabled' : ''}>${loadingOlder ? 'Loading…' : 'Load older'}</button></div>`;
   }
   let lastDay = '';
   let shown = 0;
-  for (const row of rows) {
+  let divider = false;
+  for (let i = start; i < rows.length; i++) {
+    const row = rows[i];
+    if (showEarlier && starts.has(i)) divider = true;
     const piece = renderRow(row);
     if (!piece) continue;
+    if (divider && shown) html += '<div class="hub-divider">New conversation</div>';
+    divider = false;
     const d = new Date(row.created_at);
     if (!isNaN(d) && dayKey(d) !== lastDay) {
       lastDay = dayKey(d);
@@ -512,6 +572,8 @@ function render({ forceBottom = false, keepTopAnchor = false } = {}) {
     listEl.scrollTop = prevTop + (listEl.scrollHeight - prevHeight);
   } else if (forceBottom || wasNearBottom) {
     scrollToBottom();
+    // Again after layout settles (the notices and working line can resize the list).
+    if (forceBottom) requestAnimationFrame(scrollToBottom);
   } else {
     listEl.scrollTop = prevTop;
     if (grew) pillEl.hidden = false;
@@ -588,11 +650,20 @@ async function loadInitial() {
     mergeRows(rows.reverse());
     hasOlder = rows.length === PAGE;
     noteSuccess();
+    applyOpen();
     render({ forceBottom: true });
   } catch (e) {
     noteError(e);
     if (pollingOn) render({ forceBottom: true });
   }
+}
+
+function showEarlierMessages() {
+  const rows = sortedRows();
+  const hidden = currentStart(rows, boundaryStarts(rows)) > 0;
+  showEarlier = true;
+  render({ keepTopAnchor: true });
+  if (!hidden && hasOlder) loadOlder();   // nothing loaded was hidden: fetch the older page
 }
 
 async function loadOlder() {
@@ -648,6 +719,7 @@ async function poll() {
     const r = await hubFetch(`/hub_messages?${SELECT}&order=id.desc&limit=${POLL_LIMIT}`, { method: 'GET' });
     mergeRows(await r.json());
     noteSuccess();
+    applyOpen();
   } catch (e) {
     noteError(e);
   }
@@ -667,9 +739,11 @@ async function startChat() {
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
+    hiddenAt = Date.now();
     clearTimeout(pollTimer);
     pollTimer = null;
   } else if (pollingOn) {
+    if (hiddenAt && Date.now() - hiddenAt >= AWAY_MS) { bottomNext = true; render(); }
     pollNow();
   }
 });
@@ -698,6 +772,7 @@ async function sendText(raw, fromComposer) {
   try {
     await insertRow({ role: 'user', body: text });
     if (fromComposer) { inputEl.value = ''; onInput(); }
+    if (text === '/new') showEarlier = false;   // the new conversation starts on a clean screen
     noteSuccess();
     render({ forceBottom: true });
     pollNow();
@@ -769,6 +844,7 @@ document.querySelector('.hub-quick').addEventListener('click', (e) => {
 
 listEl.addEventListener('click', (e) => {
   if (e.target.closest('#load-older')) { loadOlder(); return; }
+  if (e.target.closest('#show-earlier')) { showEarlierMessages(); return; }
   const b = e.target.closest('button[data-card]');
   if (b && !b.disabled) tapCardButton(Number(b.dataset.card), Number(b.dataset.g), Number(b.dataset.b));
 });
