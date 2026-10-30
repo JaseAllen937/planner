@@ -881,7 +881,7 @@ const SCHEMA_VERSION = 17;
 // Human-facing build tag shown in Settings and stamped into every export legend.
 // BUMP THIS TOGETHER WITH sw.js VERSION on every deploy — a stale tag is how a
 // rolled-back build went unnoticed for two days.
-const APP_VERSION = 'v102-hub';
+const APP_VERSION = 'v104';
 
 // ---- Today layout (v96): user-controlled section order + visibility + rooms
 // preset. Defined BEFORE loadState() so ensureShape's defensive guard can read the
@@ -1563,9 +1563,11 @@ function ensureDailyState(date) {
   return ds;
 }
 
-function computeAndStoreHoursSlept() {
-  const today = todayDate();
-  const yest = yesterdayDate();
+// v104: optional date (wake from `date`, bedtime from the day before). No
+// argument -> today, exactly as before.
+function computeAndStoreHoursSlept(date = todayDate()) {
+  const today = date;
+  const yest = addDays(date, -1);
   const dsToday = state.daily_state.find(d => d.date === today);
   const dsYest = state.daily_state.find(d => d.date === yest);
   const wake = dsToday && dsToday.wake_time;
@@ -10566,6 +10568,46 @@ const INBOX_MIN_MS = 10 * 1000;
 const INBOX_YMD = /^\d{4}-\d{2}-\d{2}$/;
 const INBOX_HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 const INBOX_PRIORITIES = ['normal', 'medium', 'high'];
+// v104: kinds a v102 copy of the app turned away as 'unknown op'.
+const INBOX_V104_OPS = ['edit_item', 'delete_item', 'uncomplete_item', 'uncheck_block', 'add_block',
+  'edit_block', 'delete_block', 'log_counter', 'delete_focus_session', 'set_sleep'];
+const INBOX_RETRY_DAYS = 3;
+
+// Null when `date` is a YYYY-MM-DD inside the lookback window (same as
+// check_block), else the reject note.
+function inboxWindowError(date) {
+  if (!(typeof date === 'string' && INBOX_YMD.test(date))) return 'invalid date';
+  const today = todayDate();
+  if (date > today) return 'date is in the future';
+  if (date < addDays(today, -PAST_DAYS_LOOKBACK)) return `older than ${PAST_DAYS_LOOKBACK} days`;
+  return null;
+}
+
+// A payload recurrence -> the form object buildRecurrenceFromForm reads, or
+// null when it isn't valid. Days come back in ALL_DAYS order.
+function inboxRecurrenceForm(rec) {
+  if (!rec || typeof rec !== 'object') return null;
+  if (rec.kind === 'daily' || rec.kind === 'weekly' || rec.kind === 'once') return { recKind: rec.kind };
+  if (rec.kind === 'weekdays') {
+    if (!Array.isArray(rec.days) || !rec.days.length || rec.days.some(d => !ALL_DAYS.includes(d))) return null;
+    return { recKind: 'weekdays', recDays: ALL_DAYS.filter(d => rec.days.includes(d)) };
+  }
+  if (rec.kind === 'everyN') {
+    if (!Number.isInteger(rec.n) || rec.n < 1 || rec.n > 365) return null;
+    return { recKind: 'everyN', recN: String(rec.n) };
+  }
+  return null;
+}
+function sameRecurrence(a, b) {
+  if (!a || !b || a.kind !== b.kind) return false;
+  if (a.kind === 'weekdays') return JSON.stringify(a.days || []) === JSON.stringify(b.days || []);
+  if (a.kind === 'everyN') return a.n === b.n && a.anchor === b.anchor;
+  return true;
+}
+function inboxLabel(v) {
+  const label = typeof v === 'string' ? v.trim() : '';
+  return label && label.length <= 80 ? label : null;
+}
 
 // Returns { status: 'applied'|'rejected', note, changed: bool }. Never throws.
 function applyInboxRow(row) {
@@ -10642,6 +10684,200 @@ function applyInboxRow(row) {
     return done(null, true);
   }
 
+  if (row.op === 'edit_item') {
+    const it = state.items.find(x => x.id === p.item_id);
+    if (!it || isTombstoned(tomb, 'items', it)) return reject('item not found');
+    const isTodo = !!it.trackCompletion;
+    if (p.kind != null && p.kind !== (isTodo ? 'todo' : 'event')) return reject('kind mismatch');
+    const set = (p.set && typeof p.set === 'object' && !Array.isArray(p.set)) ? p.set : null;
+    if (!set || !Object.keys(set).length) return reject('nothing to change');
+    const allowed = isTodo ? ['title', 'date', 'priority', 'notes'] : ['title', 'date', 'priority', 'notes', 'time', 'duration_min'];
+    for (const k of Object.keys(set)) if (!allowed.includes(k)) return reject('invalid field ' + k);
+    const next = {};
+    if ('title' in set) {
+      const title = typeof set.title === 'string' ? set.title.trim() : '';
+      if (!title || title.length > 200) return reject('invalid title');
+      next.title = title;
+    }
+    if ('date' in set) {
+      if (set.date === null) { if (!isTodo) return reject('event needs a date'); }
+      else if (!(typeof set.date === 'string' && INBOX_YMD.test(set.date))) return reject('invalid date');
+      next.date = set.date;
+    }
+    if ('priority' in set) {
+      if (!INBOX_PRIORITIES.includes(set.priority)) return reject('invalid priority');
+      next.priority = set.priority;
+    }
+    if ('notes' in set) {
+      if (typeof set.notes !== 'string') return reject('invalid notes');
+      next.notes = set.notes.trim();
+    }
+    if ('time' in set || 'duration_min' in set) {
+      if (!('time' in set) || !('duration_min' in set)) return reject('time and duration_min go together');
+      if (set.time === null) { next.time = null; next.duration = null; }
+      else {
+        if (!(typeof set.time === 'string' && INBOX_HHMM.test(set.time))) return reject('invalid time');
+        const durMin = Number(set.duration_min);
+        if (!Number.isInteger(durMin) || durMin <= 0) return reject('timed event needs duration_min');
+        next.time = set.time;
+        next.duration = durMin / 60;
+      }
+    }
+    if (Object.keys(next).every(k => (it[k] ?? null) === next[k])) return done('already so');
+    Object.assign(it, next);
+    return done(null, true);
+  }
+
+  if (row.op === 'delete_item') {
+    const it = state.items.find(x => x.id === p.item_id);
+    if (!it || isTombstoned(tomb, 'items', it)) return done('already deleted');
+    tombstone('items', it.id);
+    state.items = state.items.filter(x => x.id !== it.id);
+    return done(null, true);
+  }
+
+  if (row.op === 'uncomplete_item') {
+    const it = state.items.find(x => x.id === p.item_id);
+    if (!it || !it.trackCompletion || isTombstoned(tomb, 'items', it)) return reject('item not found');
+    const mine = state.completions.filter(c => c.ref_type === 'item' && c.ref_id === it.id);
+    if (!mine.length) return done('already not done');
+    tombstoneAll('completions', mine);
+    state.completions = state.completions.filter(c => !(c.ref_type === 'item' && c.ref_id === it.id));
+    return done(null, true);
+  }
+
+  if (row.op === 'uncheck_block') {
+    const b = findBlock(p.block_id);
+    if (!b || b.type !== 'checkbox' || isTombstoned(tomb, 'blocks', b)) return reject('block not found');
+    const err = inboxWindowError(p.date);
+    if (err) return reject(err);
+    if (!(b.checks && typeof b.checks === 'object' && b.checks[p.date])) return done('already unchecked');
+    delete b.checks[p.date];
+    return done(null, true);
+  }
+
+  if (row.op === 'add_block') {
+    if (blocksData().some(b => b.id === row.op_id)) return done('already present');
+    if (tomb['blocks:' + row.op_id]) return done('deleted in app');
+    const space = findSpace(p.space_id);
+    if (!space || isTombstoned(tomb, 'spaces', space)) return reject('space not found');
+    const label = inboxLabel(p.label);
+    if (!label) return reject('invalid label');
+    let extra;
+    if (p.type === 'checkbox') {
+      const f = inboxRecurrenceForm(p.recurrence);
+      if (!f) return reject('invalid recurrence');
+      // A new everyN anchors on the local day Jase asked, not the apply day.
+      const recurrence = buildRecurrenceFromForm(f, { recurrence: { kind: 'everyN', anchor: ymd(createdAt) } });
+      extra = { type: 'checkbox', recurrence, checks: {} };
+    } else if (p.type === 'counter') {
+      if (p.unit != null && typeof p.unit !== 'string') return reject('invalid unit');
+      extra = { type: 'counter', unit: (p.unit || '').trim(), entries: [] };
+    } else if (p.type === 'notes') {
+      if (p.text != null && typeof p.text !== 'string') return reject('invalid text');
+      extra = { type: 'notes', text: p.text || '' };
+    } else {
+      return reject('invalid type');
+    }
+    const siblings = blocksForSpace(space.id);
+    const maxOrder = siblings.reduce((m, b) => Math.max(m, b.order | 0), -1);
+    const base = { id: row.op_id, spaceId: space.id, order: maxOrder + 1, createdAt: createdAt.toISOString(), label };
+    blocksData().push(Object.assign(base, extra));
+    return done(null, true);
+  }
+
+  if (row.op === 'edit_block') {
+    const b = findBlock(p.block_id);
+    if (!b || isTombstoned(tomb, 'blocks', b)) return reject('block not found');
+    const set = (p.set && typeof p.set === 'object' && !Array.isArray(p.set)) ? p.set : null;
+    if (!set || !Object.keys(set).length) return reject('nothing to change');
+    const allowed = ['label'];
+    if (b.type === 'checkbox') allowed.push('recurrence');
+    if (b.type === 'counter') allowed.push('unit');
+    if (b.type === 'notes') allowed.push('text');
+    for (const k of Object.keys(set)) if (!allowed.includes(k)) return reject('invalid field ' + k);
+    const next = {};
+    if ('label' in set) {
+      const label = inboxLabel(set.label);
+      if (!label) return reject('invalid label');
+      next.label = label;
+    }
+    if ('recurrence' in set) {
+      const f = inboxRecurrenceForm(set.recurrence);
+      if (!f) return reject('invalid recurrence');
+      next.recurrence = buildRecurrenceFromForm(f, b);
+    }
+    if ('unit' in set) {
+      if (typeof set.unit !== 'string') return reject('invalid unit');
+      next.unit = set.unit.trim();
+    }
+    if ('text' in set) {
+      if (typeof set.text !== 'string') return reject('invalid text');
+      next.text = set.text;
+    }
+    const same = Object.keys(next).every(k => k === 'recurrence'
+      ? sameRecurrence(b.recurrence, next.recurrence)
+      : (b[k] ?? null) === next[k]);
+    if (same) return done('already so');
+    Object.assign(b, next);
+    return done(null, true);
+  }
+
+  if (row.op === 'delete_block') {
+    const b = findBlock(p.block_id);
+    if (!b || isTombstoned(tomb, 'blocks', b)) return done('already deleted');
+    const spaceId = b.spaceId;
+    tombstone('blocks', b.id);
+    state.blocks = blocksData().filter(x => x.id !== b.id);
+    renumberOrder(blocksForSpace(spaceId));
+    return done(null, true);
+  }
+
+  if (row.op === 'log_counter') {
+    const b = findBlock(p.block_id);
+    if (!b || b.type !== 'counter' || isTombstoned(tomb, 'blocks', b)) return reject('block not found');
+    const err = inboxWindowError(p.date);
+    if (err) return reject(err);
+    if (typeof p.value !== 'number' || !isFinite(p.value)) return reject('invalid value');
+    const date = p.date;
+    const value = Math.round(p.value * 100) / 100;
+    if (Array.isArray(b.entries) && b.entries.some(e => e.date === date && e.value === value)) return done('already so');
+    if (!Array.isArray(b.entries)) b.entries = [];
+    b.entries = b.entries.filter(e => e.date !== date);
+    b.entries.push({ date, value });
+    b.entries.sort((a, c) => a.date.localeCompare(c.date));
+    return done(null, true);
+  }
+
+  if (row.op === 'delete_focus_session') {
+    const sess = (state.focusSessions || []).find(s => s && s.id === p.session_id);
+    if (!sess || isTombstoned(tomb, 'focusSessions', sess)) return done('already deleted');
+    tombstone('focusSessions', sess.id);
+    state.focusSessions = state.focusSessions.filter(s => !s || s.id !== sess.id);
+    if (focusSelectedSession === sess.id) focusSelectedSession = null;
+    return done(null, true);
+  }
+
+  if (row.op === 'set_sleep') {
+    const err = inboxWindowError(p.date);
+    if (err) return reject(err);
+    const wake = p.wake_time == null ? null : p.wake_time;
+    const bed = p.bedtime_night_before == null ? null : p.bedtime_night_before;
+    if (wake == null && bed == null) return reject('no time given');
+    if (wake != null && !(typeof wake === 'string' && INBOX_HHMM.test(wake) && isPlausibleWakeTime(wake))) return reject('implausible wake time');
+    if (bed != null && !(typeof bed === 'string' && INBOX_HHMM.test(bed) && isPlausibleBedtime(bed))) return reject('implausible bedtime');
+    const prev = addDays(p.date, -1);
+    const dsDay = state.daily_state.find(d => d.date === p.date);
+    const dsPrev = state.daily_state.find(d => d.date === prev);
+    const wakeSame = wake == null || (dsDay && dsDay.wake_time === wake);
+    const bedSame = bed == null || (dsPrev && dsPrev.bedtime === bed);
+    if (wakeSame && bedSame) return done('already so');
+    if (wake != null) ensureDailyState(p.date).wake_time = wake;
+    if (bed != null) ensureDailyState(prev).bedtime = bed;
+    computeAndStoreHoursSlept(p.date);
+    return done(null, true);
+  }
+
   return reject('unknown op');
 }
 
@@ -10658,7 +10894,26 @@ async function applyAgentInbox() {
       console.warn('Agent inbox fetch failed:', e);
       return;
     }
-    if (!Array.isArray(rows) || !rows.length) return;
+    if (!Array.isArray(rows)) rows = [];
+    // v104: rows a v102 copy of the app turned away as 'unknown op' in the last
+    // 3 days get applied like pending ones. Older stay rejected.
+    try {
+      const since = new Date(Date.now() - INBOX_RETRY_DAYS * 24 * 60 * 60 * 1000).toISOString();
+      const r = await supaFetch('/agent_inbox?status=eq.rejected'
+        + '&note=eq.' + encodeURIComponent('unknown op')
+        + '&op=in.' + encodeURIComponent('(' + INBOX_V104_OPS.join(',') + ')')
+        + '&created_at=gte.' + encodeURIComponent(since)
+        + '&order=created_at.asc&limit=50', { method: 'GET' });
+      const retry = await r.json();
+      if (Array.isArray(retry)) {
+        const seen = new Set(rows.map(x => x && x.op_id));
+        for (const x of retry) if (x && !seen.has(x.op_id)) rows.push(x);
+        rows.sort((a, b) => String(a && a.created_at).localeCompare(String(b && b.created_at)));
+      }
+    } catch (e) {
+      console.warn('Agent inbox retry fetch failed:', e);
+    }
+    if (!rows.length) return;
 
     const results = [];
     let changed = 0;
@@ -10673,6 +10928,7 @@ async function applyAgentInbox() {
     if (changed) {
       saveState();
       render();
+      if (spaceOverlay.classList.contains('open')) renderSpaceView();
       toast(`Applied ${changed} from your assistant`);
     }
 
