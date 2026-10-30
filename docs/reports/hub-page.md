@@ -44,6 +44,31 @@ Not verified here: the live end-to-end pass (signing in at kjsvault.org/hub.html
 
 ## Things to know
 
-- **The "Working…" line can get stuck if the PC only answers with a status line.** The spec says to look at the newest row that isn't a `status` row. If the PC answers a Deny (or a skipped job) with only a status line and no `assistant` row, the newest non-status row stays the `done` button row. The page then shows "Working…" and keeps polling every 2.5 s until the next assistant or approval row arrives. The same happens if the PC marks a message `done` and then crashes. I followed the spec literally. Two possible fixes: have `hub.py` post a short `assistant` row after a decision, or have the page treat a `done` button row as finished once its card's `buttons` is null.
 - Polls fetch only the newest 30 rows, so a change to an older approval card (`buttons` → null) only shows after a reload. That doesn't matter in normal use.
 - If the PC never sets `buttons` to null after a tap, the card stays disabled ("Sent. Waiting for your PC…"). This is deliberate, to stop double-sends.
+
+## Follow-up: two changes to the "is it working" line
+
+The first version had a gap. The line looks at the newest row that isn't a `status` row. If the PC answered a Deny (or a skipped job) with only a status line, that newest row stayed the `done` button row, so "Working…" showed forever and the page polled every 2.5 s. The same happened if the PC marked a message `done` and then crashed. Both cases are now fixed in `workingState()` in `hub.html`:
+
+1. **A decided card counts as finished.** If the newest non-status row is a `done` `button` row and its approval card (`ref_id`) is loaded with `buttons: null`, the line is hidden. The other cases are unchanged:
+   - a tap still marked `new` shows "Sending to your PC…" or the 45-second warning, even if the card is already decided;
+   - a `done` tap whose card is still open, or isn't loaded, shows "Working…";
+   - `user` rows work as before.
+2. **No reply after 5 minutes.** If "Working…" would show but the newest row of any role, status lines included, is 5 minutes old or more, the line instead says "No reply after 5 minutes. Check that your PC is on and the Hub is running." It uses the same red warning style as the 45-second message. Polling drops back to every 10 s in this state, while "Sending…", the 45-second warning, and "Working…" still poll every 2.5 s. Any new row resets the clock, including a status line like "still on it". The age is measured from `created_at`, the same way as the 45-second check, so it survives a reload.
+
+### Self-check for the follow-up
+
+Tested the same way as before: headless Chrome, a copy of the page, faked network responses, run from the scratchpad. 17 of 17 new checks passed, the original 30-check suite gave the same results as before (29 pass plus the known test miscount), and the real page served on port 8000 loads with no console output.
+
+| # | Check | Result |
+|---|---|---|
+| F1 | `done` tap with its card still open: "Working…" | **PASS** |
+| F2 | `done` tap with its card decided: hidden, also when a status line follows ("Denied #1"), and the DOM line is hidden | **PASS** |
+| F3 | `new` tap with its card decided: still "Sending to your PC…" (the PC hasn't picked it up) | **PASS** |
+| F4 | `done` tap with its card not loaded: "Working…"; `done` user row: "Working…" (unchanged) | **PASS** |
+| F5 | `done` row with the newest row 4m59s old: "Working…"; 5m old: the no-reply text, in red, visible | **PASS** |
+| F6 | A status row 1 minute old after a `done` row 10 minutes old: "Working…" (any new row resets the clock) | **PASS** |
+| F7 | `done` tap 6 minutes old with its card still open: the no-reply text; a `new` row 10 minutes old stays the 45-second warning, not the no-reply text | **PASS** |
+| F8 | Poll interval: "Working…" 2500 ms, no-reply 10000 ms, 45-second warning 2500 ms, no line 10000 ms | **PASS** |
+| F9 | Original suite (escaping, approve taps, polling timer, sign-in) and console check: no change | **PASS** |

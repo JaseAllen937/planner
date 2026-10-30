@@ -212,6 +212,7 @@ const POLL_LIMIT = 30;
 const MAX_LEN = 4000;
 const COUNT_FROM = 3500;
 const STALE_MS = 45000;
+const SILENT_MS = 5 * 60 * 1000;   // "Working…" with no new rows this long -> 'silent'
 const FAST_MS = 2500;
 const SLOW_MS = 10000;
 
@@ -525,7 +526,17 @@ function workingState() {
     const r = rows[i];
     if (r.role === 'status') continue;
     if (r.role !== 'user' && r.role !== 'button') return null;
-    if (r.status === 'done') return 'working';
+    if (r.status === 'done') {
+      // A tap whose card the PC has decided (buttons -> null) is finished,
+      // even if the PC only answered with a status line.
+      if (r.role === 'button') {
+        const card = rowsById.get(r.ref_id);
+        if (card && card.role === 'approval' && card.buttons == null) return null;
+      }
+      // Rows are sorted by id, so the last one is the newest row of any role.
+      const quiet = Date.now() - new Date(rows[rows.length - 1].created_at).getTime();
+      return quiet >= SILENT_MS ? 'silent' : 'working';
+    }
     if (r.status === 'new') {
       const age = Date.now() - new Date(r.created_at).getTime();
       return age >= STALE_MS ? 'stale' : 'sending';
@@ -537,10 +548,11 @@ function workingState() {
 
 function updateWorking() {
   const s = workingState();
-  workingEl.classList.toggle('warn', s === 'stale');
+  workingEl.classList.toggle('warn', s === 'stale' || s === 'silent');
   if (s === 'sending') workingEl.innerHTML = 'Sending to your PC…';
   else if (s === 'stale') workingEl.innerHTML = "Your PC hasn't picked this up. Is it on, with the Hub running?";
   else if (s === 'working') workingEl.innerHTML = 'Working<span class="hub-dots"></span>';
+  else if (s === 'silent') workingEl.innerHTML = 'No reply after 5 minutes. Check that your PC is on and the Hub is running.';
   else workingEl.innerHTML = '';
   workingEl.hidden = !s;
   return s;
@@ -617,7 +629,9 @@ function schedulePoll() {
   clearTimeout(pollTimer);
   pollTimer = null;
   if (!pollingOn || document.hidden) return;
-  pollTimer = setTimeout(poll, workingState() ? FAST_MS : SLOW_MS);
+  // Fast while the line shows, except after 5 silent minutes: back to 10 s.
+  const s = workingState();
+  pollTimer = setTimeout(poll, s && s !== 'silent' ? FAST_MS : SLOW_MS);
 }
 function pollNow() {
   if (polling) { pollAgain = true; return; }
