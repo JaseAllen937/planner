@@ -336,7 +336,7 @@ label {
 #form-modal .field > label.toggle-row { margin-bottom: 0; }
 #form-modal #item-fields { margin-bottom: 0; }
 #form-modal #item-fields > .field:last-child { margin-bottom: 18px; }
-input[type="text"], input[type="time"], input[type="date"],
+input[type="text"], input[type="time"], input[type="date"], input[type="datetime-local"],
 input[type="number"], textarea, select {
   width: 100%;
   background: var(--surface-inset); color: var(--text-primary);

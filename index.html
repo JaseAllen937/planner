@@ -409,6 +409,7 @@
       <div class="focus-count" id="focus-count">0</div>
       <div class="focus-count-label">lapses</div>
       <div class="focus-timer" id="focus-timer">0:00</div>
+      <div class="focus-tap-hint" id="focus-plan-line" hidden></div>
       <div class="focus-tap-hint">Tap anywhere here when you notice your focus slipped</div>
     </button>
     <div class="focus-controls">
@@ -881,7 +882,7 @@ const SCHEMA_VERSION = 17;
 // Human-facing build tag shown in Settings and stamped into every export legend.
 // BUMP THIS TOGETHER WITH sw.js VERSION on every deploy — a stale tag is how a
 // rolled-back build went unnoticed for two days.
-const APP_VERSION = 'v104';
+const APP_VERSION = 'v105';
 
 // ---- Today layout (v96): user-controlled section order + visibility + rooms
 // preset. Defined BEFORE loadState() so ensureShape's defensive guard can read the
@@ -2277,7 +2278,7 @@ function renderFocusCard() {
   `;
   document.getElementById('focus-start-btn').addEventListener('click', () => {
     if (state.activeFocus) openFocusOverlay();
-    else                   startFocusSession();
+    else                   openFocusPlanSheet();
   });
   const typeTabs = document.getElementById('focus-type-tabs');
   if (typeTabs) typeTabs.addEventListener('click', e => {
@@ -2292,6 +2293,7 @@ function renderFocusCard() {
     saveState();
     render();
   });
+  if (active) checkForgottenFocus();
 }
 
 // ---- Focus type derive helpers (v101). state.focusTypes is normalised by the
@@ -2384,12 +2386,13 @@ function renderSleepCard() {
   });
 }
 
-function startFocusSession() {
+function startFocusSession(plan) {
   // lapseOffsets: seconds-from-start for each lapse (for a future timeline view).
   // Optional/additive — older sessions have only the `lapses` total.
   // type: sticky focusTypes id, captured at start (the guard keeps focusLastType
   // pointing at an unarchived type).
   state.activeFocus = { start: nowIso(), type: state.focusLastType, lapses: 0, lapseOffsets: [] };
+  if (plan) state.activeFocus.plan = plan;   // v105: optional { text, ref? }
   saveState();
   logQueued('focus_start', { focus_start: state.activeFocus.start });
   openFocusOverlay();
@@ -2397,28 +2400,233 @@ function startFocusSession() {
 
 function endFocusSession() {
   if (!state.activeFocus) { closeFocusOverlay(); return; }
+  finishFocusSession(new Date(), false);   // end = the tap, before any sheet opens
+}
+
+// v105: ends the running session at `endAt`. Under a minute -> dropped (logged
+// like a discard). Otherwise the record is saved RIGHT AWAY, then the "What did
+// you get done?" sheet only adds `done` to it — so closing the sheet any way
+// can never lose or half-save the session. `stated` = an end Jase entered for a
+// forgotten session: dated by its start, lapses after the end dropped.
+function finishFocusSession(endAt, stated) {
   const af = state.activeFocus;
-  const end = nowIso();
+  if (!af) return;
+  const startMs = Date.parse(af.start);
+  closeFocusOverlay();
+  if (!(endAt.getTime() - startMs >= FOCUS_MIN_SAVE_MS)) {
+    state.activeFocus = null;
+    saveState();
+    logQueued('focus_end', { focus_start: af.start });
+    toast('Under a minute, not saved');
+    render();
+    return;
+  }
   const rec = {
     id: uuid(),
-    date: todayDate(),
+    date: stated ? ymd(new Date(startMs)) : todayDate(),
     start: af.start,
-    end,
+    end: endAt.toISOString(),
     lapses: af.lapses | 0,
     lapseOffsets: Array.isArray(af.lapseOffsets) ? af.lapseOffsets.slice() : []
   };
+  if (stated && Array.isArray(af.lapseOffsets)) {
+    const maxOff = (endAt.getTime() - startMs) / 1000;
+    rec.lapseOffsets = rec.lapseOffsets.filter(o => !(o > maxOff));
+    rec.lapses = rec.lapseOffsets.length;
+  }
   // type only when it resolves to a focusTypes record — ARCHIVED OR NOT: a session
   // started before its type was archived keeps its tag. A session started
   // pre-deploy has no af.type (and an id lost in a merge resolves to nothing), so
   // the record stays untagged (absent field = old session, same as lapseOffsets).
   if (focusTypeById(af.type)) rec.type = af.type;
+  if (af.plan && typeof af.plan.text === 'string' && af.plan.text) rec.plan = JSON.parse(JSON.stringify(af.plan));
+  if (stated) rec.endStated = true;
   state.focusSessions.push(rec);
   state.activeFocus = null;
   saveState();
   logQueued('focus_end', { focus_start: af.start });
-  closeFocusOverlay();
+  render();
+  openFocusDoneSheet(rec.id);
+}
+
+// ---- v105: focus sheets (reuse the space bottom sheet) ----
+const FOCUS_MIN_SAVE_MS = 60 * 1000;
+const FOCUS_FORGOT_MS = 3 * 60 * 60 * 1000;
+
+// Today's open to-dos, then today's due, unchecked checkbox blocks.
+function focusPlanCandidates() {
+  const today = todayDate();
+  const out = [];
+  for (const it of state.items) {
+    if (!it || !it.trackCompletion || it.date !== today) continue;
+    if (state.completions.some(c => c.ref_type === 'item' && c.ref_id === it.id)) continue;
+    out.push({ kind: 'item', id: it.id, title: it.title || '', sub: 'To-do' });
+  }
+  for (const sp of spacesSorted()) {
+    for (const b of blocksForSpace(sp.id)) {
+      if (b.type !== 'checkbox' || !isDueToday(b, today)) continue;
+      if (b.checks && typeof b.checks === 'object' && b.checks[today]) continue;
+      out.push({ kind: 'block', id: b.id, title: b.label || '', sub: sp.name || '' });
+    }
+  }
+  return out;
+}
+
+function openFocusPlanSheet() {
+  if (state.activeFocus) return;
+  const rows = focusPlanCandidates();
+  spaceForm = { mode: 'focus-plan', sel: -1 };
+  const panel = document.getElementById('space-sheet-panel');
+  const list = rows.length ? `<div class="past-days-list" id="focus-plan-list">${rows.map((r, i) => `
+      <button type="button" class="past-days-row" data-plan-i="${i}" aria-pressed="false">
+        <span class="space-tick" aria-hidden="true"><span class="space-tick-mark"></span></span>
+        <span class="space-block-mid"><span class="space-block-label">${escapeHtml(r.title)}</span>${r.sub ? `<span class="space-block-sub">${escapeHtml(r.sub)}</span>` : ''}</span>
+      </button>`).join('')}</div>` : '';
+  panel.innerHTML = `
+    <h2>What are you working on?</h2>
+    ${list}
+    <div class="field">
+      <label for="focus-plan-input">Or type it</label>
+      <input type="text" id="focus-plan-input" maxlength="200" autocomplete="off">
+    </div>
+    <div class="form-actions">
+      <div class="spacer"></div>
+      <button type="button" class="btn btn-ghost" id="focus-plan-skip">Skip</button>
+      <button type="button" class="btn btn-primary" id="focus-plan-start">Start</button>
+    </div>`;
+  const input = document.getElementById('focus-plan-input');
+  const listEl = document.getElementById('focus-plan-list');
+  if (listEl) listEl.addEventListener('click', e => {
+    const b = e.target.closest('[data-plan-i]');
+    if (!b || !spaceForm || spaceForm.mode !== 'focus-plan') return;
+    const i = Number(b.dataset.planI);
+    spaceForm.sel = spaceForm.sel === i ? -1 : i;     // tap the selected row again -> unselect
+    if (spaceForm.sel === i) input.value = rows[i].title.slice(0, 200);
+    listEl.querySelectorAll('[data-plan-i]').forEach(x => {
+      const on = Number(x.dataset.planI) === spaceForm.sel;
+      x.setAttribute('aria-pressed', on ? 'true' : 'false');
+      x.querySelector('.space-tick').classList.toggle('on', on);
+      x.querySelector('.space-tick-mark').innerHTML = on ? '&check;' : '';
+    });
+  });
+  document.getElementById('focus-plan-skip').addEventListener('click', () => { closeSpaceSheet(); startFocusSession(null); });
+  document.getElementById('focus-plan-start').addEventListener('click', () => {
+    const text = input.value.trim().slice(0, 200);
+    const r = spaceForm && spaceForm.sel >= 0 ? rows[spaceForm.sel] : null;
+    closeSpaceSheet();
+    if (!text) { startFocusSession(null); return; }
+    const plan = { text };
+    if (r) plan.ref = { kind: r.kind, id: r.id };
+    startFocusSession(plan);
+  });
+  openSpaceSheetOverlay();
+}
+
+function openFocusDoneSheet(sessionId) {
+  spaceForm = { mode: 'focus-done', sessionId };
+  const panel = document.getElementById('space-sheet-panel');
+  panel.innerHTML = `
+    <h2>What did you get done?</h2>
+    <div class="field">
+      <textarea id="focus-done-input" maxlength="1000" aria-label="What did you get done?"></textarea>
+    </div>
+    <div class="form-actions">
+      <div class="spacer"></div>
+      <button type="button" class="btn btn-ghost" id="focus-done-skip">Skip</button>
+      <button type="button" class="btn btn-primary" id="focus-done-save">Save</button>
+    </div>`;
+  document.getElementById('focus-done-skip').addEventListener('click', () => finishFocusDone(false));
+  document.getElementById('focus-done-save').addEventListener('click', () => finishFocusDone(true));
+  openSpaceSheetOverlay();
+}
+
+// Save and Skip both keep the (already saved) session; Save adds `done`.
+function finishFocusDone(save) {
+  const f = spaceForm;
+  if (!f || f.mode !== 'focus-done') return;
+  const ta = document.getElementById('focus-done-input');
+  const text = save && ta ? ta.value.trim().slice(0, 1000) : '';
+  const sess = (state.focusSessions || []).find(s => s && s.id === f.sessionId);
+  closeSpaceSheet();
+  if (sess && text) { sess.done = text; saveState(); }
   toast('Focus session saved');
   render();
+}
+
+// Forgotten sessions. The night-day of a time is ymd(time - 6h); a 6:00 AM
+// boundary has passed when now's night-day is later than the start's.
+function focusNightDay(ms) { return ymd(new Date(ms - 6 * 60 * 60 * 1000)); }
+function focusBoundaryPassed(af, now) { return focusNightDay(now) > focusNightDay(Date.parse(af.start)); }
+function focusIsForgotten(af, now = Date.now()) {
+  if (!af || !af.start || !isFinite(Date.parse(af.start))) return false;
+  if (focusBoundaryPassed(af, now)) return true;
+  const still = af.stillGoingAt ? Date.parse(af.stillGoingAt) : NaN;
+  const since = isFinite(still) ? still : Date.parse(af.start);
+  return now - since >= FOCUS_FORGOT_MS;
+}
+// Shows the "still running" sheet when the running session is forgotten.
+// Returns true when that sheet is showing. Never takes over another open sheet.
+function checkForgottenFocus() {
+  if (!focusIsForgotten(state.activeFocus)) return false;
+  if (spaceSheet.classList.contains('open')) return !!(spaceForm && spaceForm.mode === 'focus-forgot');
+  closeFocusOverlay();
+  openFocusForgotSheet();
+  return true;
+}
+
+function focusLocalInputValue(ms) {
+  const d = new Date(ms);
+  return `${ymd(d)}T${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function openFocusForgotSheet() {
+  const af = state.activeFocus;
+  const startMs = Date.parse(af.start), now = Date.now();
+  const canStill = !focusBoundaryPassed(af, now);
+  const time = new Date(startMs).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  const when = ymd(new Date(startMs)) === todayDate()
+    ? time
+    : `${new Date(startMs).toLocaleDateString('en-US', { weekday: 'long' })} ${time}`;
+  const maxV = focusLocalInputValue(now);
+  let minV = focusLocalInputValue(startMs + 60 * 1000);
+  if (minV > maxV) minV = maxV;
+  const defV = focusLocalInputValue(Math.min(startMs + 60 * 60 * 1000, now));
+  spaceForm = { mode: 'focus-forgot' };
+  const panel = document.getElementById('space-sheet-panel');
+  panel.innerHTML = `
+    <h2>Your focus session from ${escapeHtml(when)} is still running. When did you stop?</h2>
+    <div class="field">
+      <input type="datetime-local" id="focus-forgot-end" value="${defV}" min="${minV}" max="${maxV}" aria-label="When you stopped">
+    </div>
+    <div id="space-form-error" class="error-msg" hidden></div>
+    <div class="form-actions">
+      <button type="button" class="btn btn-danger" id="focus-forgot-discard">Discard</button>
+      <div class="spacer"></div>
+      ${canStill ? '<button type="button" class="btn btn-ghost" id="focus-forgot-still">Still going</button>' : ''}
+      <button type="button" class="btn btn-primary" id="focus-forgot-save">Save with this time</button>
+    </div>`;
+  document.getElementById('focus-forgot-save').addEventListener('click', () => {
+    const errEl = document.getElementById('space-form-error');
+    const v = document.getElementById('focus-forgot-end').value;
+    const end = v ? new Date(v) : null;   // datetime-local value -> local time
+    if (!end || !isFinite(end.getTime()) || end.getTime() <= startMs || end.getTime() > Date.now()) {
+      errEl.textContent = 'Pick a time between the start and now.'; errEl.hidden = false; return;
+    }
+    closeSpaceSheet();
+    finishFocusSession(end, true);
+  });
+  const still = document.getElementById('focus-forgot-still');
+  if (still) still.addEventListener('click', () => {
+    if (state.activeFocus) { state.activeFocus.stillGoingAt = nowIso(); saveState(); }
+    closeSpaceSheet();
+    render();
+  });
+  document.getElementById('focus-forgot-discard').addEventListener('click', () => {
+    closeSpaceSheet();
+    discardFocusSession();
+    if (state.activeFocus) checkForgottenFocus();   // confirm cancelled -> ask again
+  });
+  openSpaceSheetOverlay();
 }
 
 function discardFocusSession() {
@@ -2486,6 +2694,13 @@ function refreshFocusOverlayDynamic() {
 
 function openFocusOverlay() {
   if (!state.activeFocus) return;
+  if (focusIsForgotten(state.activeFocus)) { checkForgottenFocus(); return; }
+  const planEl = document.getElementById('focus-plan-line');
+  const plan = state.activeFocus.plan;
+  if (planEl) {
+    planEl.textContent = plan && typeof plan.text === 'string' ? plan.text : '';
+    planEl.hidden = !planEl.textContent;
+  }
   refreshFocusOverlayDynamic();
   focusOverlay.classList.add('open');
 
@@ -2532,6 +2747,14 @@ function renderFocusStats() {
     focusSelectedSession = null;   // stale id (e.g. wiped session) -> fall back to main
   }
   renderFocusMain(wrap);
+}
+
+// v105: the plan as a short second line in the recent list ('' when none).
+function focusPlanShort(s) {
+  const t = s.plan && typeof s.plan.text === 'string' ? s.plan.text : '';
+  if (!t) return '';
+  const short = t.length > 60 ? t.slice(0, 59).trimEnd() + '…' : t;
+  return `<span class="space-block-sub" style="grid-column: 1 / -1">${escapeHtml(short)}</span>`;
 }
 
 // Main Focus view: headline rate + nudge, companion tiles, scatter, recent log.
@@ -2632,7 +2855,7 @@ function renderFocusMain(wrap) {
     return `<button type="button" class="focus-session-row focus-session-row-btn" data-session-id="${escapeHtml(s.id || '')}" aria-label="Open session detail">
       <span class="focus-session-time">${focusTypeDot(s.type)}${escapeHtml(dLabel)}</span>
       <span class="focus-session-dur">${escapeHtml(durStr)}</span>
-      <span class="focus-session-lapses">${laps} lapse${laps === 1 ? '' : 's'}</span>
+      <span class="focus-session-lapses">${laps} lapse${laps === 1 ? '' : 's'}</span>${focusPlanShort(s)}
     </button>`;
   }).join('');
 
@@ -2838,13 +3061,26 @@ function renderFocusDetail(sess) {
       ${pillTypes.map(t => `<button type="button" class="focus-retag-pill${t.id === sess.type ? ' active' : ''}" data-focus-retag="${escapeHtml(t.id)}" aria-pressed="${t.id === sess.type ? 'true' : 'false'}">${focusTypeDot(t.id)}${escapeHtml(t.label)}</button>`).join('')}
     </div>`;
 
+  // v105: what he wrote, shown as written (no interpretation). Absent -> nothing.
+  const info = [];
+  if (sess.plan && typeof sess.plan.text === 'string' && sess.plan.text) {
+    const ref = sess.plan.ref;
+    let tag = '';
+    if (ref && ref.kind === 'item' && state.items.some(x => x.id === ref.id)) tag = ' · to-do';
+    else if (ref && ref.kind === 'block' && findBlock(ref.id)) tag = ' · block';
+    info.push(`<div style="white-space: pre-wrap">Working on: ${escapeHtml(sess.plan.text)}${tag}</div>`);
+  }
+  if (typeof sess.done === 'string' && sess.done) info.push(`<div style="white-space: pre-wrap">Got done: ${escapeHtml(sess.done)}</div>`);
+  if (sess.endStated) info.push('<div>End time entered by you</div>');
+  const infoHtml = info.length ? `<div class="focus-detail-note muted">${info.join('')}</div>` : '';
+
   return `
     <div class="summary-panel focus-stats-panel">
       <div class="focus-detail-head">
         <button type="button" class="focus-back" data-focus-back aria-label="Back to Focus">‹ Back</button>
         <h3 class="focus-detail-title">${escapeHtml(dLabel)}${focusTypeLabel(sess.type) ? `<span class="focus-detail-type"> · ${escapeHtml(focusTypeLabel(sess.type))}</span>` : ''}</h3>
       </div>
-      ${retag}
+      ${infoHtml}${retag}
       ${tiles}
       ${timeline}
       <button type="button" class="focus-delete-btn" data-focus-delete="${escapeHtml(sess.id || '')}">Delete session</button>
@@ -10550,7 +10786,7 @@ function rerenderIfDayChanged() {
   if (lastRenderDate && todayDate() !== lastRenderDate) render();
 }
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) { rerenderIfDayChanged(); pullOnReturn(); noteOpen(); flushEventQueue(); }
+  if (!document.hidden) { rerenderIfDayChanged(); pullOnReturn(); noteOpen(); flushEventQueue(); checkForgottenFocus(); }
 });
 window.addEventListener('focus', () => { rerenderIfDayChanged(); pullOnReturn(); noteOpen(); });
 
@@ -11558,7 +11794,12 @@ document.getElementById('space-edit-btn').addEventListener('click', () => {
 });
 document.getElementById('space-body').addEventListener('click', onSpaceBodyClick);
 spaceSheet.addEventListener('click', e => {
-  if (e.target === spaceSheet) closeSpaceSheet();
+  if (e.target !== spaceSheet) return;
+  // v105: outside tap on "What did you get done?" = Skip; the forgotten-session
+  // sheet needs an answer.
+  if (spaceForm && spaceForm.mode === 'focus-done') finishFocusDone(false);
+  else if (spaceForm && spaceForm.mode === 'focus-forgot') return;
+  else closeSpaceSheet();
 });
 document.getElementById('block-menu').addEventListener('click', onBlockMenuClick);
 document.getElementById('block-menu-backdrop').addEventListener('click', closeBlockMenu);
