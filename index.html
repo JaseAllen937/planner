@@ -880,7 +880,7 @@ const SCHEMA_VERSION = 17;
 // Human-facing build tag shown in Settings and stamped into every export legend.
 // BUMP THIS TOGETHER WITH sw.js VERSION on every deploy — a stale tag is how a
 // rolled-back build went unnoticed for two days.
-const APP_VERSION = 'v102';
+const APP_VERSION = 'v102-events';
 
 // ---- Today layout (v96): user-controlled section order + visibility + rooms
 // preset. Defined BEFORE loadState() so ensureShape's defensive guard can read the
@@ -2388,6 +2388,7 @@ function startFocusSession() {
   // pointing at an unarchived type).
   state.activeFocus = { start: nowIso(), type: state.focusLastType, lapses: 0, lapseOffsets: [] };
   saveState();
+  logQueued('focus_start', { focus_start: state.activeFocus.start });
   openFocusOverlay();
 }
 
@@ -2411,6 +2412,7 @@ function endFocusSession() {
   state.focusSessions.push(rec);
   state.activeFocus = null;
   saveState();
+  logQueued('focus_end', { focus_start: af.start });
   closeFocusOverlay();
   toast('Focus session saved');
   render();
@@ -2419,8 +2421,10 @@ function endFocusSession() {
 function discardFocusSession() {
   if (!state.activeFocus) { closeFocusOverlay(); return; }
   if (!confirm('Discard this focus session? Nothing will be saved.')) return;
+  const discardedStart = state.activeFocus.start;
   state.activeFocus = null;
   saveState();
+  logQueued('focus_end', { focus_start: discardedStart });
   closeFocusOverlay();
   toast('Session discarded');
   render();
@@ -9073,9 +9077,11 @@ function toggleBlockToday(blockId) {
   if (!b) return;
   if (!b.checks || typeof b.checks !== 'object') b.checks = {};
   const key = todayDate();
+  const wasChecked = !!b.checks[key];
   if (b.checks[key]) delete b.checks[key];
   else b.checks[key] = true;
   saveState();
+  logQueued(wasChecked ? 'block_uncheck' : 'block_check', { ref: b.id, for_date: key });
   render();
 }
 
@@ -9616,9 +9622,11 @@ function onPastDayClick(e) {
   const date = row.dataset.pastDate;
   if (!b || !date) return;
   if (!b.checks || typeof b.checks !== 'object') b.checks = {};
+  const wasChecked = !!b.checks[date];
   if (b.checks[date]) delete b.checks[date];
   else b.checks[date] = true;
   saveState();
+  logQueued(wasChecked ? 'block_uncheck' : 'block_check', { ref: b.id, for_date: date });
   render();
   buildPastDaysSheet();
 }
@@ -10418,6 +10426,7 @@ async function initialSync() {
     // Flush any pending push that happened mid-sync
     if (_pendingPush) triggerSync();
     applyAgentInbox();   // v102 — fire-and-forget; never throws
+    noteStartup();       // app events — first open + running-focus re-log, once per page load
   } catch (e) {
     console.warn('Initial sync failed:', e);
     setSyncStatus(navigator.onLine ? 'error' : 'offline');
@@ -10521,6 +10530,7 @@ async function pullOnReturn() {
 // backgrounded, the in-flight fetch dies, the network returns. One push attempt
 // per `online` event (never a loop); nothing outstanding -> nothing happens.
 window.addEventListener('online', () => {
+  noteOpen(); flushEventQueue();   // app events — fire-and-forget
   if (!getSession() || !supaConfigured()) return;
   if (!_pushFailed && !_pendingPush) return;
   if (_retryTimer) { clearTimeout(_retryTimer); _retryTimer = null; }
@@ -10537,9 +10547,9 @@ function rerenderIfDayChanged() {
   if (lastRenderDate && todayDate() !== lastRenderDate) render();
 }
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) { rerenderIfDayChanged(); pullOnReturn(); }
+  if (!document.hidden) { rerenderIfDayChanged(); pullOnReturn(); noteOpen(); flushEventQueue(); }
 });
-window.addEventListener('focus', () => { rerenderIfDayChanged(); pullOnReturn(); });
+window.addEventListener('focus', () => { rerenderIfDayChanged(); pullOnReturn(); noteOpen(); });
 
 // ---- v102: agent inbox ----
 // Supabase table agent_inbox holds changes Jase already approved in agentkit.
@@ -10691,6 +10701,107 @@ function applyAgentInboxThrottled() {
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) applyAgentInboxThrottled(); });
 window.addEventListener('online', applyAgentInboxThrottled);
+
+// ---- App events (focus nudges + check times) ----
+// Log-only rows in Supabase `app_events`: 'open' while the app is in front of
+// Jase, focus_start/focus_end, block_check/block_uncheck (the tap's time; the
+// blob only stores the day). The app never reads these back. Fire-and-forget:
+// never awaited from render/event paths, never throws, never toasts. Nothing is
+// stored in the state blob or localStorage; the retry queue is memory only.
+const OPEN_MIN_MS = 5 * 60 * 1000;
+const EVENT_QUEUE_MAX = 50;
+let _lastOpenLogged = 0;      // set only after a successful 'open' POST
+let _openInFlight = false;
+let _eventQueue = [];         // [{kind, fields}] — failed non-open events, oldest first
+let _flushingEvents = false;
+let _startupNoted = false;
+
+// Resolves true on a 2xx, false otherwise. Never throws.
+function logAppEvent(kind, fields = {}) {
+  if (!getSession() || !supaConfigured() || !navigator.onLine) return Promise.resolve(false);
+  try {
+    const body = {
+      kind,
+      device: matchMedia('(pointer: coarse)').matches ? 'phone' : 'computer',
+      page: 'agenda',
+      focus_start: fields.focus_start ?? null,
+      ref: fields.ref ?? null,
+      for_date: fields.for_date ?? null
+    };
+    return supaFetch('/app_events', {
+      method: 'POST',
+      headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify(body)
+    }).then(() => true, e => { console.warn('app_events POST failed:', e); return false; });
+  } catch (e) {
+    console.warn('app_events POST failed:', e);
+    return Promise.resolve(false);
+  }
+}
+
+// At most one logged open per 5 minutes; the clock only advances on success,
+// so a failed open retries on the next trigger. Opens are never queued.
+function noteOpen() {
+  if (_openInFlight || Date.now() - _lastOpenLogged < OPEN_MIN_MS) return;
+  if (!getSession() || !supaConfigured()) return;
+  _openInFlight = true;
+  logAppEvent('open').then(ok => {
+    if (ok) _lastOpenLogged = Date.now();
+    _openInFlight = false;
+  });
+}
+
+// Non-open events: send now; on failure keep in memory for a later flush. If
+// older events are still queued, join the back of the line so order holds.
+function logQueued(kind, fields = {}) {
+  if (!getSession() || !supaConfigured()) return;
+  if (_eventQueue.length) { _enqueueEvent(kind, fields); flushEventQueue(); return; }
+  logAppEvent(kind, fields).then(ok => { if (!ok) _enqueueEvent(kind, fields); });
+}
+function _enqueueEvent(kind, fields) {
+  _eventQueue.push({ kind, fields });
+  while (_eventQueue.length > EVENT_QUEUE_MAX) _eventQueue.shift();   // drop oldest
+}
+
+// Send queued events oldest-first; stop at the first failure (retried later).
+async function flushEventQueue() {
+  if (_flushingEvents || !_eventQueue.length) return;
+  if (!getSession() || !supaConfigured() || !navigator.onLine) return;
+  _flushingEvents = true;
+  try {
+    while (_eventQueue.length) {
+      const ev = _eventQueue[0];
+      if (!(await logAppEvent(ev.kind, ev.fields))) break;
+      const i = _eventQueue.indexOf(ev);
+      if (i >= 0) _eventQueue.splice(i, 1);
+    }
+  } catch (e) {
+    console.warn('app_events flush failed:', e);
+  } finally {
+    _flushingEvents = false;
+  }
+}
+
+// Once per page load, after the app has a session at startup: log the open and
+// re-log a focus session that is already running (covers a start lost offline).
+function noteStartup() {
+  if (_startupNoted) return;
+  _startupNoted = true;
+  noteOpen();
+  if (state.activeFocus && state.activeFocus.start) {
+    logQueued('focus_start', { focus_start: state.activeFocus.start });
+  }
+}
+
+window.addEventListener('pageshow', () => noteOpen());
+
+// Heartbeat: registered once at top level (not per render or sign-in). Logs an
+// open (throttled to ~5 min) only while the app is actually in front of Jase,
+// and retries any queued events.
+setInterval(() => {
+  if (document.visibilityState === 'visible' && document.hasFocus()) noteOpen();
+  flushEventQueue();
+}, 60 * 1000);
 
 // ---- UI render for the Account & Backup settings section ----
 
@@ -11285,6 +11396,8 @@ try {
 // initialSync is fire-and-forget; failures never block the app.
 if (getSession() && supaConfigured()) {
   initialSync();
+} else {
+  noteStartup();   // app events: no-op without a session or sync config
 }
 
 // Poll once a minute so the morning popup fires even if the app was
