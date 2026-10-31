@@ -130,6 +130,26 @@
   .hub-count { color: var(--muted); margin-left: auto; }
   .hub-count.over { color: var(--danger); }
 
+  /* ---- Attachments ---- */
+  .hub-compose-row .hub-attach {
+    flex: 0 0 auto; width: 42px; min-width: 42px; padding: 0;
+    background: var(--card); border: 1px solid var(--border); color: var(--muted);
+  }
+  .hub-attach svg { width: 20px; height: 20px; display: block; }
+  .hub-chips { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; max-width: 100%; }
+  .hub-composer .hub-chips { margin-bottom: 8px; }
+  .hub-msg.me .hub-chips { justify-content: flex-end; max-width: 85%; margin-top: 4px; }
+  .hub-chip {
+    display: inline-flex; align-items: center; gap: 2px; min-width: 0; max-width: 100%;
+    padding: 4px 10px; border-radius: 999px; font-size: 13px; line-height: 18px;
+    background: var(--card); border: 1px solid var(--border); color: var(--text);
+  }
+  .hub-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .hub-chip-x {
+    flex: 0 0 auto; border: none; background: none; color: var(--muted); cursor: pointer;
+    font-size: 17px; line-height: 18px; padding: 0 0 0 4px; margin-right: -4px;
+  }
+
   /* ---- Sign-in ---- */
   .hub-signin { flex: 1; overflow-y: auto; padding: 32px 16px; }
   .hub-signin form {
@@ -189,7 +209,10 @@
     <div class="hub-working" id="working" hidden></div>
 
     <form class="hub-composer" id="composer" novalidate>
+      <div class="hub-chips" id="attach-chips" hidden></div>
       <div class="hub-compose-row">
+        <button type="button" class="btn hub-attach" id="attach" aria-label="Attach a file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
+        <input type="file" id="attach-input" multiple accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.txt,.md,.csv,.docx" hidden>
         <textarea id="input" rows="1" maxlength="4000" placeholder="Message your assistant" aria-label="Message"></textarea>
         <button type="submit" class="btn btn-primary" id="send">Send</button>
       </div>
@@ -212,7 +235,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 // sharing the app's session key would sign the app out. Never touch it.
 const HUB_SESSION_KEY = 'agendaai_hub_session';   // { access_token, refresh_token, user_id, email }
 
-const SELECT = 'select=id,created_at,role,body,buttons,ref_id,status';
+// `files` is dropped for the page's life if this Supabase doesn't have the column yet.
+let SELECT = 'select=id,created_at,role,body,buttons,ref_id,status,files';
 const PAGE = 100;
 const POLL_LIMIT = 30;
 const MAX_LEN = 4000;
@@ -223,6 +247,9 @@ const FAST_MS = 1000;   // while a reply is coming (Oct 30: was 2500; faster rep
 const SLOW_MS = 10000;
 const CONVO_GAP_MS = 45 * 60 * 1000;   // the PC ends a conversation after this much quiet
 const AWAY_MS = 5 * 60 * 1000;         // hidden this long -> back to the bottom on return
+const MAX_FILES = 3;
+const MAX_FILE_BYTES = 10 * 1024 * 1024;   // the hub-files bucket's per-file limit
+const FILE_EXTS = ['pdf', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'txt', 'md', 'csv', 'docx'];
 
 const COMMAND_LABELS = {
   '/today': 'Today',
@@ -342,6 +369,21 @@ async function hubFetch(path, opts = {}) {
     throw new HubError(msg || `Request failed (${r.status})`, r.status, code);
   }
   return r;
+}
+
+// GETs hub_messages with SELECT. An older table without `files` answers
+// 42703 naming it: drop the column for the rest of the page's life and retry once.
+async function getRows(query) {
+  const get = async () => (await hubFetch(`/hub_messages?${SELECT}${query}`, { method: 'GET' })).json();
+  try {
+    return await get();
+  } catch (e) {
+    if (e && e.code === '42703' && /files/.test(e.message || '') && SELECT.endsWith(',files')) {
+      SELECT = SELECT.slice(0, -',files'.length);
+      return await get();
+    }
+    throw e;
+  }
 }
 
 // ---- State ----
@@ -466,6 +508,14 @@ function renderRow(row) {
   switch (row.role) {
     case 'user': {
       const label = COMMAND_LABELS[body.trim()];
+      const files = Array.isArray(row.files) ? row.files.filter(f => f && typeof f === 'object') : [];
+      if (files.length) {
+        const names = files.map(f => String(f.name == null ? '' : f.name));
+        const chips = `<div class="hub-chips">${names.map(n => `<span class="hub-chip"><span class="hub-chip-name">File: ${escapeHtml(n)}</span></span>`).join('')}</div>`;
+        // The auto "Sent a.pdf, b.png" body shows as just the chips.
+        const bubble = body === 'Sent ' + names.join(', ') ? '' : `<div class="hub-bubble">${escapeHtml(label || body)}</div>`;
+        return `<div class="hub-msg me">${bubble}${chips}${time}</div>`;
+      }
       return `<div class="hub-msg me"><div class="hub-bubble">${escapeHtml(label || body)}</div>${time}</div>`;
     }
     case 'assistant':
@@ -644,8 +694,7 @@ function mergeRows(rows) {
 
 async function loadInitial() {
   try {
-    const r = await hubFetch(`/hub_messages?${SELECT}&order=id.desc&limit=${PAGE}`, { method: 'GET' });
-    const rows = await r.json();
+    const rows = await getRows(`&order=id.desc&limit=${PAGE}`);
     rowsById.clear();
     mergeRows(rows.reverse());
     hasOlder = rows.length === PAGE;
@@ -672,8 +721,7 @@ async function loadOlder() {
   loadingOlder = true;
   render({ keepTopAnchor: true });
   try {
-    const r = await hubFetch(`/hub_messages?${SELECT}&id=lt.${oldest}&order=id.desc&limit=${PAGE}`, { method: 'GET' });
-    const rows = await r.json();
+    const rows = await getRows(`&id=lt.${oldest}&order=id.desc&limit=${PAGE}`);
     mergeRows(rows);
     hasOlder = rows.length === PAGE;
     noteSuccess();
@@ -716,8 +764,7 @@ async function poll() {
   if (!pollingOn || document.hidden) return;
   polling = true;
   try {
-    const r = await hubFetch(`/hub_messages?${SELECT}&order=id.desc&limit=${POLL_LIMIT}`, { method: 'GET' });
-    mergeRows(await r.json());
+    mergeRows(await getRows(`&order=id.desc&limit=${POLL_LIMIT}`));
     noteSuccess();
     applyOpen();
   } catch (e) {
@@ -760,17 +807,113 @@ async function insertRow(payload) {
   mergeRows(Array.isArray(rows) ? rows : [rows]);
 }
 
+// ---- Attachments ----
+// Files go to Storage only (bucket hub-files, folder = user id); the row
+// carries just {path, name, type, size}. Nothing is kept in localStorage.
+
+let attached = [];   // File objects picked in the composer
+
+function fileSafeName(name) {
+  let n = String(name).replace(/[^A-Za-z0-9._-]/g, '_') || 'file';
+  if (n.length > 80) {
+    const ext = (n.match(/\.[A-Za-z0-9]{1,8}$/) || [''])[0];
+    n = n.slice(0, 80 - ext.length) + ext;
+  }
+  return n;
+}
+
+let lastUploadTs = 0;
+function uploadTs() {   // unique per upload, so two same-named files never collide
+  lastUploadTs = Math.max(Date.now(), lastUploadTs + 1);
+  return lastUploadTs;
+}
+
+function renderAttached() {
+  const el = $('attach-chips');
+  el.innerHTML = attached.map((f, i) =>
+    `<span class="hub-chip"><span class="hub-chip-name">${escapeHtml(f.name)}</span><button type="button" class="hub-chip-x" data-remove="${i}" aria-label="Remove ${escapeHtml(f.name)}">×</button></span>`
+  ).join('');
+  el.hidden = !attached.length;
+}
+
+function addFiles(list) {
+  const errs = [];
+  for (const f of list) {
+    const ext = (f.name.match(/\.([^.]+)$/) || ['', ''])[1].toLowerCase();
+    if (!FILE_EXTS.includes(ext)) errs.push(`${f.name}: only PDF, images, text, or Word files`);
+    else if (f.size > MAX_FILE_BYTES) errs.push(`${f.name}: Up to 3 files, 10 MB each`);
+    else if (attached.length >= MAX_FILES) errs.push('Up to 3 files, 10 MB each');
+    else attached.push(f);
+  }
+  sendErrEl.textContent = errs.length ? [...new Set(errs)].join(' · ') : '';
+  renderAttached();
+}
+
+// One file -> Storage, with one 401 -> refresh -> retry like hubFetch.
+async function uploadFile(file, path) {
+  const session = getHubSession();
+  if (!session) { showSignIn(); throw new HubError('Not signed in', 401); }
+  const put = (token) => fetch(`${SUPABASE_URL}/storage/v1/object/hub-files/${path}`, {
+    method: 'POST',
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${token}`,
+      'Content-Type': file.type || 'application/octet-stream',
+      'x-upsert': 'false'
+    },
+    body: file
+  });
+  let r = await put(session.access_token);
+  if (r.status === 401) {
+    const refreshed = await hubRefreshToken();
+    if (!refreshed) {
+      clearHubSession();
+      showSignIn('Your Hub sign-in expired. Please sign in again.');
+      throw new HubError('Session expired', 401);
+    }
+    r = await put(getHubSession().access_token);
+  }
+  if (!r.ok) {
+    const txt = await r.text().catch(() => '');
+    let msg;
+    try { const j = JSON.parse(txt); msg = j.message || j.error; } catch {}
+    throw new HubError(msg || `Upload failed (${r.status})`, r.status);
+  }
+}
+
 let sending = false;
 async function sendText(raw, fromComposer) {
   const text = String(raw || '').trim();
-  if (!text || sending) return;
+  const files = fromComposer ? attached.slice() : [];
+  if ((!text && !files.length) || sending) return;
   if (text.length > MAX_LEN) { sendErrEl.textContent = `Too long: ${text.length} / ${MAX_LEN} characters.`; return; }
   sending = true;
   sendBtn.disabled = true;
+  $('attach').disabled = true;
   document.querySelectorAll('.hub-quick .btn').forEach(b => { b.disabled = true; });
   sendErrEl.textContent = '';
   try {
-    await insertRow({ role: 'user', body: text });
+    if (files.length) {
+      // Every upload first; if any fails, nothing is inserted.
+      const userId = getHubSession() && getHubSession().user_id;
+      const meta = [];
+      sendBtn.textContent = 'Uploading…';
+      for (const f of files) {
+        const path = `${userId}/${uploadTs()}-${fileSafeName(f.name)}`;
+        try { await uploadFile(f, path); }
+        catch (e) {
+          if (e.status !== 401) sendErrEl.textContent = `Couldn't upload ${f.name}: ${e.message || 'network error'}`;
+          return;
+        }
+        meta.push({ path, name: f.name, type: f.type, size: f.size });
+      }
+      sendBtn.textContent = 'Send';
+      await insertRow({ role: 'user', body: text || ('Sent ' + files.map(f => f.name).join(', ')), files: meta });
+      attached = [];
+      renderAttached();
+    } else {
+      await insertRow({ role: 'user', body: text });
+    }
     if (fromComposer) { inputEl.value = ''; onInput(); }
     if (text === '/new') showEarlier = false;   // the new conversation starts on a clean screen
     noteSuccess();
@@ -786,6 +929,8 @@ async function sendText(raw, fromComposer) {
   } finally {
     sending = false;
     sendBtn.disabled = false;
+    sendBtn.textContent = 'Send';
+    $('attach').disabled = false;
     document.querySelectorAll('.hub-quick .btn').forEach(b => { b.disabled = false; });
   }
 }
@@ -836,6 +981,18 @@ inputEl.addEventListener('keydown', (e) => {
 $('composer').addEventListener('submit', (e) => {
   e.preventDefault();
   sendText(inputEl.value, true);
+});
+$('attach').addEventListener('click', () => { if (!sending) $('attach-input').click(); });
+$('attach-input').addEventListener('change', (e) => {
+  addFiles([...e.target.files]);
+  e.target.value = '';   // so the same file can be picked again
+});
+$('attach-chips').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-remove]');
+  if (!b || sending) return;
+  attached.splice(Number(b.dataset.remove), 1);
+  sendErrEl.textContent = '';
+  renderAttached();
 });
 document.querySelector('.hub-quick').addEventListener('click', (e) => {
   const b = e.target.closest('[data-cmd]');
