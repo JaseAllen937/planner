@@ -18,3 +18,12 @@ Oct 31. Plans now add deadlines, prep, and study blocks, and the Next 3 days car
 
 ## Checked
 Rendered at 390px with real plan text from today (before/after screenshots), folding and unfolding, a new row arriving by poll, Undo posting {role: button, body: un:12, ref_id}, and no page errors.
+
+## Hub, part 2: every other message type
+- Change cards of every kind read as rows with markers: moved (arrow, "Moved to Thu, Nov 5, 4pm"), removed (struck through), brought back, checked off (green check, with the space), marked done, logged. A single dated change still shows its day.
+- "Undid #N" is a card with the same rows instead of a raw list.
+- /today is a card: events with times, to-dos with what's done underneath, the tracker as 9 pips with "5 of 9 checked", what's still open by space, then logged, focus, sleep.
+- The memory bot's post shows profile changes as New / Changed / Removed tags (a removed fact used to look like a bullet point).
+- An approval to send an email shows To, Subject, and the text, with Approve and Deny; other tool approvals show the input in a code box.
+- "[focus] didn't run", "The schedule job failed", "Couldn't ..." get a red "Needs a look" outline.
+- Checked again: folding, a new row arriving, Undo, escaping in every new parser, no page errors.

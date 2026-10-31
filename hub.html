@@ -242,6 +242,53 @@
   .hub-op-due .hub-op-title { font-weight: 600; }
   .hub-op-title { min-width: 0; overflow-wrap: anywhere; }
   .hub-op-dur { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); }
+  .hub-op-sub { display: block; font-size: 12px; color: var(--muted); margin-top: 1px; }
+  .hub-mark-move, .hub-mark-del, .hub-mark-back, .hub-mark-check, .hub-mark-uncheck, .hub-mark-log {
+    width: auto; height: auto; font-size: 13px; line-height: 1; font-weight: 700;
+  }
+  .hub-mark-move::before { content: '\2192'; color: var(--accent); }
+  .hub-mark-back::before { content: '\21BA'; color: var(--accent); }
+  .hub-mark-del::before { content: '\2715'; color: var(--text-tertiary); font-size: 11px; }
+  .hub-mark-check::before { content: '\2713'; color: var(--ok); }
+  .hub-mark-uncheck::before { content: '\2013'; color: var(--text-tertiary); }
+  .hub-mark-log::before { content: '\2022'; color: var(--accent); }
+  .hub-mark-allday { width: 4px; height: 14px; border-radius: 2px; background: var(--n3-event); }
+  .hub-op-del .hub-op-title { color: var(--muted); text-decoration: line-through; }
+  .hub-op-del .hub-op-sub { text-decoration: none; display: none; }
+  .hub-recap-ops { width: 92%; }
+  .hub-bubble-warn { background: var(--card); border: 1px solid rgba(255, 59, 48, 0.28); color: var(--text); }
+  .hub-bubble-warn::before { content: 'Needs a look'; display: block; font-size: 12px; font-weight: 600; color: var(--danger); margin-bottom: 2px; }
+
+  /* /today */
+  .hub-today .hub-recap-head { padding-bottom: 8px; }
+  .hub-kv { display: grid; grid-template-columns: 74px minmax(0, 1fr); column-gap: 10px; row-gap: 8px; align-items: baseline; }
+  .hub-kv-k { font-size: 12px; font-weight: 600; color: var(--muted); }
+  .hub-kv-sub { font-weight: 500; color: var(--text-tertiary); }
+  .hub-kv-space { font-size: 12px; font-weight: 600; color: var(--muted); margin-right: 4px; }
+  .hub-kv-v { font-size: 14px; line-height: 1.4; min-width: 0; }
+  .hub-kv-v .hub-op { grid-template-columns: 8px 38px minmax(0, 1fr); padding: 2px 0; }
+  .hub-pips { display: inline-flex; gap: 3px; vertical-align: middle; margin-right: 6px; }
+  .hub-pips i { width: 8px; height: 8px; border-radius: 3px; background: var(--surface-inset); }
+  .hub-pips i.on { background: var(--n3-block); box-shadow: 0 0 4px var(--n3-glow); }
+
+  /* memory */
+  .hub-memory { width: 92%; }
+  .hub-recap-head-tight { padding-bottom: 6px; margin-bottom: 8px; }
+  .hub-diff { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+  .hub-diff-row { display: grid; grid-template-columns: 66px minmax(0, 1fr); column-gap: 8px; align-items: baseline; font-size: 14px; line-height: 1.4; }
+  .hub-diff-tag { font-size: 11px; font-weight: 700; border-radius: 6px; padding: 2px 6px; text-align: center; }
+  .hub-diff-add .hub-diff-tag { color: #1f8a3b; background: var(--ok-dim); }
+  .hub-diff-chg .hub-diff-tag { color: #b86e00; background: rgba(255, 159, 10, 0.14); }
+  .hub-diff-del .hub-diff-tag { color: var(--danger); background: var(--danger-dim); }
+  .hub-diff-del .hub-diff-t { color: var(--muted); text-decoration: line-through; }
+
+  /* approvals that aren't AgendaAI changes */
+  .hub-mail { border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; background: var(--panel-2); }
+  .hub-mail-row { display: grid; grid-template-columns: 58px minmax(0, 1fr); column-gap: 8px; font-size: 13px; line-height: 1.5; }
+  .hub-mail-k { color: var(--muted); }
+  .hub-mail-v { overflow-wrap: anywhere; }
+  .hub-mail-body { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 14px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .hub-pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: 12px; background: var(--panel-2); border-radius: 10px; padding: 10px; }
   .hub-card-why { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-tertiary); }
   .btn.hub-undo {
     background: var(--surface-inset); color: var(--text); border: none; border-radius: 999px;
@@ -673,9 +720,73 @@ function statHtml(kind, n, label) {
   return `<span class="hub-stat"><span class="hub-mark hub-mark-${kind}" aria-hidden="true"></span><b>${n}</b> ${escapeHtml(label)}</span>`;
 }
 
+function lines0(body) { return String(body).split('\n')[0]; }
+
+// /today (agentkit today_text): "Saturday, Oct 31", then "Events: ...", "To-dos: ...", "Tracker: 5 of 9 checked.", ...
+const TODAY_RE = /^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday), [A-Z][a-z]{2} \d{1,2}$/;
+function renderToday(body) {
+  const lines = body.split('\n');
+  let html = `<div class="hub-recap hub-recap-plan hub-today"><div class="hub-recap-head"><span class="hub-recap-kind">Today</span>`
+    + `<span class="hub-recap-title">${escapeHtml(lines[0])}</span></div><div class="hub-kv">`;
+  let openShown = false;
+  for (const raw of lines.slice(1)) {
+    const l = raw.trim();
+    let m;
+    if ((m = l.match(/^Events: (.+)$/))) {
+      const evs = m[1].split('; ').map(e => {
+        const t = e.match(/^(\d{1,2}:\d{2} [AP]M) (.+)$/);
+        return t ? `<div class="hub-op"><span class="hub-mark hub-mark-event" aria-hidden="true"></span><span class="hub-op-when">${escapeHtml(t[1].replace(':00', '').replace(' ', '').toLowerCase())}</span><span class="hub-op-title">${escapeHtml(t[2])}</span></div>`
+                 : `<div class="hub-op"><span class="hub-mark hub-mark-allday" aria-hidden="true"></span><span class="hub-op-when">All day</span><span class="hub-op-title">${escapeHtml(e)}</span></div>`;
+      }).join('');
+      html += `<div class="hub-kv-k">Events</div><div class="hub-kv-v"><div class="hub-ops">${evs}</div></div>`;
+    } else if ((m = l.match(/^Tracker: (\d+) of (\d+) checked\.$/))) {
+      const done = Number(m[1]), all = Number(m[2]);
+      const pips = Array.from({ length: Math.min(all, 24) }, (_, i) => `<i class="${i < done ? 'on' : ''}"></i>`).join('');
+      html += `<div class="hub-kv-k">Tracker</div><div class="hub-kv-v"><span class="hub-pips" aria-hidden="true">${pips}</span> ${done} of ${all} checked</div>`;
+    } else if ((m = l.match(/^Open in (.+?): (.+)$/))) {
+      html += `<div class="hub-kv-k hub-kv-sub">${openShown ? '' : 'Still open'}</div><div class="hub-kv-v"><span class="hub-kv-space">${escapeHtml(m[1])}</span> ${escapeHtml(m[2])}</div>`;
+      openShown = true;
+    } else if ((m = l.match(/^To-dos: (.+?)(?: \(done: (.+)\))?$/))) {
+      html += `<div class="hub-kv-k">To-dos</div><div class="hub-kv-v">${escapeHtml(m[1] === 'all done' ? 'All done' : m[1])}`
+        + (m[2] ? `<span class="hub-op-sub">Done: ${escapeHtml(m[2])}</span>` : '') + '</div>';
+    } else if ((m = l.match(/^([A-Z][\w-]*(?: [a-z]+)?): (.+)$/))) {
+      html += `<div class="hub-kv-k">${escapeHtml(m[1])}</div><div class="hub-kv-v">${formatAssistant(m[2])}</div>`;
+    } else if (l) {
+      html += `<div class="hub-kv-k"></div><div class="hub-kv-v">${formatAssistant(l)}</div>`;
+    }
+  }
+  return html + '</div></div>';
+}
+
+// The memory bot's post: "Memory: wrote up ...", "Profile: 1 new, ...", then "+ / ~ / -" lines.
+function renderMemory(body) {
+  const paras = [], diff = [];
+  for (const l of body.split('\n')) {
+    const m = l.match(/^([+~-]) (.+)$/);
+    if (m) diff.push(m); else if (l.trim()) paras.push(l.trim());
+  }
+  const label = { '+': 'New', '~': 'Changed', '-': 'Removed' };
+  const cls = { '+': 'add', '~': 'chg', '-': 'del' };
+  return `<div class="hub-recap hub-memory"><div class="hub-recap-head hub-recap-head-tight"><span class="hub-recap-kind">Memory</span></div>`
+    + paras.map(p => `<p class="hub-p">${formatAssistant(p.replace(/^Memory: (\w)/, (_, c) => c.toUpperCase()))}</p>`).join('')
+    + (diff.length ? `<div class="hub-diff">${diff.map(([, k, t]) => `<div class="hub-diff-row hub-diff-${cls[k]}"><span class="hub-diff-tag">${label[k]}</span><span class="hub-diff-t">${formatAssistant(t)}</span></div>`).join('')}</div>` : '')
+    + '</div>';
+}
+
 // An assistant row: a plain reply, or a recap with a header.
 function renderAssistant(row) {
   const body = String(row.body == null ? '' : row.body);
+  if (TODAY_RE.test(lines0(body))) return renderToday(body);
+  if (/^Undid #\d+:$/.test(lines0(body))) {
+    const { items, tail } = splitBullets(body.split('\n').slice(1));
+    return `<div class="hub-recap hub-recap-ops"><div class="hub-card-head"><span class="hub-card-title">${escapeHtml(lines0(body).slice(0, -1))}</span>`
+      + `<span class="hub-card-count">${items.length}</span></div>${opsHtml(items, `${row.id}:undo`, false)}`
+      + (tail.length ? `<div class="hub-card-why">${tail.map(formatAssistant).join('<br>')}</div>` : '') + '</div>';
+  }
+  if (/^(Memory|Profile): /.test(lines0(body))) return renderMemory(body);
+  if (/^\[[\w-]+\] (didn't run|failed to start)|^The schedule job #\d+ failed|^Couldn't /.test(body)) {
+    return `<div class="hub-bubble hub-bubble-warn">${formatAssistant(body)}</div>`;
+  }
   if (/^From a Claude chat: /.test(body) && !body.includes('\n')) {
     return `<div class="hub-handoff"><span class="hub-handoff-dot" aria-hidden="true"></span><span>${formatAssistant(body.slice(20))}</span></div>`;
   }
@@ -716,49 +827,112 @@ function fmtMins(n) {
   return h && r ? `${h}h ${r}m` : h ? `${h}h` : `${r}m`;
 }
 
+// One "• ..." change line (agentkit describe_op) -> a row: { marker, when, title, sub, date, time, dur, right }.
+const OP_CHANGE_RE = /^Change (event|to-do) (['"])(.+)\2: (.+)$/;
+const OP_DELETE_RE = /^Delete (event|to-do): (.+) \((\d{4}-\d{2}-\d{2}|someday)\)$/;
+const OP_BACK_RE = /^Bring back (event|to-do): (.+) \((\d{4}-\d{2}-\d{2}|someday)\)$/;
+const OP_CHECK_RE = /^(Check|Uncheck) (.+) \((.+)\) for (\d{4}-\d{2}-\d{2})$/;
+const OP_DONE_RE = /^Mark (done|not done): (.+)$/;
+const OP_LOG_RE = /^Log (.+?): (.+) for (\d{4}-\d{2}-\d{2})$/;
+function parseOp(t, schedule) {
+  let a = t.match(ADD_RE);
+  if (a) {
+    const [, kind, title, date, time, dur, prio] = a;
+    const marker = prio === 'high' ? 'due' : kind === 'to-do' ? 'todo' : (schedule ? 'block' : 'event');
+    return { marker, title, date, time, dur: dur ? Number(dur) : null };
+  }
+  if ((a = t.match(OP_CHANGE_RE))) {
+    const [, , , title, rest] = a;
+    let date = null, time = null, dur = null; const other = [];
+    for (const bit of rest.split(/, (?=(?:date|time|title|notes|priority|all day))/)) {
+      let m;
+      if ((m = bit.match(/^date to (\d{4}-\d{2}-\d{2}|someday)$/))) date = m[1];
+      else if ((m = bit.match(/^time to (\d{1,2}):(\d{2}) ([AP]M) for (\d+) min$/))) {
+        const h = (Number(m[1]) % 12) + (m[3] === 'PM' ? 12 : 0);
+        time = `${String(h).padStart(2, '0')}:${m[2]}`; dur = Number(m[4]);
+      } else other.push(bit);
+    }
+    const to = [date ? (date === 'someday' ? 'Someday' : fmtCardDay(date)) : '', time ? fmtClock(time) : ''].filter(Boolean).join(', ');
+    return { marker: 'move', title, date, time, dur, sub: [to ? `Moved to ${to}` : '', ...other].filter(Boolean).join('. ') };
+  }
+  if ((a = t.match(OP_DELETE_RE))) return { marker: 'del', title: a[2], date: a[3], sub: 'Removed' };
+  if ((a = t.match(OP_BACK_RE))) return { marker: 'back', title: a[2], date: a[3], sub: 'Back on the calendar' };
+  if ((a = t.match(OP_CHECK_RE))) return { marker: a[1] === 'Check' ? 'check' : 'uncheck', title: a[2], date: a[4], sub: a[3] };
+  if ((a = t.match(OP_DONE_RE))) return { marker: a[1] === 'done' ? 'check' : 'uncheck', title: a[2], sub: a[1] === 'done' ? 'Done' : 'Not done' };
+  if ((a = t.match(OP_LOG_RE))) return { marker: 'log', title: a[1], date: a[3], right: a[2] };
+  return { marker: 'dot', text: t };
+}
+
+function opsHtml(items, key, schedule) {
+  const parsed = items.map(t => parseOp(t, schedule));
+  const dated = parsed.length > 0 && parsed.every(x => x.date);
+  if (dated) parsed.sort((a, b) => (a.date + (a.marker === 'due' ? '0' : '1') + (a.time || '99'))
+    .localeCompare(b.date + (b.marker === 'due' ? '0' : '1') + (b.time || '99')));
+  const open = expanded.has(key);
+  const fold = parsed.length > CARD_FOLD + 1 && !open;
+  const shown = fold ? parsed.slice(0, CARD_FOLD) : parsed;
+  let lastDay = '';
+  let html = '<div class="hub-ops">' + shown.map(x => {
+    if (x.text != null) return `<div class="hub-op"><span class="hub-mark hub-mark-dot" aria-hidden="true"></span><span class="hub-op-when"></span><span class="hub-op-title">${formatAssistant(x.text)}</span></div>`;
+    let day = '';
+    if (dated && x.date !== lastDay) { lastDay = x.date; day = `<div class="hub-op-day">${escapeHtml(x.date === 'someday' ? 'Someday' : fmtCardDay(x.date))}</div>`; }
+    const when = x.marker === 'due' ? 'Due' : x.time ? fmtClock(x.time) : '';
+    const title = x.marker === 'due' ? (x.title.replace(/\s+due$/i, '') || x.title) : x.title;
+    const right = x.dur ? fmtMins(x.dur) : (x.right || '');
+    return day + `<div class="hub-op hub-op-${x.marker}"><span class="hub-mark hub-mark-${x.marker}" aria-hidden="true"></span>`
+      + `<span class="hub-op-when">${escapeHtml(when)}</span><span class="hub-op-title">${escapeHtml(title)}`
+      + (x.sub ? `<span class="hub-op-sub">${escapeHtml(x.sub)}</span>` : '') + '</span>'
+      + (right ? `<span class="hub-op-dur">${escapeHtml(right)}</span>` : '') + '</div>';
+  }).join('') + '</div>';
+  if (fold) html += `<button type="button" class="hub-more" data-expand="${key}">Show all ${parsed.length}</button>`;
+  else if (parsed.length > CARD_FOLD + 1) html += `<button type="button" class="hub-more" data-expand="${key}">Show less</button>`;
+  return html;
+}
+
+function splitBullets(lines) {
+  const items = [], tail = [];
+  for (const l of lines) {
+    const b = l.match(/^\s*•\s+(.*)$/);
+    if (b) items.push(b[1]); else if (l.trim()) tail.push(l.trim());
+  }
+  return { items, tail };
+}
+
 // A change card's body: "#12 Added to your schedule (39 changes):", "• ..." lines, then the why.
 function renderCardBody(row) {
   const body = String(row.body == null ? '' : row.body);
   const lines = body.split('\n');
   const head = lines[0].match(CARD_RE);
-  if (!head) return `<div class="hub-card-body">${formatAssistant(body)}</div>`;
-  const items = [], tail = [];
-  for (const l of lines.slice(1)) {
-    const b = l.match(/^\s*•\s+(.*)$/);
-    if (b) items.push(b[1]); else if (l.trim()) tail.push(l.trim());
-  }
-  const schedule = /schedule|claude chat/i.test(head[2]);
-  const parsed = items.map(t => {
-    const a = t.match(ADD_RE);
-    if (!a) return { text: t };
-    const [, kind, title, date, time, dur, prio] = a;
-    const marker = prio === 'high' ? 'due' : kind === 'to-do' ? 'todo' : (schedule ? 'block' : 'event');
-    return { title, date, time, dur: dur ? Number(dur) : null, marker };
-  });
-  const dated = parsed.length && parsed.every(x => x.date);
-  if (dated) parsed.sort((a, b) => (a.date + (a.marker === 'due' ? '0' : '1') + (a.time || '99'))
-    .localeCompare(b.date + (b.marker === 'due' ? '0' : '1') + (b.time || '99')));
-  const key = `${row.id}:card`;
-  const open = expanded.has(key);
-  const fold = parsed.length > CARD_FOLD + 1 && !open;
-  const shown = fold ? parsed.slice(0, CARD_FOLD) : parsed;
+  if (!head) return renderProposal(body);
+  const { items, tail } = splitBullets(lines.slice(1));
   let html = `<div class="hub-card-head"><span class="hub-card-num">#${escapeHtml(head[1])}</span>`
     + `<span class="hub-card-title">${escapeHtml(head[2])}</span>`
     + (head[3] ? `<span class="hub-card-count">${escapeHtml(head[3])}</span>` : '') + '</div>';
-  let lastDay = '';
-  html += '<div class="hub-ops">' + shown.map(x => {
-    if (!x.date) return `<div class="hub-op"><span class="hub-mark hub-mark-dot" aria-hidden="true"></span><span class="hub-op-when"></span><span class="hub-op-title">${formatAssistant(x.text)}</span></div>`;
-    let day = '';
-    if (dated && x.date !== lastDay) { lastDay = x.date; day = `<div class="hub-op-day">${escapeHtml(x.date === 'someday' ? 'Someday' : fmtCardDay(x.date))}</div>`; }
-    const when = x.marker === 'due' ? 'Due' : x.time ? fmtClock(x.time) : '';
-    return day + `<div class="hub-op hub-op-${x.marker}"><span class="hub-mark hub-mark-${x.marker}" aria-hidden="true"></span>`
-      + `<span class="hub-op-when">${escapeHtml(when)}</span><span class="hub-op-title">${escapeHtml(x.marker === 'due' ? (x.title.replace(/\s+due$/i, '') || x.title) : x.title)}</span>`
-      + (x.dur ? `<span class="hub-op-dur">${fmtMins(x.dur)}</span>` : '') + '</div>';
-  }).join('') + '</div>';
-  if (fold) html += `<button type="button" class="hub-more" data-expand="${key}">Show all ${parsed.length}</button>`;
-  else if (parsed.length > CARD_FOLD + 1) html += `<button type="button" class="hub-more" data-expand="${key}">Show less</button>`;
+  html += opsHtml(items, `${row.id}:card`, /schedule/i.test(head[2]));
   if (tail.length) html += `<div class="hub-card-why">${tail.map(formatAssistant).join('<br>')}</div>`;
   return html;
+}
+
+// An approval for something other than an AgendaAI change (a mail draft, a tool call).
+const PROPOSAL_RE = /^#(\d+) (\S+) wants to call (\S+)$/;
+function renderProposal(body) {
+  const lines = body.split('\n');
+  const m = lines[0].match(PROPOSAL_RE);
+  if (!m) return `<div class="hub-card-body">${formatAssistant(body)}</div>`;
+  const tool = m[3].replace(/^mcp__/, '').split('__');
+  const toolName = tool.length > 1 ? `${tool[0][0].toUpperCase()}${tool[0].slice(1)}: ${tool.slice(1).join(' ').replace(/_/g, ' ')}` : m[3];
+  let input = null;
+  try { input = JSON.parse(lines.slice(1).join('\n')); } catch (e) { input = null; }
+  let html = `<div class="hub-card-head"><span class="hub-card-num">#${escapeHtml(m[1])}</span>`
+    + `<span class="hub-card-title">${/send|reply|draft/i.test(m[3]) && input && (input.to || input.subject) ? 'Send this email?' : 'Approve this?'}</span></div>`;
+  if (input && typeof input === 'object' && (input.to || input.subject || input.body)) {
+    const field = (k, v) => v ? `<div class="hub-mail-row"><span class="hub-mail-k">${k}</span><span class="hub-mail-v">${escapeHtml(Array.isArray(v) ? v.join(', ') : String(v))}</span></div>` : '';
+    html += `<div class="hub-mail">${field('To', input.to)}${field('Cc', input.cc)}${field('Subject', input.subject)}`
+      + (input.body ? `<div class="hub-mail-body">${escapeHtml(String(input.body))}</div>` : '') + '</div>';
+  } else {
+    html += `<pre class="hub-pre">${escapeHtml(lines.slice(1).join('\n'))}</pre>`;
+  }
+  return html + `<div class="hub-card-why">${escapeHtml(m[2])} wants to use ${escapeHtml(toolName)}</div>`;
 }
 
 function cardIsSent(row) {
@@ -788,7 +962,8 @@ function renderApproval(row) {
     if (state === 'sending') actions += '<div class="hub-card-note">Sending…</div>';
     else if (state === 'sent') actions += '<div class="hub-card-note">Sent. Waiting for your PC…</div>';
   }
-  return `<div class="hub-card${CARD_RE.test(String(row.body || '').split('\n')[0]) ? ' hub-card-change' : ''}">${renderCardBody(row)}${actions}</div>`;
+  const first = String(row.body || '').split('\n')[0];
+  return `<div class="hub-card${CARD_RE.test(first) || PROPOSAL_RE.test(first) ? ' hub-card-change' : ''}">${renderCardBody(row)}${actions}</div>`;
 }
 
 function renderRow(row) {
