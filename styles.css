@@ -2719,40 +2719,107 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 }
 
 /* ---- Next 3 days (vertical Today-tab section) ---- */
+/* v108: a strip of each waking day (8am to midnight) over rows that share its markers.
+   Blue capsule = a study block the planner added; graphite = his own event;
+   red diamond = something due; ring = a loose to-do. */
 .next3-card {
+  --n3-block: linear-gradient(90deg, #0a84ff 0%, #5e5ce6 100%);
+  --n3-event: rgba(60, 60, 67, 0.42);
+  --n3-glow: rgba(10, 132, 255, 0.38);
   background: var(--card); border: 1px solid var(--separator);
-  border-radius: var(--r-card); padding: 16px;
+  border-radius: var(--r-card); padding: 16px 16px 14px;
   box-shadow: var(--shadow-card); margin-bottom: 14px;
 }
 .next3-title {
-  font-size: 11px; color: var(--text-tertiary);
-  text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600;
-  margin-bottom: 12px;
+  font-size: 15px; font-weight: 650; color: var(--text-primary); letter-spacing: -0.01em;
 }
-.next3-day {
-  padding-top: 12px; margin-top: 12px;
-  border-top: 1px solid var(--separator);
+.next3-day { padding: 14px 0 6px; border-top: 1px solid var(--separator); }
+.next3-day:first-of-type { border-top: none; padding-top: 4px; }
+.next3-today {
+  margin: 0 -8px 6px; padding: 10px 8px 8px; border-top: none; border-radius: 14px;
+  background: linear-gradient(180deg, rgba(10, 132, 255, 0.07) 0%, rgba(10, 132, 255, 0) 100%);
 }
-.next3-day:first-of-type { padding-top: 0; margin-top: 0; border-top: none; }
-.next3-day-label {
-  font-size: 12px; font-weight: 700; color: var(--text-secondary);
-  margin-bottom: 8px;
+.next3-today + .next3-day { border-top: none; padding-top: 8px; }
+.next3-day-head { display: flex; align-items: baseline; gap: 8px; }
+.next3-day-label { font-size: 17px; font-weight: 700; letter-spacing: -0.02em; color: var(--text-primary); }
+.next3-day-date { font-size: 12px; color: var(--text-tertiary); }
+
+/* the day strip */
+.next3-strip {
+  position: relative; height: 8px; margin: 10px 4px 0; border-radius: 99px;
+  background: var(--surface-inset);
 }
+.next3-tick { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(255, 255, 255, 0.95); }
+.next3-seg { position: absolute; top: 0; bottom: 0; border-radius: 99px; }
+.next3-seg-block { background: var(--n3-block); box-shadow: 0 1px 6px var(--n3-glow); }
+.next3-seg-event { background: var(--n3-event); }
+.next3-seg-past { opacity: 0.35; box-shadow: none; }
+.next3-gone {
+  position: absolute; left: 0; top: 0; bottom: 0; border-radius: 99px 0 0 99px; pointer-events: none;
+  background: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.6) 0 2px, rgba(255, 255, 255, 0.15) 2px 5px);
+}
+.next3-now {
+  position: absolute; top: -5px; bottom: -5px; width: 2px; margin-left: -1px; border-radius: 2px;
+  background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft), 0 0 10px var(--n3-glow);
+  animation: next3-breathe 3.2s ease-in-out infinite;
+}
+@keyframes next3-breathe {
+  0%, 100% { box-shadow: 0 0 0 3px var(--accent-soft), 0 0 6px var(--n3-glow); }
+  50%      { box-shadow: 0 0 0 4px var(--accent-soft), 0 0 14px var(--n3-glow); }
+}
+.next3-due-mark {
+  position: absolute; right: -4px; top: 50%; width: 9px; height: 9px; border-radius: 2px;
+  transform: translateY(-50%) rotate(45deg);
+  background: var(--danger); box-shadow: 0 0 0 2px var(--card), 0 0 8px rgba(255, 59, 48, 0.45);
+}
+.next3-due-mark-done { background: var(--text-tertiary); box-shadow: 0 0 0 2px var(--card); }
+.next3-scale { position: relative; height: 14px; margin: 3px 4px 0; }
+.next3-scale span {
+  position: absolute; top: 0; transform: translateX(-50%);
+  font-family: var(--font-mono); font-size: 9px; color: var(--text-tertiary);
+}
+.next3-scale span:first-child { transform: none; }
+.next3-scale span:last-child { transform: translateX(-100%); }
+
+/* rows, in the strip's language */
+.next3-rows { display: flex; flex-direction: column; gap: 1px; margin-top: 8px; }
 .next3-row {
-  display: flex; align-items: baseline; gap: 8px;
-  padding: 5px 0; min-width: 0;
+  display: grid; grid-template-columns: 8px 46px minmax(0, 1fr) auto; align-items: center; column-gap: 9px;
+  padding: 7px 8px; margin: 0 -8px; border-radius: 10px; min-width: 0;
 }
-.next3-tappable { cursor: pointer; border-radius: var(--r-pill); }
+.next3-tappable { cursor: pointer; transition: background-color 0.15s ease; }
 .next3-tappable:active { background: var(--surface-inset); }
-.next3-time {
-  flex-shrink: 0; font-size: 11px; color: var(--accent);
-  font-family: var(--font-mono); font-feature-settings: var(--num);
+.next3-tappable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.next3-mark { justify-self: center; }
+.next3-mark-block, .next3-mark-event, .next3-mark-allday { width: 4px; height: 18px; border-radius: 2px; }
+.next3-mark-block { background: var(--n3-block); box-shadow: 0 0 6px var(--n3-glow); }
+.next3-mark-event, .next3-mark-allday { background: var(--n3-event); }
+.next3-mark-due { width: 8px; height: 8px; border-radius: 2px; transform: rotate(45deg); background: var(--danger); }
+.next3-mark-todo { width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid var(--text-tertiary); box-sizing: border-box; }
+.next3-when {
+  font-family: var(--font-mono); font-feature-settings: var(--num); font-size: 12px;
+  color: var(--text-secondary); white-space: nowrap;
 }
+.next3-k-timed .next3-when { color: var(--text-primary); }
+.next3-k-due .next3-when { color: var(--danger); font-weight: 600; }
 .next3-item-title {
-  font-size: 14px; line-height: 1.3; color: var(--text-primary);
-  overflow-wrap: anywhere; word-break: break-word; min-width: 0;
+  font-size: 15px; line-height: 1.3; color: var(--text-primary);
+  overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
-.next3-empty { font-size: 13px; color: var(--text-tertiary); }
+.next3-k-due .next3-item-title { font-weight: 600; }
+.next3-dur { font-family: var(--font-mono); font-feature-settings: var(--num); font-size: 11px; color: var(--text-tertiary); }
+/* finished, or already over today: still there, out of the way */
+.next3-done .next3-item-title { color: var(--text-tertiary); text-decoration: line-through; }
+.next3-done .next3-when { color: var(--text-tertiary); }
+.next3-done .next3-mark-todo { background: var(--text-tertiary); border-color: transparent; }
+.next3-done .next3-mark-due { background: var(--text-tertiary); }
+.next3-past .next3-item-title, .next3-past .next3-when { color: var(--text-tertiary); }
+.next3-past .next3-mark { opacity: 0.35; box-shadow: none; }
+.next3-empty { font-size: 13px; color: var(--text-tertiary); margin-top: 10px; }
+@media (prefers-reduced-motion: reduce) {
+  .next3-now { animation: none; }
+  .next3-tappable { transition: none; }
+}
 
 /* Next 3 days — header link + footer stat chips */
 .next3-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 12px; }

@@ -119,7 +119,7 @@
   .hub-compose-row textarea {
     flex: 1; resize: none; border: 1px solid var(--border-strong); border-radius: 18px;
     background: var(--card); color: var(--text); padding: 9px 14px;
-    font-size: 16px; line-height: 22px; max-height: calc(22px * 6 + 20px); overflow-y: auto;
+    font-size: 16px; line-height: 22px; min-height: 42px; max-height: calc(22px * 6 + 20px); overflow-y: auto;
     outline: none;
   }
   .hub-compose-row textarea:focus { border-color: var(--accent); }
@@ -164,6 +164,122 @@
     padding: 10px 12px; font-size: 16px; background: var(--card); color: var(--text);
   }
   .hub-signin .btn:disabled { opacity: 0.5; }
+
+  /* ---- Recaps (Oct 31): plan posts and change cards ---- */
+  /* Markers match the Next 3 days card: blue capsule = study block, graphite = event,
+     red diamond = due, ring = to-do. */
+  .hub { --n3-block: linear-gradient(90deg, #0a84ff 0%, #5e5ce6 100%); --n3-event: rgba(60, 60, 67, 0.42); --n3-glow: rgba(10, 132, 255, 0.38); }
+  .hub-p { margin: 0 0 8px; }
+  .hub-p:last-child { margin-bottom: 0; }
+  .hub-recap {
+    max-width: 92%; background: var(--card); color: var(--text);
+    border-radius: 20px; border-bottom-left-radius: 6px; padding: 12px 14px;
+    box-shadow: var(--shadow-sm); font-size: 15px; line-height: 1.45; overflow-wrap: anywhere;
+  }
+  .hub-recap-plan {
+    width: 92%; border: 1px solid rgba(10, 132, 255, 0.18);
+    background: linear-gradient(180deg, rgba(10, 132, 255, 0.07) 0, rgba(10, 132, 255, 0) 140px), var(--card);
+  }
+  .hub-recap-head { display: flex; flex-direction: column; gap: 3px; padding-bottom: 12px; margin-bottom: 10px; border-bottom: 1px solid var(--border); }
+  .hub-recap-kind { font-size: 12px; font-weight: 600; color: var(--accent); }
+  .hub-recap-title { font-size: 19px; font-weight: 750; letter-spacing: -0.02em; line-height: 1.2; }
+  .hub-stats { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .hub-stat {
+    display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 9px; border-radius: 999px;
+    background: var(--card); border: 1px solid var(--border); font-size: 13px; color: var(--muted);
+  }
+  .hub-stat b { font-family: var(--font-mono); font-weight: 600; color: var(--text); }
+  .hub-recap-note { font-size: 12px; color: var(--text-tertiary); margin-top: 4px; }
+  .hub-sec { margin: 12px 0 0; }
+  .hub-sec-head { font-size: 13px; font-weight: 650; color: var(--text); margin-bottom: 4px; }
+  .hub-ul { margin: 0; padding: 0; list-style: none; }
+  .hub-ul li { position: relative; padding: 3px 0 3px 16px; font-size: 14px; line-height: 1.4; }
+  .hub-ul li::before {
+    content: ''; position: absolute; left: 3px; top: 0.78em; width: 5px; height: 5px; border-radius: 50%;
+    background: var(--accent); opacity: 0.55;
+  }
+  .hub-sec-quiet .hub-ul li { color: var(--muted); }
+  .hub-sec-quiet .hub-ul li::before { background: var(--text-tertiary); opacity: 1; }
+  .hub-sec-warn .hub-sec-head { color: var(--danger); }
+  .hub-sec-warn .hub-ul li::before { background: var(--danger); }
+  .hub-sec-ask { background: var(--accent-soft); border-radius: 14px; padding: 10px 12px 12px; }
+  .hub-sec-ask .hub-sec-head { color: var(--accent); }
+  .hub-sec-foot { margin: 8px 0 0; font-size: 14px; font-weight: 600; }
+  .hub-more {
+    margin-top: 2px; background: none; border: none; padding: 6px 0 2px; cursor: pointer;
+    color: var(--accent); font-size: 13px; font-weight: 600;
+  }
+  .hub-more-note { font-size: 12px; color: var(--text-tertiary); padding: 2px 0 0 16px; }
+  .hub-mark { display: inline-block; flex: 0 0 auto; }
+  .hub-mark-block, .hub-mark-event { width: 4px; height: 14px; border-radius: 2px; }
+  .hub-mark-block { background: var(--n3-block); box-shadow: 0 0 6px var(--n3-glow); }
+  .hub-mark-event { background: var(--n3-event); }
+  .hub-mark-due { width: 7px; height: 7px; border-radius: 2px; transform: rotate(45deg); background: var(--danger); }
+  .hub-mark-todo { width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid var(--text-tertiary); box-sizing: border-box; }
+  .hub-mark-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--text-tertiary); }
+
+  .hub-card-change {
+    width: 92%; border: 1px solid var(--border); box-shadow: var(--shadow-sm);
+    border-radius: 20px; border-bottom-left-radius: 6px; padding: 12px 14px;
+  }
+  .hub-card-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+  .hub-card-num { font-family: var(--font-mono); font-size: 12px; color: var(--text-tertiary); }
+  .hub-card-title { font-size: 15px; font-weight: 650; flex: 1; min-width: 0; }
+  .hub-card-count {
+    font-family: var(--font-mono); font-size: 12px; color: var(--muted);
+    background: var(--surface-inset); border-radius: 999px; padding: 2px 9px;
+  }
+  .hub-ops { display: flex; flex-direction: column; }
+  .hub-op-day { font-size: 12px; font-weight: 650; color: var(--muted); margin: 10px 0 2px; }
+  .hub-op-day:first-child { margin-top: 0; }
+  .hub-op {
+    display: grid; grid-template-columns: 8px 40px minmax(0, 1fr) auto; align-items: center; column-gap: 8px;
+    padding: 4px 0; font-size: 14px; line-height: 1.35;
+  }
+  .hub-op .hub-mark { justify-self: center; }
+  .hub-op-when { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+  .hub-op-due .hub-op-when { color: var(--danger); font-weight: 600; }
+  .hub-op-due .hub-op-title { font-weight: 600; }
+  .hub-op-title { min-width: 0; overflow-wrap: anywhere; }
+  .hub-op-dur { font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); }
+  .hub-card-why { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-tertiary); }
+  .btn.hub-undo {
+    background: var(--surface-inset); color: var(--text); border: none; border-radius: 999px;
+    min-height: 34px; padding: 6px 16px; font-weight: 600;
+  }
+  .btn.hub-undo::before { content: '\21B6'; margin-right: 6px; }
+
+  .hub-ask-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 8px; row-gap: 1px; }
+  .hub-ask-title { font-weight: 600; }
+  .hub-ask-date {
+    align-self: start; font-family: var(--font-mono); font-size: 12px; font-weight: 600; color: var(--accent);
+    background: var(--card); border-radius: 999px; padding: 2px 8px; white-space: nowrap;
+  }
+  .hub-ask-why { grid-column: 1 / -1; font-size: 13px; color: var(--muted); }
+  .hub-handoff {
+    display: block; max-width: 92%;
+    padding: 8px 12px; border-radius: 14px; border: 1px dashed rgba(10, 132, 255, 0.35);
+    color: var(--muted); font-size: 13px; line-height: 1.4;
+  }
+  .hub-handoff::before { content: 'From a Claude chat'; display: block; margin-bottom: 2px; color: var(--accent); font-weight: 600; }
+  .hub-handoff-dot { display: none; }
+
+  /* a new row rises in once; nothing else moves on its own */
+  .hub-in { animation: hub-rise 0.28s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+  @keyframes hub-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  .hub-working { display: flex; align-items: center; gap: 8px; }
+  .hub-typing {
+    display: inline-flex; gap: 3px; padding: 7px 10px; border-radius: 999px;
+    background: var(--card); box-shadow: var(--shadow-sm);
+  }
+  .hub-typing i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); opacity: 0.3; animation: hub-blink 1.2s infinite ease-in-out; }
+  .hub-typing i:nth-child(2) { animation-delay: 0.15s; }
+  .hub-typing i:nth-child(3) { animation-delay: 0.3s; }
+  @keyframes hub-blink { 0%, 80%, 100% { opacity: 0.25; transform: none; } 40% { opacity: 1; transform: translateY(-2px); } }
+  @media (prefers-reduced-motion: reduce) {
+    .hub-in, .hub-typing i { animation: none; }
+    .hub-typing i { opacity: 0.6; }
+  }
 
   [hidden] { display: none !important; }
 </style>
@@ -472,6 +588,179 @@ function formatAssistant(body) {
   return html;
 }
 
+// ---- Recaps (Oct 31): plan posts and change cards read as structure, not a wall ----
+// Everything still goes through formatAssistant (escape first). The parser only
+// decides layout: "Heading:" followed by "- item" lines becomes a section, long
+// sections fold, "...and N more" becomes a quiet line, and two known shapes get
+// a header: "Schedule from X: N deadlines, N prep to-dos, N study blocks added..."
+// and a change card "#N Added to your schedule (K changes):" with "• Add ..." lines.
+const expanded = new Set();         // "rowId:block" sections he opened
+const FOLD_AT = 5;                  // a section longer than this shows 4 + "Show N more"
+const CARD_FOLD = 6;                // change cards show this many rows folded
+const BULLET_RE = /^\s*[-•]\s+(.*)$/;
+const MORE_RE = /^\s*\.\.\.and (\d+) more\s*$/;
+const PLAN_RE = /^Schedule from (.+?): (\d+) deadlines?, (\d+) prep to-dos?, (\d+) study blocks? added, worked out in (\d+) rounds? between the scheduler and the planner\.\s*$/;
+const REFIT_RE = /^Refit for (.+?): (\d+) changes?\.\s*(.*)$/;
+const ASK_RE = /^(.+): ((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) \w{3} \d{1,2})(?: \((.+)\))?$/;
+const CARD_RE = /^#(\d+) (.+?)(?: \((\d+) changes?\))?:\s*$/;
+const ADD_RE = /^Add (to-do|event): (.+) \((\d{4}-\d{2}-\d{2}|someday)(?: (\d{2}:\d{2}) \((\d+) min\))?(?:, (\w+) priority)?\)$/;
+
+function parseBlocks(body) {
+  const blocks = [];
+  let cur = null;
+  for (const raw of String(body).split('\n')) {
+    const line = raw.replace(/\s+$/, '');
+    const b = line.match(BULLET_RE), m = line.match(MORE_RE);
+    if (!line.trim()) { cur = null; continue; }
+    if (m && cur && cur.type === 'list') { cur.more += Number(m[1]); continue; }
+    if (b) {
+      if (!cur || cur.type !== 'list') {
+        let head = null;
+        // "Notes:" right above the items is the section's heading
+        if (cur && cur.type === 'p' && /:$/.test(cur.lines[cur.lines.length - 1])) {
+          head = cur.lines.pop().slice(0, -1);
+          if (!cur.lines.length) blocks.pop();
+        }
+        cur = { type: 'list', head, items: [], more: 0, foot: null };
+        blocks.push(cur);
+      }
+      cur.items.push(b[1]);
+      continue;
+    }
+    if (cur && cur.type === 'list' && cur.head && /^check these dates/i.test(cur.head) && !cur.foot) {
+      cur.foot = line;    // "Right? Say yes, or tell me the real dates." belongs to the question
+      continue;
+    }
+    if (!cur || cur.type !== 'p') { cur = { type: 'p', lines: [] }; blocks.push(cur); }
+    cur.lines.push(line);
+  }
+  return blocks;
+}
+
+function secClass(head) {
+  if (!head) return '';
+  if (/^check these dates/i.test(head)) return ' hub-sec-ask';
+  if (/^(no study time|couldn't|still not right|agendaai turned down)/i.test(head)) return ' hub-sec-warn';
+  if (/^left out/i.test(head)) return ' hub-sec-quiet';
+  return '';
+}
+
+function renderBlocks(blocks, rowId) {
+  return blocks.map((bl, i) => {
+    if (bl.type === 'p') return bl.lines.map(l => `<p class="hub-p">${formatAssistant(l)}</p>`).join('');
+    const key = `${rowId}:${i}`;
+    const open = expanded.has(key);
+    const fold = bl.items.length > FOLD_AT && !open;
+    const shown = fold ? bl.items.slice(0, FOLD_AT - 1) : bl.items;
+    let html = `<section class="hub-sec${secClass(bl.head)}">`;
+    if (bl.head) html += `<div class="hub-sec-head">${formatAssistant(bl.head)}</div>`;
+    const ask = /^check these dates/i.test(bl.head || '');
+    html += `<ul class="hub-ul">${shown.map(t => {
+      const g = ask && t.match(ASK_RE);
+      if (!g) return `<li>${formatAssistant(t)}</li>`;
+      return `<li class="hub-ask-item"><span class="hub-ask-title">${formatAssistant(g[1].replace(/\s+due$/i, ''))}</span>`
+        + `<span class="hub-ask-date">${escapeHtml(g[2])}</span>${g[3] ? `<span class="hub-ask-why">${formatAssistant(g[3])}</span>` : ''}</li>`;
+    }).join('')}</ul>`;
+    if (fold) html += `<button type="button" class="hub-more" data-expand="${key}">Show ${bl.items.length - shown.length} more</button>`;
+    else if (bl.items.length > FOLD_AT) html += `<button type="button" class="hub-more" data-expand="${key}">Show less</button>`;
+    if (bl.more) html += `<div class="hub-more-note">${bl.more} more not shown here</div>`;
+    if (bl.foot) html += `<p class="hub-sec-foot">${formatAssistant(bl.foot)}</p>`;
+    return html + '</section>';
+  }).join('');
+}
+
+function statHtml(kind, n, label) {
+  return `<span class="hub-stat"><span class="hub-mark hub-mark-${kind}" aria-hidden="true"></span><b>${n}</b> ${escapeHtml(label)}</span>`;
+}
+
+// An assistant row: a plain reply, or a recap with a header.
+function renderAssistant(row) {
+  const body = String(row.body == null ? '' : row.body);
+  if (/^From a Claude chat: /.test(body) && !body.includes('\n')) {
+    return `<div class="hub-handoff"><span class="hub-handoff-dot" aria-hidden="true"></span><span>${formatAssistant(body.slice(20))}</span></div>`;
+  }
+  const lines = body.split('\n');
+  const plan = lines[0].match(PLAN_RE);
+  const refit = !plan && lines[0].match(REFIT_RE);
+  const blocks = parseBlocks(plan || refit ? lines.slice(1).join('\n') : body);
+  const rich = plan || refit || blocks.some(b => b.type === 'list');
+  if (!rich) return `<div class="hub-bubble">${formatAssistant(body)}</div>`;
+  let head = '';
+  if (plan) {
+    const [, src, d, p, b, r] = plan;
+    head = `<div class="hub-recap-head"><span class="hub-recap-kind">New plan</span>`
+      + `<span class="hub-recap-title">${escapeHtml(src)}</span>`
+      + `<div class="hub-stats">${statHtml('due', d, Number(d) === 1 ? 'deadline' : 'deadlines')}`
+      + `${statHtml('todo', p, 'prep')}${statHtml('block', b, Number(b) === 1 ? 'study block' : 'study blocks')}</div>`
+      + `<span class="hub-recap-note">Worked out in ${escapeHtml(r)} round${r === '1' ? '' : 's'}</span></div>`;
+  } else if (refit) {
+    head = `<div class="hub-recap-head"><span class="hub-recap-kind">Refit</span>`
+      + `<span class="hub-recap-title">${escapeHtml(refit[1])}</span>`
+      + `<div class="hub-stats">${statHtml('block', refit[2], Number(refit[2]) === 1 ? 'change' : 'changes')}</div></div>`;
+    if (refit[3]) blocks.unshift({ type: 'p', lines: [refit[3]] });
+  }
+  return `<div class="hub-recap${plan || refit ? ' hub-recap-plan' : ''}">${head}${renderBlocks(blocks, row.id)}</div>`;
+}
+
+function fmtCardDay(ymd) {
+  const d = new Date(ymd + 'T12:00:00');
+  return isNaN(d) ? ymd : d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+}
+function fmtClock(hhmm) {
+  const [h, m] = hhmm.split(':').map(Number);
+  const ap = h >= 12 ? 'pm' : 'am', h12 = ((h + 11) % 12) + 1;
+  return m ? `${h12}:${String(m).padStart(2, '0')}${ap}` : `${h12}${ap}`;
+}
+function fmtMins(n) {
+  const h = Math.floor(n / 60), r = n % 60;
+  return h && r ? `${h}h ${r}m` : h ? `${h}h` : `${r}m`;
+}
+
+// A change card's body: "#12 Added to your schedule (39 changes):", "• ..." lines, then the why.
+function renderCardBody(row) {
+  const body = String(row.body == null ? '' : row.body);
+  const lines = body.split('\n');
+  const head = lines[0].match(CARD_RE);
+  if (!head) return `<div class="hub-card-body">${formatAssistant(body)}</div>`;
+  const items = [], tail = [];
+  for (const l of lines.slice(1)) {
+    const b = l.match(/^\s*•\s+(.*)$/);
+    if (b) items.push(b[1]); else if (l.trim()) tail.push(l.trim());
+  }
+  const schedule = /schedule|claude chat/i.test(head[2]);
+  const parsed = items.map(t => {
+    const a = t.match(ADD_RE);
+    if (!a) return { text: t };
+    const [, kind, title, date, time, dur, prio] = a;
+    const marker = prio === 'high' ? 'due' : kind === 'to-do' ? 'todo' : (schedule ? 'block' : 'event');
+    return { title, date, time, dur: dur ? Number(dur) : null, marker };
+  });
+  const dated = parsed.length && parsed.every(x => x.date);
+  if (dated) parsed.sort((a, b) => (a.date + (a.marker === 'due' ? '0' : '1') + (a.time || '99'))
+    .localeCompare(b.date + (b.marker === 'due' ? '0' : '1') + (b.time || '99')));
+  const key = `${row.id}:card`;
+  const open = expanded.has(key);
+  const fold = parsed.length > CARD_FOLD + 1 && !open;
+  const shown = fold ? parsed.slice(0, CARD_FOLD) : parsed;
+  let html = `<div class="hub-card-head"><span class="hub-card-num">#${escapeHtml(head[1])}</span>`
+    + `<span class="hub-card-title">${escapeHtml(head[2])}</span>`
+    + (head[3] ? `<span class="hub-card-count">${escapeHtml(head[3])}</span>` : '') + '</div>';
+  let lastDay = '';
+  html += '<div class="hub-ops">' + shown.map(x => {
+    if (!x.date) return `<div class="hub-op"><span class="hub-mark hub-mark-dot" aria-hidden="true"></span><span class="hub-op-when"></span><span class="hub-op-title">${formatAssistant(x.text)}</span></div>`;
+    let day = '';
+    if (dated && x.date !== lastDay) { lastDay = x.date; day = `<div class="hub-op-day">${escapeHtml(x.date === 'someday' ? 'Someday' : fmtCardDay(x.date))}</div>`; }
+    const when = x.marker === 'due' ? 'Due' : x.time ? fmtClock(x.time) : '';
+    return day + `<div class="hub-op hub-op-${x.marker}"><span class="hub-mark hub-mark-${x.marker}" aria-hidden="true"></span>`
+      + `<span class="hub-op-when">${escapeHtml(when)}</span><span class="hub-op-title">${escapeHtml(x.marker === 'due' ? (x.title.replace(/\s+due$/i, '') || x.title) : x.title)}</span>`
+      + (x.dur ? `<span class="hub-op-dur">${fmtMins(x.dur)}</span>` : '') + '</div>';
+  }).join('') + '</div>';
+  if (fold) html += `<button type="button" class="hub-more" data-expand="${key}">Show all ${parsed.length}</button>`;
+  else if (parsed.length > CARD_FOLD + 1) html += `<button type="button" class="hub-more" data-expand="${key}">Show less</button>`;
+  if (tail.length) html += `<div class="hub-card-why">${tail.map(formatAssistant).join('<br>')}</div>`;
+  return html;
+}
+
 function cardIsSent(row) {
   if (cardState.has(row.id)) return true;
   for (const r of rowsById.values()) if (r.role === 'button' && r.ref_id === row.id) return true;
@@ -491,14 +780,15 @@ function renderApproval(row) {
         if (!Array.isArray(btn) || btn.length < 2) return '';
         const label = String(btn[0]);
         const primary = /^approve$/i.test(label.trim()) ? ' btn-primary' : '';
-        return `<button type="button" class="btn${primary}" data-card="${Number(row.id)}" data-g="${gi}" data-b="${bi}"${disabled}>${escapeHtml(label)}</button>`;
+        const undo = /^undo$/i.test(label.trim()) ? ' hub-undo' : '';
+        return `<button type="button" class="btn${primary}${undo}" data-card="${Number(row.id)}" data-g="${gi}" data-b="${bi}"${disabled}>${escapeHtml(label)}</button>`;
       }).join('');
       return `<div class="hub-card-row">${btns}</div>`;
     }).join('');
     if (state === 'sending') actions += '<div class="hub-card-note">Sending…</div>';
     else if (state === 'sent') actions += '<div class="hub-card-note">Sent. Waiting for your PC…</div>';
   }
-  return `<div class="hub-card"><div class="hub-card-body">${escapeHtml(row.body || '')}</div>${actions}</div>`;
+  return `<div class="hub-card${CARD_RE.test(String(row.body || '').split('\n')[0]) ? ' hub-card-change' : ''}">${renderCardBody(row)}${actions}</div>`;
 }
 
 function renderRow(row) {
@@ -519,7 +809,7 @@ function renderRow(row) {
       return `<div class="hub-msg me"><div class="hub-bubble">${escapeHtml(label || body)}</div>${time}</div>`;
     }
     case 'assistant':
-      return `<div class="hub-msg them"><div class="hub-bubble">${formatAssistant(body)}</div>${time}</div>`;
+      return `<div class="hub-msg them">${renderAssistant(row)}${time}</div>`;
     case 'status':
       return `<div class="hub-status">${escapeHtml(body)}</div>`;
     case 'approval':
@@ -571,11 +861,15 @@ function scrollToBottom() {
   pillEl.hidden = true;
 }
 
+const seenIds = new Set();   // rows already painted once (no entrance for them again)
+let painted = false;
+const reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+
 // Re-renders the list only when something visible changed.
 function render({ forceBottom = false, keepTopAnchor = false } = {}) {
   if (bottomNext && !keepTopAnchor) { forceBottom = true; bottomNext = false; }
   const rows = sortedRows();
-  const sig = JSON.stringify([hasOlder, loadingOlder, showEarlier, floorId, [...cardState], rows.map(r => [r.id, r.status, r.buttons, r.body])]);
+  const sig = JSON.stringify([hasOlder, loadingOlder, showEarlier, floorId, [...cardState], [...expanded], rows.map(r => [r.id, r.status, r.buttons, r.body])]);
   updateWorking();
   if (sig === lastSig && !forceBottom) return;
   lastSig = sig;
@@ -608,9 +902,13 @@ function render({ forceBottom = false, keepTopAnchor = false } = {}) {
       lastDay = dayKey(d);
       html += `<div class="hub-day">${escapeHtml(fmtDay(d))}</div>`;
     }
-    html += piece;
+    // A row he hasn't seen yet arrives with a short rise; the first paint doesn't animate.
+    const fresh = painted && !seenIds.has(row.id);
+    seenIds.add(row.id);
+    html += fresh ? `<div class="hub-in">${piece}</div>` : piece;
     shown++;
   }
+  painted = true;
   if (!shown) html += '<div class="hub-empty">No messages yet. Say hi, or tap Morning to start a check-in.</div>';
   listEl.innerHTML = html;
 
@@ -620,10 +918,14 @@ function render({ forceBottom = false, keepTopAnchor = false } = {}) {
 
   if (keepTopAnchor) {
     listEl.scrollTop = prevTop + (listEl.scrollHeight - prevHeight);
-  } else if (forceBottom || wasNearBottom) {
+  } else if (forceBottom) {
     scrollToBottom();
     // Again after layout settles (the notices and working line can resize the list).
-    if (forceBottom) requestAnimationFrame(scrollToBottom);
+    requestAnimationFrame(scrollToBottom);
+  } else if (wasNearBottom) {
+    // Follow a new reply down smoothly instead of jumping.
+    if (grew && !reduceMotion) { listEl.scrollTo({ top: listEl.scrollHeight, behavior: 'smooth' }); pillEl.hidden = true; }
+    else scrollToBottom();
   } else {
     listEl.scrollTop = prevTop;
     if (grew) pillEl.hidden = false;
@@ -663,7 +965,7 @@ function updateWorking() {
   workingEl.classList.toggle('warn', s === 'stale' || s === 'silent');
   if (s === 'sending') workingEl.innerHTML = 'Sending to your PC…';
   else if (s === 'stale') workingEl.innerHTML = "Your PC hasn't picked this up. Is it on, with the Hub running?";
-  else if (s === 'working') workingEl.innerHTML = 'Working<span class="hub-dots"></span>';
+  else if (s === 'working') workingEl.innerHTML = '<span class="hub-typing" aria-hidden="true"><i></i><i></i><i></i></span><span>Working on it</span>';
   else if (s === 'silent') workingEl.innerHTML = 'No reply after 5 minutes. Check that your PC is on and the Hub is running.';
   else workingEl.innerHTML = '';
   workingEl.hidden = !s;
@@ -1002,6 +1304,13 @@ document.querySelector('.hub-quick').addEventListener('click', (e) => {
 listEl.addEventListener('click', (e) => {
   if (e.target.closest('#load-older')) { loadOlder(); return; }
   if (e.target.closest('#show-earlier')) { showEarlierMessages(); return; }
+  const x = e.target.closest('[data-expand]');
+  if (x) {
+    const k = x.dataset.expand;
+    if (expanded.has(k)) expanded.delete(k); else expanded.add(k);
+    render();
+    return;
+  }
   const b = e.target.closest('button[data-card]');
   if (b && !b.disabled) tapCardButton(Number(b.dataset.card), Number(b.dataset.g), Number(b.dataset.b));
 });

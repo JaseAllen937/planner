@@ -882,7 +882,7 @@ const SCHEMA_VERSION = 17;
 // Human-facing build tag shown in Settings and stamped into every export legend.
 // BUMP THIS TOGETHER WITH sw.js VERSION on every deploy — a stale tag is how a
 // rolled-back build went unnoticed for two days.
-const APP_VERSION = 'v107';
+const APP_VERSION = 'v108';
 
 // ---- Today layout (v96): user-controlled section order + visibility + rooms
 // preset. Defined BEFORE loadState() so ensureShape's defensive guard can read the
@@ -3583,10 +3583,113 @@ function handleActionEdit() {
 
 // ---------------- Next 3 days (Today tab) ----------------
 // One vertical section: labeled day groups (Today | Tomorrow | short weekday),
-// each with its dated to-dos/events beneath, "Nothing" when empty. Someday
-// items (date === null) never appear. Today's rows are tappable (open the
-// action sheet, mirroring the old today-list); the other two days are
-// read-only. All three groups always render — an empty day is information.
+// each with its dated to-dos/events beneath. Someday items (date === null)
+// never appear. Today's rows are tappable (open the action sheet, mirroring the
+// old today-list); the other two days are read-only. All three groups always
+// render — an empty day is information.
+// v108 (Oct 31, after plans started adding deadlines, prep, and study blocks):
+// - each day opens with a strip of the waking day (8am to midnight): study
+//   blocks the planner added as blue capsules, his own events in graphite,
+//   what's due as a red mark at the day's end, and on today a "now" line with
+//   the part already gone faded. You see how full a day is before reading it.
+// - rows below use the same markers, in one order: due, all-day, timed by
+//   start, loose to-dos; finished things last and faded; titles up to 2 lines.
+// Study blocks are recognised by the planner's note ("(Plan: X. Movable.)"),
+// due items by high priority on a to-do. Nothing new is stored.
+const NEXT3_PLAN_BLOCK = /\(Plan: [^)]*Movable\.\)\s*$/;
+const NEXT3_START = 8 * 60, NEXT3_END = 24 * 60;   // the strip's window
+
+function next3Duration(hours) {
+  const m = Math.round((Number(hours) || 0) * 60);
+  if (m <= 0) return '';
+  const h = Math.floor(m / 60), r = m % 60;
+  return h && r ? `${h}h ${r}m` : h ? `${h}h` : `${r}m`;
+}
+
+function next3Min(hhmm) {
+  const [h, m] = String(hhmm || '').split(':').map(Number);
+  return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : null;
+}
+
+// [{ it, kind: 'due'|'allday'|'timed'|'todo', done, past, block, start, end }], in display order.
+function next3Rows(date, nowMin) {
+  const isToday = date === todayDate();
+  const rows = state.items
+    .filter(it => it.date && it.date === date)   // excludes someday (date null)
+    .map(it => {
+      const done = !!it.trackCompletion && state.completions.some(c => c.ref_id === it.id);
+      let kind;
+      if (it.trackCompletion) kind = it.priority === 'high' ? 'due' : 'todo';
+      else kind = it.time ? 'timed' : 'allday';
+      const start = kind === 'timed' ? next3Min(it.time) : null;
+      const end = start == null ? null : start + Math.max(15, Math.round((Number(it.duration) || 0) * 60));
+      const past = isToday && end != null && end <= nowMin;
+      const block = kind === 'timed' && NEXT3_PLAN_BLOCK.test(it.notes || '');
+      return { it, kind, done, past, block, start, end };
+    });
+  const rank = r => r.done ? 5 : ({ due: 0, allday: 1, timed: 2, todo: 3 })[r.kind];
+  return rows.sort((a, b) => rank(a) - rank(b)
+    || (a.it.time || '99:99').localeCompare(b.it.time || '99:99')
+    || (a.it.title || '').localeCompare(b.it.title || ''));
+}
+
+function next3Pct(min) {
+  const c = Math.min(NEXT3_END, Math.max(NEXT3_START, min));
+  return ((c - NEXT3_START) / (NEXT3_END - NEXT3_START) * 100).toFixed(2);
+}
+
+function next3StripHtml(rows, isToday, nowMin) {
+  const segs = rows.filter(r => r.kind === 'timed' && r.end > NEXT3_START && r.start < NEXT3_END).map(r => {
+    const left = next3Pct(r.start), right = next3Pct(r.end);
+    const cls = ['next3-seg', r.block ? 'next3-seg-block' : 'next3-seg-event'];
+    if (r.past) cls.push('next3-seg-past');
+    return `<span class="${cls.join(' ')}" style="left:${left}%;width:${Math.max(1.2, right - left).toFixed(2)}%"></span>`;
+  }).join('');
+  const due = rows.filter(r => r.kind === 'due');
+  const dueMark = due.length
+    ? `<span class="next3-due-mark${due.every(r => r.done) ? ' next3-due-mark-done' : ''}" title="${due.length} due"></span>`
+    : '';
+  const ticks = [12, 18].map(h => `<span class="next3-tick" style="left:${next3Pct(h * 60)}%"></span>`).join('');
+  let now = '';
+  if (isToday && nowMin > NEXT3_START) {
+    const at = next3Pct(nowMin);
+    now = `<span class="next3-gone" style="width:${at}%"></span>`
+        + (nowMin < NEXT3_END ? `<span class="next3-now" style="left:${at}%"></span>` : '');
+  }
+  const labels = isToday
+    ? `<div class="next3-scale" aria-hidden="true"><span style="left:0%">8a</span><span style="left:${next3Pct(720)}%">12p</span>`
+      + `<span style="left:${next3Pct(1080)}%">6p</span><span style="left:100%">12a</span></div>`
+    : '';
+  return `<div class="next3-strip" aria-hidden="true">${ticks}${segs}${now}${dueMark}</div>${labels}`;
+}
+
+function next3RowHtml(r, tappable) {
+  const it = r.it;
+  let title = it.title || '';
+  let when = '';
+  if (r.kind === 'due') {
+    when = 'Due';
+    title = title.replace(/\s+due$/i, '') || title;   // "Unit 3 Quiz due" sits under a Due label
+  } else if (r.kind === 'allday') {
+    when = 'All day';
+  } else if (r.kind === 'timed') {
+    when = fmt12(it.time);
+  }
+  const dur = r.kind === 'timed' ? next3Duration(it.duration) : '';
+  const marker = r.kind === 'timed' ? (r.block ? 'block' : 'event') : r.kind;
+  const cls = ['next3-row', `next3-k-${r.kind}`];
+  if (r.done) cls.push('next3-done');
+  if (r.past) cls.push('next3-past');
+  if (tappable) cls.push('next3-tappable');
+  const attrs = tappable ? ` data-kind="item" data-id="${it.id}" tabindex="0" role="button"` : '';
+  return `<div class="${cls.join(' ')}"${attrs}>`
+    + `<span class="next3-mark next3-mark-${marker}" aria-hidden="true"></span>`
+    + `<span class="next3-when">${escapeHtml(when)}</span>`
+    + `<span class="next3-item-title">${escapeHtml(title)}</span>`
+    + (dur ? `<span class="next3-dur">${dur}</span>` : '')
+    + `</div>`;
+}
+
 function renderThreeDayTimeline() {
   const wrap = document.getElementById('three-day-wrap');
   if (!wrap) return;
@@ -3596,27 +3699,26 @@ function renderThreeDayTimeline() {
   const days = [
     { date: d0, label: 'Today', tappable: true },
     { date: d1, label: 'Tomorrow', tappable: false },
-    { date: d2, label: parseYmd(d2).toLocaleDateString(undefined, { weekday: 'short' }), tappable: false }
+    { date: d2, label: parseYmd(d2).toLocaleDateString(undefined, { weekday: 'long' }), tappable: false }
   ];
+  const now = new Date();
+  const nowMin = now.getHours() * 60 + now.getMinutes();
 
   const dayHtml = (day) => {
-    const items = state.items
-      .filter(it => it.date && it.date === day.date)   // excludes someday (date null)
-      .slice()
-      .sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99')); // timed asc, untimed last
-    const rows = items.length
-      ? items.map(it => {
-          const t = it.time ? `<span class="next3-time">${escapeHtml(fmt12(it.time))}</span>` : '';
-          // Today's rows carry data-kind/data-id + tappable class; the other
-          // days render the same content with no handler and no affordance.
-          const attrs = day.tappable ? ` class="next3-row next3-tappable" data-kind="item" data-id="${it.id}"` : ` class="next3-row"`;
-          return `<div${attrs}>${t}<span class="next3-item-title">${escapeHtml(it.title)}</span></div>`;
-        }).join('')
-      : `<div class="next3-empty">Nothing</div>`;
+    const isToday = day.date === d0;
+    const rows = next3Rows(day.date, nowMin);
+    const dateText = parseYmd(day.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    const body = rows.length
+      ? `<div class="next3-rows">${rows.map(r => next3RowHtml(r, day.tappable)).join('')}</div>`
+      : `<div class="next3-empty">Nothing planned</div>`;
     return `
-      <div class="next3-day">
-        <div class="next3-day-label">${escapeHtml(day.label)}</div>
-        ${rows}
+      <div class="next3-day${isToday ? ' next3-today' : ''}">
+        <div class="next3-day-head">
+          <span class="next3-day-label">${escapeHtml(day.label)}</span>
+          <span class="next3-day-date">${escapeHtml(dateText)}</span>
+        </div>
+        ${next3StripHtml(rows, isToday, nowMin)}
+        ${body}
       </div>`;
   };
 
@@ -3650,6 +3752,9 @@ function renderThreeDayTimeline() {
   // Wire today's rows exactly as the old today-list did: tap -> action sheet.
   wrap.querySelectorAll('.next3-tappable').forEach(row => {
     row.addEventListener('click', () => openActionSheet(row.dataset.kind, row.dataset.id));
+    row.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openActionSheet(row.dataset.kind, row.dataset.id); }
+    });
   });
 
   // Header link + footer chips -> Upcoming; the undated chip also scrolls to the
@@ -3663,6 +3768,12 @@ function renderThreeDayTimeline() {
     });
   });
 }
+
+// The "now" line and what's already over move with the clock: redraw this one
+// card once a minute while the app is in front of him (cheap; no save, no sync).
+setInterval(() => {
+  if (document.visibilityState === 'visible') renderThreeDayTimeline();
+}, 60 * 1000);
 
 // Scroll the Upcoming view to the promoted Someday section. No-ops harmlessly
 // when the section is absent (0 undated -> it isn't rendered).
