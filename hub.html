@@ -311,6 +311,52 @@
   .hub-handoff::before { content: 'From a Claude chat'; display: block; margin-bottom: 2px; color: var(--accent); font-weight: 600; }
   .hub-handoff-dot { display: none; }
 
+  /* ---- Review cards (Oct 31) ---- */
+  .rv { width: 92%; }
+  .rv-updated { margin-left: 6px; font-size: 11px; font-weight: 700; color: #b86e00; background: rgba(255, 159, 10, 0.14); border-radius: 6px; padding: 1px 6px; }
+  .rv-sec { margin-top: 16px; }
+  .rv-sec-h { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+  .rv-sec-t { font-size: 13px; font-weight: 650; color: var(--text); }
+  .rv-sec-n { font-size: 12px; color: var(--muted); text-align: right; }
+  .rv-sec-n b { font-family: var(--font-mono); font-weight: 600; color: var(--text); }
+  .rv-grid { display: grid; grid-template-columns: 78px repeat(var(--cols), minmax(0, 1fr)) 36px; column-gap: 4px; row-gap: 5px; align-items: center; }
+  .rv-grid-long { column-gap: 2px; row-gap: 4px; }
+  .rv-day { font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary); text-align: center; white-space: nowrap; overflow: visible; }
+  .rv-grid-long .rv-day { text-align: left; }
+  .rv-lab { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rv-cnt { font-family: var(--font-mono); font-size: 11px; color: var(--muted); text-align: right; }
+  .rv-c { display: block; height: 16px; border-radius: 5px; }
+  .rv-grid-long .rv-c { height: 12px; border-radius: 3px; }
+  .rv-c-on { background: var(--n3-block); box-shadow: 0 1px 4px var(--n3-glow); }
+  .rv-c-open { background: var(--surface-inset); }
+  .rv-c-off { background: repeating-linear-gradient(135deg, var(--surface-inset) 0 2px, transparent 2px 5px); }
+  .rv-c-none { background: radial-gradient(circle, var(--text-tertiary) 1px, transparent 1.5px) center / 6px 6px; opacity: 0.6; }
+  .rv-key { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; font-size: 11px; color: var(--muted); }
+  .rv-key span { display: inline-flex; align-items: center; gap: 5px; }
+  .rv-key .rv-c { width: 12px; height: 9px; border-radius: 3px; }
+  .rv-svg { width: 100%; height: auto; display: block; overflow: visible; }
+  .rv-gridline { stroke: rgba(60, 60, 67, 0.08); }
+  .rv-axis { font-family: var(--font-mono); font-size: 8.5px; fill: rgba(60, 60, 67, 0.45); }
+  .rv-axis-left { text-anchor: start; }
+  .rv-zero { fill: rgba(60, 60, 67, 0.12); }
+  .rv-legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; font-size: 12px; color: var(--muted); }
+  .rv-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; }
+  .rv-plans { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+  .rv-plan { border: 1px solid var(--border); border-radius: 12px; padding: 8px 6px; text-align: center; }
+  .rv-plan b { display: block; font-family: var(--font-mono); font-size: 18px; color: var(--text); }
+  .rv-plan span { display: block; margin-top: 2px; font-size: 11px; line-height: 1.2; color: var(--muted); }
+  .rv-read { margin-top: 16px; background: var(--accent-soft); border-radius: 14px; padding: 10px 12px 12px; }
+  .rv-read .hub-sec-head { color: var(--accent); }
+  .rv-read p { margin: 6px 0 0; font-size: 14px; line-height: 1.45; }
+  .rv-asks { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .rv-ask {
+    font: inherit; font-size: 13px; font-weight: 600; color: var(--accent); cursor: pointer;
+    padding: 6px 11px; border-radius: 999px; background: var(--card); border: 1px solid var(--border);
+  }
+  .rv-ask:active { background: var(--surface-inset); }
+  .rv-ask:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .rv-thin { margin: 14px 0 0; font-size: 13px; color: var(--muted); }
+
   /* a new row rises in once; nothing else moves on its own */
   .hub-in { animation: hub-rise 0.28s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
   @keyframes hub-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
@@ -399,7 +445,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 const HUB_SESSION_KEY = 'agendaai_hub_session';   // { access_token, refresh_token, user_id, email }
 
 // `files` is dropped for the page's life if this Supabase doesn't have the column yet.
-let SELECT = 'select=id,created_at,role,body,buttons,ref_id,status,files';
+let SELECT = 'select=id,created_at,role,body,buttons,ref_id,status,files,data';
 const PAGE = 100;
 const POLL_LIMIT = 30;
 const MAX_LEN = 4000;
@@ -541,9 +587,11 @@ async function getRows(query) {
   try {
     return await get();
   } catch (e) {
-    if (e && e.code === '42703' && /files/.test(e.message || '') && SELECT.endsWith(',files')) {
-      SELECT = SELECT.slice(0, -',files'.length);
-      return await get();
+    // A Supabase without an optional column yet (sql/hub_messages.sql not rerun): read without it.
+    const col = e && e.code === '42703' && ['data', 'files'].find(c => new RegExp(`\\b${c}\\b`).test(e.message || '') && SELECT.includes(',' + c));
+    if (col) {
+      SELECT = SELECT.replace(',' + col, '');
+      return getRows(query);
     }
     throw e;
   }
@@ -720,6 +768,157 @@ function statHtml(kind, n, label) {
   return `<span class="hub-stat"><span class="hub-mark hub-mark-${kind}" aria-hidden="true"></span><b>${n}</b> ${escapeHtml(label)}</span>`;
 }
 
+
+// ---- Review cards (Oct 31): agentkit/review.py counts, this draws. Every value is checked here: numbers through
+// num(), text through escapeHtml, colors only from the app's own palette keys.
+const REVIEW_COLORS = { blue: '#0a84ff', purple: '#8a5ce0', green: '#34c759', amber: '#ff9f0a', teal: '#30b0c7', rose: '#ff2d55', other: '#aeaeb2' };
+const num = (v, d = 0) => (typeof v === 'number' && isFinite(v) ? v : d);
+const arr = v => (Array.isArray(v) ? v : []);
+function rvMins(m) { m = Math.round(num(m)); const h = Math.floor(m / 60), r = m % 60; return h && r ? `${h}h ${r}m` : h ? `${h}h` : `${r}m`; }
+function rvDay(ymd) { const d = new Date(String(ymd) + 'T12:00:00'); return isNaN(d) ? null : d; }
+
+function rvGrid(data) {
+  const days = arr(data.days).map(rvDay);
+  const n = days.length;
+  const long = n > 14;
+  let head = '<span></span>';
+  if (long) {
+    for (let i = 0; i < n; i++) {
+      if (!days[i] || (days[i].getDay() !== 0 && i !== 0)) continue;
+      let span = 1; while (i + span < n && days[i + span] && days[i + span].getDay() !== 0) span++;
+      head += `<span class="rv-day" style="grid-column: span ${span}">${span >= 5 && days[i] ? escapeHtml(days[i].toLocaleDateString('en-US', { month: 'short', day: 'numeric' })) : ''}</span>`;
+      i += span - 1;
+    }
+  } else {
+    head += days.map(d => `<span class="rv-day">${d ? escapeHtml(d.toLocaleDateString('en-US', { weekday: 'short' }).slice(0, 2)) : ''}</span>`).join('');
+  }
+  head += '<span></span>';
+  const rows = arr(data.blocks).map(b => {
+    const cells = String(b.cells || '').slice(0, n).padEnd(n, '.');
+    return `<span class="rv-lab">${escapeHtml(b.name)}</span>`
+      + [...cells].map(c => `<span class="rv-c rv-c-${c === '1' ? 'on' : c === '0' ? 'open' : c === '-' ? 'off' : 'none'}"></span>`).join('')
+      + `<span class="rv-cnt">${num(b.on)}/${num(b.due)}</span>`;
+  }).join('');
+  return `<div class="rv-grid${long ? ' rv-grid-long' : ''}" style="--cols:${n}">${head}${rows}</div>`
+    + '<div class="rv-key"><span><i class="rv-c rv-c-on"></i>checked</span><span><i class="rv-c rv-c-open"></i>open</span>'
+    + '<span><i class="rv-c rv-c-off"></i>not due</span><span><i class="rv-c rv-c-none"></i>tracker not used</span></div>';
+}
+
+function rvFocus(data) {
+  const f = data.focus || {};
+  const types = arr(f.types);
+  const days = arr(f.days);
+  const dates = arr(data.days).map(rvDay);
+  const W = 330, H = 88, long = days.length > 14, gap = long ? 2 : 7;
+  const bw = Math.max(2, (W - gap * (days.length - 1)) / Math.max(1, days.length));
+  const totals = days.map(d => arr(d).reduce((a, m) => a + num(m), 0));
+  const max = Math.max(60, ...totals);
+  let svg = `<svg class="rv-svg" viewBox="0 0 ${W} ${H + 14}" role="img" aria-label="Focus minutes by day">`;
+  for (const m of [60, 120, 180, 240]) {
+    if (m >= max) break;
+    const y = H - m / max * H;
+    svg += `<line x1="0" x2="${W}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}" class="rv-gridline"/><text x="${W}" y="${(y - 3).toFixed(1)}" text-anchor="end" class="rv-axis">${m / 60}h</text>`;
+  }
+  days.forEach((d, i) => {
+    const x = i * (bw + gap);
+    let y = H;
+    arr(d).forEach((m, t) => {
+      m = num(m);
+      if (m <= 0 || !types[t]) return;
+      const h = m / max * H;
+      y -= h;
+      svg += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="${long ? 1.5 : 4}" fill="${REVIEW_COLORS[types[t].color] || REVIEW_COLORS.blue}"/>`;
+    });
+    if (!totals[i]) svg += `<rect x="${x.toFixed(1)}" y="${H - 2}" width="${bw.toFixed(1)}" height="2" rx="1" class="rv-zero"/>`;
+    const dd = dates[i];
+    if (dd && (!long || dd.getDay() === 0)) {
+      const t = long ? dd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : dd.toLocaleDateString('en-US', { weekday: 'short' }).slice(0, 2);
+      svg += `<text x="${(x + bw / 2).toFixed(1)}" y="${H + 11}" text-anchor="middle" class="rv-axis">${escapeHtml(t)}</text>`;
+    }
+  });
+  svg += '</svg>';
+  const legend = types.map(t => `<span><i style="background:${REVIEW_COLORS[t.color] || REVIEW_COLORS.blue}"></i>${escapeHtml(t.name)}</span>`).join('');
+  return svg + `<div class="rv-legend">${legend}</div>`;
+}
+
+function rvHour(hhmm) {
+  const m = String(hhmm || '').match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const h = Number(m[1]) + Number(m[2]) / 60;
+  return h < 12 ? h + 24 : h;   // 1:10 AM -> 25.17, so a night reads left to right
+}
+function rvSleep(data) {
+  const s = data.sleep || {};
+  const nights = arr(s.nights);
+  const dates = arr(data.days).map(rvDay);
+  const long = nights.length > 14, rowH = long ? 7 : 14, W = 330, left = 30, w = W - left, A = 21, B = 35;
+  const X = h => left + (Math.min(B, Math.max(A, h)) - A) / (B - A) * w;
+  const H = nights.length * rowH;
+  let svg = `<svg class="rv-svg" viewBox="0 0 ${W} ${H + 14}" role="img" aria-label="Sleep by night">`;
+  for (const [lab, h] of [['10p', 22], ['12a', 24], ['2a', 26], ['4a', 28], ['6a', 30], ['8a', 32], ['10a', 34]]) {
+    svg += `<line x1="${X(h)}" x2="${X(h)}" y1="0" y2="${H}" class="rv-gridline"/><text x="${X(h)}" y="${H + 11}" text-anchor="middle" class="rv-axis">${lab}</text>`;
+  }
+  svg += '<defs><linearGradient id="rv-sl" x1="0" x2="1"><stop offset="0" stop-color="#5e5ce6"/><stop offset="1" stop-color="#30b0c7"/></linearGradient></defs>';
+  nights.forEach((n, i) => {
+    const y = i * rowH + 2, bar = rowH - (long ? 2.5 : 5);
+    const dd = dates[i];
+    if (dd && (!long || i % 7 === 0)) svg += `<text x="0" y="${y + bar - 1}" class="rv-axis rv-axis-left">${escapeHtml(long ? dd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : dd.toLocaleDateString('en-US', { weekday: 'short' }).slice(0, 2))}</text>`;
+    if (!n || typeof n !== 'object') return;
+    const hours = num(n.hours, null);
+    let a = rvHour(n.bed), b = rvHour(n.wake);
+    if (a == null && b != null && hours) a = b - hours;
+    if (b == null && a != null && hours) b = a + hours;
+    if (a == null || b == null || b <= a) return;
+    svg += `<rect x="${X(a).toFixed(1)}" y="${y}" width="${Math.max(2, X(b) - X(a)).toFixed(1)}" height="${bar}" rx="${bar / 2}" fill="url(#rv-sl)"/>`;
+    if (!long && hours) svg += `<text x="${(X(b) + 4).toFixed(1)}" y="${y + bar - 1}" class="rv-axis rv-axis-left">${hours}h</text>`;
+  });
+  return svg + '</svg>';
+}
+
+function renderReview(data, rowId) {
+  const kind = { week: 'Week in review', month: 'Month in review' }[data.kind] || 'Review';
+  const f = data.focus || {}, s = data.sleep || {}, t = data.todos || {}, p = data.plans;
+  const stats = [];
+  if (num(data.due)) stats.push(`<span class="hub-stat"><span class="hub-mark hub-mark-block" aria-hidden="true"></span><b>${num(data.checked)}</b> of ${num(data.due)} blocks</span>`);
+  if (num(f.sessions)) stats.push(`<span class="hub-stat"><span class="hub-mark hub-mark-event" aria-hidden="true"></span><b>${rvMins(f.minutes)}</b> focus</span>`);
+  if (num(s.typical_hours, null) != null) stats.push(`<span class="hub-stat"><b>${num(s.typical_hours)}h</b> typical night</span>`);
+  if (num(t.of)) stats.push(`<span class="hub-stat"><span class="hub-mark hub-mark-todo" aria-hidden="true"></span><b>${num(t.done)}</b> of ${num(t.of)} to-dos</span>`);
+  let html = `<div class="hub-recap hub-recap-plan rv"><div class="hub-recap-head">`
+    + `<span class="hub-recap-kind">${kind}${data.updated ? ' <span class="rv-updated">Updated</span>' : ''}</span>`
+    + `<span class="hub-recap-title">${escapeHtml(data.label || '')}</span>`
+    + (stats.length ? `<div class="hub-stats">${stats.join('')}</div>` : '') + '</div>';
+  if (arr(data.blocks).length) {
+    html += `<section class="rv-sec"><div class="rv-sec-h"><span class="rv-sec-t">Tracker</span>`
+      + `<span class="rv-sec-n"><b>${num(data.checked)}</b> of <b>${num(data.due)}</b> due, ${num(data.tracked_days)} day${num(data.tracked_days) === 1 ? '' : 's'} tracked</span></div>${rvGrid(data)}</section>`;
+  }
+  if (num(f.sessions)) {
+    html += `<section class="rv-sec"><div class="rv-sec-h"><span class="rv-sec-t">Focus by day</span>`
+      + `<span class="rv-sec-n"><b>${rvMins(f.minutes)}</b> in <b>${num(f.sessions)}</b> session${num(f.sessions) === 1 ? '' : 's'}</span></div>${rvFocus(data)}</section>`;
+  }
+  if (num(s.count)) {
+    html += `<section class="rv-sec"><div class="rv-sec-h"><span class="rv-sec-t">Sleep</span>`
+      + `<span class="rv-sec-n">${s.typical_bed ? `bed around <b>${escapeHtml(s.typical_bed)}</b>` : `${num(s.count)} nights`}</span></div>${rvSleep(data)}</section>`;
+  }
+  if (p && typeof p === 'object') {
+    const tile = (n, l) => `<div class="rv-plan"><b>${num(n)}</b><span>${l}</span></div>`;
+    html += `<section class="rv-sec"><div class="rv-sec-h"><span class="rv-sec-t">Planner study blocks</span></div><div class="rv-plans">`
+      + tile(p.on_time, 'done at their time') + tile(p.moved_done, 'moved, then done') + tile(p.let_go, 'let go')
+      + (num(p.prep) ? tile(p.prep_done, `of ${num(p.prep)} prep done`) : tile(p.other_time, 'done another time')) + '</div></section>';
+  }
+  const read = arr(data.read).filter(x => typeof x === 'string' && x.trim());
+  if (data.thin) {
+    html += `<p class="rv-thin">Not much was logged in this stretch (${num(data.used_days)} day${num(data.used_days) === 1 ? '' : 's'} used), so there's no read.</p>`;
+  } else if (read.length) {
+    html += `<div class="rv-read"><div class="hub-sec-head">Claude's read</div>${read.map(r => `<p>${formatAssistant(r)}</p>`).join('')}`;
+    const asks = arr(data.asks).filter(x => typeof x === 'string' && x.trim()).slice(0, 3);
+    if (asks.length) html += `<div class="rv-asks">${asks.map(q => `<button type="button" class="rv-ask" data-ask="${escapeHtml(q)}">${escapeHtml(q)}</button>`).join('')}</div>`;
+    html += '</div>';
+  } else {
+    html += `<p class="rv-thin">The counts are in, but Claude's read didn't come this time. Ask about any of it.</p>`;
+  }
+  return html + '</div>';
+}
+
 function lines0(body) { return String(body).split('\n')[0]; }
 
 // /today (agentkit today_text): "Saturday, Oct 31", then "Events: ...", "To-dos: ...", "Tracker: 5 of 9 checked.", ...
@@ -775,6 +974,9 @@ function renderMemory(body) {
 
 // An assistant row: a plain reply, or a recap with a header.
 function renderAssistant(row) {
+  if (row.data && typeof row.data === 'object' && row.data.type === 'review') {
+    try { return renderReview(row.data, row.id); } catch (e) { /* a card it can't draw falls back to the text */ }
+  }
   const body = String(row.body == null ? '' : row.body);
   if (TODAY_RE.test(lines0(body))) return renderToday(body);
   if (/^Undid #\d+:$/.test(lines0(body))) {
@@ -1044,7 +1246,7 @@ const reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced
 function render({ forceBottom = false, keepTopAnchor = false } = {}) {
   if (bottomNext && !keepTopAnchor) { forceBottom = true; bottomNext = false; }
   const rows = sortedRows();
-  const sig = JSON.stringify([hasOlder, loadingOlder, showEarlier, floorId, [...cardState], [...expanded], rows.map(r => [r.id, r.status, r.buttons, r.body])]);
+  const sig = JSON.stringify([hasOlder, loadingOlder, showEarlier, floorId, [...cardState], [...expanded], rows.map(r => [r.id, r.status, r.buttons, r.body, r.data ? 1 : 0])]);
   updateWorking();
   if (sig === lastSig && !forceBottom) return;
   lastSig = sig;
@@ -1479,6 +1681,8 @@ document.querySelector('.hub-quick').addEventListener('click', (e) => {
 listEl.addEventListener('click', (e) => {
   if (e.target.closest('#load-older')) { loadOlder(); return; }
   if (e.target.closest('#show-earlier')) { showEarlierMessages(); return; }
+  const q = e.target.closest('[data-ask]');
+  if (q) { sendText(q.dataset.ask, false); return; }
   const x = e.target.closest('[data-expand]');
   if (x) {
     const k = x.dataset.expand;
