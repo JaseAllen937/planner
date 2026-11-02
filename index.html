@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Agenda">
-<meta name="theme-color" content="#f2f2f7">
+<meta name="theme-color" content="#f6f6f7">
 <link rel="manifest" href="./manifest.json">
 <link rel="apple-touch-icon" href="./icons/icon-192.png">
 <title>AgendaAI</title>
@@ -19,17 +19,17 @@
 
 <header class="topbar">
   <div class="topbar-inner">
-    <div>
-      <h1>Agenda</h1>
+    <div class="topbar-titles">
       <div class="date" id="topbar-date"></div>
+      <h1 id="topbar-title">Today</h1>
     </div>
     <div class="topbar-actions">
-      <a class="btn" id="hub-link" href="./hub.html" aria-label="Open the Hub chat">Hub</a>
+      <a class="topbar-btn" id="hub-link" href="./hub.html" aria-label="Open the Hub chat"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.2 5h13.6a1.6 1.6 0 0 1 1.6 1.6v8.8a1.6 1.6 0 0 1-1.6 1.6H11l-4.4 3.4V17H5.2a1.6 1.6 0 0 1-1.6-1.6V6.6A1.6 1.6 0 0 1 5.2 5z"/></svg><span>Hub</span></a>
       <button type="button" class="off-track-chip" id="off-track-chip" aria-label="Add an off-track moment">
-        <span class="off-track-chip-label">off-track</span>
+        <span class="off-track-chip-label">Off-track</span>
         <span class="off-track-chip-count" id="off-track-chip-count">0</span>
       </button>
-      <button class="btn btn-primary" id="add-btn">+ Add</button>
+      <button class="topbar-add" id="add-btn" aria-label="Add"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
     </div>
   </div>
 </header>
@@ -60,15 +60,26 @@
   </section>
 
   <section class="tab-view" id="tab-calendar">
-    <div class="calendar-header">
-      <button class="calendar-nav-btn" id="cal-prev" aria-label="Previous month">&lsaquo;</button>
-      <h2 id="cal-month-label">—</h2>
-      <button class="calendar-nav-btn" id="cal-next" aria-label="Next month">&rsaquo;</button>
+    <div class="calendar-card">
+      <div class="calendar-header">
+        <h2 id="cal-month-label">—</h2>
+        <div class="calendar-nav">
+          <button type="button" class="calendar-today-btn" id="cal-today">Today</button>
+          <button type="button" class="calendar-nav-btn" id="cal-prev" aria-label="Previous month"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 5.5 8 12l6.5 6.5"/></svg></button>
+          <button type="button" class="calendar-nav-btn" id="cal-next" aria-label="Next month"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 5.5 16 12l-6.5 6.5"/></svg></button>
+        </div>
+      </div>
+      <div class="calendar-weekdays" aria-hidden="true">
+        <span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span>
+      </div>
+      <div class="calendar-grid" id="cal-grid"></div>
+      <div class="calendar-key" aria-hidden="true">
+        <span><i class="cal-dot cal-dot-due"></i>Due</span>
+        <span><i class="cal-dot cal-dot-block"></i>Study block</span>
+        <span><i class="cal-dot cal-dot-event"></i>Event</span>
+        <span><i class="cal-dot cal-dot-todo"></i>To-do</span>
+      </div>
     </div>
-    <div class="calendar-weekdays">
-      <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
-    </div>
-    <div class="calendar-grid" id="cal-grid"></div>
     <div class="calendar-detail" id="cal-detail"></div>
   </section>
 
@@ -210,11 +221,11 @@
 </main>
 
 <nav class="botnav">
-  <button data-tab="today" class="active">Today</button>
-  <button data-tab="upcoming">Upcoming</button>
-  <button data-tab="calendar">Calendar</button>
-  <button data-tab="history">Stats</button>
-  <button data-tab="settings">Settings</button>
+  <button data-tab="today" class="active"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10.4 12 4l8 6.4V19a1 1 0 0 1-1 1h-4.6v-5.6H9.6V20H5a1 1 0 0 1-1-1z"/></svg><span>Today</span></button>
+  <button data-tab="upcoming"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 6.5H20M9.5 12H20M9.5 17.5H20"/><path d="M4.2 6.5h.1M4.2 12h.1M4.2 17.5h.1" class="ico-dot"/></svg><span>Upcoming</span></button>
+  <button data-tab="calendar"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.6" y="5" width="16.8" height="15.4" rx="2.6"/><path d="M3.6 10h16.8M8.2 3v4M15.8 3v4"/></svg><span>Calendar</span></button>
+  <button data-tab="history"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 20v-7M12 20V5M18.5 20v-10"/></svg><span>Stats</span></button>
+  <button data-tab="settings"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9.5M18 7h2M4 17h3.5M12 17h8"/><circle cx="15.8" cy="7" r="2.2"/><circle cx="9.8" cy="17" r="2.2"/></svg><span>Settings</span></button>
 </nav>
 
 <div class="modal modal-blocking" id="morning-modal" role="dialog" aria-modal="true">
@@ -441,7 +452,7 @@
 <div class="modal vault-overlay-mode" id="franklin-overlay" role="dialog" aria-modal="true" aria-label="Benjamin Franklin">
   <div class="vault-overlay-panel">
     <div class="vault-header">
-      <h2 class="vault-title">🎩 Benjamin Franklin</h2>
+      <h2 class="vault-title">Benjamin Franklin</h2>
       <div class="space-header-actions">
         <button type="button" class="btn franklin-edit-btn" id="franklin-edit-btn" aria-pressed="false" aria-label="Edit tallies and virtues">Edit</button>
         <button type="button" class="btn vault-close-btn" id="franklin-close-btn" aria-label="Close Benjamin Franklin">Done</button>
@@ -460,7 +471,7 @@
 <div class="modal vault-overlay-mode" id="code-overlay" role="dialog" aria-modal="true" aria-label="My Code">
   <div class="vault-overlay-panel">
     <div class="vault-header">
-      <h2 class="vault-title">📜 My Code</h2>
+      <h2 class="vault-title">My Code</h2>
       <div class="code-header-actions">
         <button type="button" class="btn code-journal-btn" id="code-journal-btn" aria-label="Open journal">📓</button>
         <button type="button" class="btn vault-close-btn" id="code-close-btn" aria-label="Close My Code">Done</button>
@@ -480,7 +491,7 @@
   <div class="vault-overlay-panel">
     <div class="vault-header">
       <button type="button" class="btn goals-back-btn" id="goals-back-btn" aria-label="Back to goals" hidden>‹ Goals</button>
-      <h2 class="vault-title" id="goals-title">🎯 Goals</h2>
+      <h2 class="vault-title" id="goals-title">Goals</h2>
       <button type="button" class="btn vault-close-btn" id="goals-close-btn" aria-label="Close Goals">Done</button>
     </div>
     <div class="vault-body" id="goals-body"></div>
@@ -497,7 +508,7 @@
   <div class="vault-overlay-panel">
     <div class="vault-header">
       <button type="button" class="btn people-back-btn" id="people-back-btn" aria-label="Back to people" hidden>‹ People</button>
-      <h2 class="vault-title" id="people-title">👥 People</h2>
+      <h2 class="vault-title" id="people-title">People</h2>
       <button type="button" class="btn vault-close-btn" id="people-close-btn" aria-label="Close People">Done</button>
     </div>
     <div class="vault-body" id="people-body"></div>
@@ -513,7 +524,7 @@
 <div class="modal vault-overlay-mode" id="review-overlay" role="dialog" aria-modal="true" aria-label="Sunday review">
   <div class="vault-overlay-panel">
     <div class="vault-header">
-      <h2 class="vault-title" id="review-title">🔁 Sunday review</h2>
+      <h2 class="vault-title" id="review-title">Sunday review</h2>
       <button type="button" class="btn vault-close-btn" id="review-close-btn" aria-label="Close review">Done</button>
     </div>
     <div class="vault-body" id="review-body"></div>
@@ -525,7 +536,7 @@
   <div class="vault-overlay-panel">
     <div class="vault-header">
       <button type="button" class="btn habits-back-btn" id="habits-back-btn" aria-label="Back to habit list" hidden>‹ Back</button>
-      <h2 class="vault-title" id="habits-title">✓ Habits</h2>
+      <h2 class="vault-title" id="habits-title">Habits</h2>
       <button type="button" class="btn vault-close-btn" id="habits-close-btn" aria-label="Close Habits">Done</button>
     </div>
     <div class="vault-body" id="habits-body"></div>
@@ -537,7 +548,7 @@
 <div class="modal vault-overlay-mode" id="sleepstats-overlay" role="dialog" aria-modal="true" aria-label="Sleep stats">
   <div class="vault-overlay-panel">
     <div class="vault-header">
-      <h2 class="vault-title">☾ Sleep</h2>
+      <h2 class="vault-title">Sleep</h2>
       <button type="button" class="btn vault-close-btn" id="sleepstats-close-btn" aria-label="Close Sleep">Done</button>
     </div>
     <div class="vault-body" id="sleepstats-body"><div id="sleep-stats-wrap"></div></div>
@@ -550,7 +561,7 @@
   <div class="vault-overlay-panel">
     <div class="vault-header">
       <button type="button" class="btn habits-back-btn" id="frankstats-back-btn" aria-label="Back to Franklin" hidden>‹ Back</button>
-      <h2 class="vault-title" id="frankstats-title">🔥 Franklin</h2>
+      <h2 class="vault-title" id="frankstats-title">Franklin</h2>
       <button type="button" class="btn vault-close-btn" id="frankstats-close-btn" aria-label="Close Franklin stats">Done</button>
     </div>
     <div class="vault-body" id="frankstats-body"></div>
@@ -561,7 +572,7 @@
 <div class="modal vault-overlay-mode" id="focusstats-overlay" role="dialog" aria-modal="true" aria-label="Focus stats">
   <div class="vault-overlay-panel">
     <div class="vault-header">
-      <h2 class="vault-title">◎ Focus</h2>
+      <h2 class="vault-title">Focus</h2>
       <button type="button" class="btn vault-close-btn" id="focusstats-close-btn" aria-label="Close Focus">Done</button>
     </div>
     <div class="vault-body" id="focusstats-body"><div id="focus-stats-wrap"></div></div>
@@ -573,7 +584,7 @@
 <div class="modal vault-overlay-mode" id="journalstats-overlay" role="dialog" aria-modal="true" aria-label="Journal">
   <div class="vault-overlay-panel">
     <div class="vault-header">
-      <h2 class="vault-title">📓 Journal</h2>
+      <h2 class="vault-title">Journal</h2>
       <button type="button" class="btn vault-close-btn" id="journalstats-close-btn" aria-label="Close Journal">Done</button>
     </div>
     <div class="vault-body" id="journalstats-body"></div>
@@ -882,7 +893,28 @@ const SCHEMA_VERSION = 17;
 // Human-facing build tag shown in Settings and stamped into every export legend.
 // BUMP THIS TOGETHER WITH sw.js VERSION on every deploy — a stale tag is how a
 // rolled-back build went unnoticed for two days.
-const APP_VERSION = 'v108';
+const APP_VERSION = 'v109';
+
+// v109 (Nov 2, "it looks like AI slop ... modern and readable"): one line-icon set
+// instead of emoji tiles. Fixed paths only; nothing stored is ever put in here.
+const ICONS = {
+  chevron: '<path d="M9.5 5.5 16 12l-6.5 6.5"/>',
+  check:   '<path d="M5.5 12.5 10 17l8.5-9.5"/>',
+  play:    '<path d="M8.5 5.8v12.4a.6.6 0 0 0 .9.5l9.8-6.2a.6.6 0 0 0 0-1L9.4 5.3a.6.6 0 0 0-.9.5z" class="ico-fill"/>',
+  plus:    '<path d="M12 5v14M5 12h14"/>',
+  vault:   '<path d="M3.8 9.4 12 4.2l8.2 5.2"/><path d="M6 10.5v7M10 10.5v7M14 10.5v7M18 10.5v7M3.8 20h16.4"/>',
+  franklin:'<path d="M12 4.5v15M8 19.5h8M5 7.5h14"/><path d="M5 7.5 2.8 13a2.3 2.3 0 0 0 4.4 0zM19 7.5 16.8 13a2.3 2.3 0 0 0 4.4 0z"/>',
+  goals:   '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><path d="M12 12h.01" class="ico-dot"/>',
+  people:  '<circle cx="9" cy="8.6" r="3.2"/><path d="M3.4 19.5c.7-3.1 2.9-4.9 5.6-4.9s4.9 1.8 5.6 4.9"/><path d="M15.6 5.7a3 3 0 0 1 0 5.8M17.6 14.9c1.6.7 2.6 2.2 3 4.6"/>',
+  code:    '<path d="M4 5.6c0-.9.7-1.6 1.6-1.6H11v16H5.6c-.9 0-1.6-.7-1.6-1.6zM20 5.6c0-.9-.7-1.6-1.6-1.6H13v16h5.4c.9 0 1.6-.7 1.6-1.6z"/>',
+  review:  '<path d="M19.4 12a7.4 7.4 0 1 1-2.2-5.3"/><path d="M19.6 4.6v3.9h-3.9"/>',
+  habits:  '<rect x="4" y="4" width="16" height="16" rx="4"/><path d="m8.2 12.2 2.6 2.6 5-5.4"/>',
+  sleep:   '<path d="M19.5 14.6A7.6 7.6 0 0 1 9.4 4.5a7.6 7.6 0 1 0 10.1 10.1z"/>',
+  focus:   '<circle cx="12" cy="12" r="8"/><path d="M12 7.8V12l2.8 1.8"/>',
+  journal: '<path d="M6.5 3.8h10.2c.9 0 1.6.7 1.6 1.6v13.2c0 .9-.7 1.6-1.6 1.6H6.5zM6.5 3.8v16.4M10 8.5h5"/>',
+};
+function icon(name) { return `<svg class="ico ico-${name}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ''}</svg>`; }
+const TAB_TITLES = { today: 'Today', upcoming: 'Upcoming', calendar: 'Calendar', history: 'Stats', settings: 'Settings' };
 
 // ---- Today layout (v96): user-controlled section order + visibility + rooms
 // preset. Defined BEFORE loadState() so ensureShape's defensive guard can read the
@@ -2217,7 +2249,7 @@ function renderPractisingCard() {
       </div>` : '';
   wrap.innerHTML = `
     <div class="prac-card">
-      <div class="prac-label">PRACTISING</div>
+      <div class="prac-label">Practising</div>
       <div class="prac-name">${escapeHtml(virtue.name)}</div>
       ${def ? `<div class="prac-def">${escapeHtml(def)}</div>` : ''}
       <div class="prac-foot">
@@ -2269,11 +2301,13 @@ function renderFocusCard() {
       </div>`;
 
   wrap.innerHTML = `
-    <div class="focus-card" id="focus-card">
-      <div class="focus-label">Focus</div>
+    <div class="focus-card card${active ? ' focus-running' : ''}" id="focus-card">
+      <div class="card-head">
+        <span class="card-title">Focus</span>
+      </div>
       <div class="focus-summary">${escapeHtml(summary)}</div>
       ${typePicker}
-      <button type="button" class="btn btn-primary focus-start-btn" id="focus-start-btn">${escapeHtml(btnLabel)}</button>
+      <button type="button" class="btn btn-primary focus-start-btn" id="focus-start-btn">${icon('play')}${escapeHtml(btnLabel)}</button>
     </div>
   `;
   document.getElementById('focus-start-btn').addEventListener('click', () => {
@@ -3597,7 +3631,6 @@ function handleActionEdit() {
 // Study blocks are recognised by the planner's note ("(Plan: X. Movable.)"),
 // due items by high priority on a to-do. Nothing new is stored.
 const NEXT3_PLAN_BLOCK = /\(Plan: [^)]*Movable\.\)\s*$/;
-const NEXT3_START = 8 * 60, NEXT3_END = 24 * 60;   // the strip's window
 
 function next3Duration(hours) {
   const m = Math.round((Number(hours) || 0) * 60);
@@ -3633,61 +3666,86 @@ function next3Rows(date, nowMin) {
     || (a.it.title || '').localeCompare(b.it.title || ''));
 }
 
-function next3Pct(min) {
-  const c = Math.min(NEXT3_END, Math.max(NEXT3_START, min));
-  return ((c - NEXT3_START) / (NEXT3_END - NEXT3_START) * 100).toFixed(2);
+// v109: the 8am-midnight strip read as decoration, not information. Each day is
+// now a plain agenda: a time column, a colored rail (study block = accent, event =
+// grey, due = red), the title, and one quiet meta line. On today a "Now" line sits
+// where the clock is, or the running event is highlighted.
+function agClock(hhmm) {
+  const m = next3Min(hhmm);
+  if (m == null) return { t: '', ap: '' };
+  const h = Math.floor(m / 60), mm = m % 60;
+  return { t: `${((h + 11) % 12) + 1}:${String(mm).padStart(2, '0')}`, ap: h >= 12 ? 'PM' : 'AM' };
 }
 
-function next3StripHtml(rows, isToday, nowMin) {
-  const segs = rows.filter(r => r.kind === 'timed' && r.end > NEXT3_START && r.start < NEXT3_END).map(r => {
-    const left = next3Pct(r.start), right = next3Pct(r.end);
-    const cls = ['next3-seg', r.block ? 'next3-seg-block' : 'next3-seg-event'];
-    if (r.past) cls.push('next3-seg-past');
-    return `<span class="${cls.join(' ')}" style="left:${left}%;width:${Math.max(1.2, right - left).toFixed(2)}%"></span>`;
-  }).join('');
-  const due = rows.filter(r => r.kind === 'due');
-  const dueMark = due.length
-    ? `<span class="next3-due-mark${due.every(r => r.done) ? ' next3-due-mark-done' : ''}" title="${due.length} due"></span>`
-    : '';
-  const ticks = [12, 18].map(h => `<span class="next3-tick" style="left:${next3Pct(h * 60)}%"></span>`).join('');
-  let now = '';
-  if (isToday && nowMin > NEXT3_START) {
-    const at = next3Pct(nowMin);
-    now = `<span class="next3-gone" style="width:${at}%"></span>`
-        + (nowMin < NEXT3_END ? `<span class="next3-now" style="left:${at}%"></span>` : '');
+function agNowText(nowMin) {
+  const h = Math.floor(nowMin / 60), m = nowMin % 60;
+  return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`;
+}
+
+// Mark the running event and return where the "Now" line goes (-1 = none).
+function agNowIndex(rows, nowMin) {
+  let current = false;
+  for (const r of rows) {
+    if (r.kind === 'timed' && r.start != null && r.start <= nowMin && nowMin < r.end) { r.current = true; current = true; }
   }
-  const labels = isToday
-    ? `<div class="next3-scale" aria-hidden="true"><span style="left:0%">8a</span><span style="left:${next3Pct(720)}%">12p</span>`
-      + `<span style="left:${next3Pct(1080)}%">6p</span><span style="left:100%">12a</span></div>`
-    : '';
-  return `<div class="next3-strip" aria-hidden="true">${ticks}${segs}${now}${dueMark}</div>${labels}`;
+  if (current) return -1;
+  const next = rows.findIndex(r => r.kind === 'timed' && r.start != null && r.start > nowMin);
+  if (next >= 0) return next;
+  let last = -1;
+  rows.forEach((r, i) => { if (r.kind === 'timed') last = i; });
+  return last >= 0 ? last + 1 : -1;
 }
 
-function next3RowHtml(r, tappable) {
+function agRowHtml(r, opts) {
   const it = r.it;
+  const o = opts || {};
   let title = it.title || '';
-  let when = '';
-  if (r.kind === 'due') {
-    when = 'Due';
-    title = title.replace(/\s+due$/i, '') || title;   // "Unit 3 Quiz due" sits under a Due label
+  if (r.kind === 'due') title = title.replace(/\s+due$/i, '') || title;   // "Unit 3 Quiz due" sits under a Due label
+  let when;
+  if (r.kind === 'timed') {
+    const c = agClock(it.time);
+    when = `<span class="ag-t">${c.t}</span><span class="ag-ap">${c.ap}</span>`;
+  } else if (r.kind === 'due') {
+    when = `<span class="ag-due">Due</span>`;
   } else if (r.kind === 'allday') {
-    when = 'All day';
-  } else if (r.kind === 'timed') {
-    when = fmt12(it.time);
+    when = `<span class="ag-allday">All day</span>`;
+  } else {
+    when = `<span class="ag-check${r.done ? ' on' : ''}">${r.done ? icon('check') : ''}</span>`;
   }
-  const dur = r.kind === 'timed' ? next3Duration(it.duration) : '';
-  const marker = r.kind === 'timed' ? (r.block ? 'block' : 'event') : r.kind;
-  const cls = ['next3-row', `next3-k-${r.kind}`];
-  if (r.done) cls.push('next3-done');
-  if (r.past) cls.push('next3-past');
-  if (tappable) cls.push('next3-tappable');
-  const attrs = tappable ? ` data-kind="item" data-id="${it.id}" tabindex="0" role="button"` : '';
+  const meta = [];
+  if (r.current) meta.push('<span class="ag-live">Now</span>');
+  if (r.kind === 'timed') {
+    const dur = next3Duration(it.duration);
+    if (dur) meta.push(escapeHtml(dur));
+    if (r.block) meta.push('<span class="ag-tag">Study block</span>');
+  }
+  if (r.done) meta.push('Done');
+  else if (r.skipped) meta.push('Skipped');
+  if (o.label) meta.push(escapeHtml(o.label));
+  const cls = ['ag-row', `ag-k-${r.kind}`];
+  if (r.block) cls.push('ag-block');
+  if (r.done) cls.push('ag-done');
+  if (r.skipped) cls.push('ag-skipped');
+  if (r.past) cls.push('ag-past');
+  if (r.current) cls.push('ag-current');
+  if (o.tappable) cls.push('ag-tappable');
+  const attrs = o.tappable ? ` data-kind="${o.kind || 'item'}" data-id="${escapeHtml(String(it.id))}" tabindex="0" role="button"` : '';
   return `<div class="${cls.join(' ')}"${attrs}>`
-    + `<span class="next3-mark next3-mark-${marker}" aria-hidden="true"></span>`
-    + `<span class="next3-when">${escapeHtml(when)}</span>`
-    + `<span class="next3-item-title">${escapeHtml(title)}</span>`
-    + (dur ? `<span class="next3-dur">${dur}</span>` : '')
-    + `</div>`;
+    + `<span class="ag-when">${when}</span>`
+    + `<span class="ag-rail" aria-hidden="true"></span>`
+    + `<span class="ag-main"><span class="ag-title">${escapeHtml(title)}</span>`
+    + (meta.length ? `<span class="ag-meta">${meta.join('<span class="ag-sep">·</span>')}</span>` : '')
+    + `</span></div>`;
+}
+
+// Rows for one day with the Now line placed (today only).
+function agListHtml(rows, isToday, nowMin, opts) {
+  const at = isToday ? agNowIndex(rows, nowMin) : -1;
+  const now = `<div class="ag-now" aria-label="Now"><span>${agNowText(nowMin)}</span></div>`;
+  let html = '';
+  rows.forEach((r, i) => { if (i === at) html += now; html += agRowHtml(r, opts); });
+  if (at === rows.length) html += now;
+  return html;
 }
 
 function renderThreeDayTimeline() {
@@ -3707,22 +3765,24 @@ function renderThreeDayTimeline() {
   const dayHtml = (day) => {
     const isToday = day.date === d0;
     const rows = next3Rows(day.date, nowMin);
-    const dateText = parseYmd(day.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    const dateText = parseYmd(day.date).toLocaleDateString(undefined,
+      day.label === 'Today' || day.label === 'Tomorrow' ? { weekday: 'short', month: 'short', day: 'numeric' } : { month: 'short', day: 'numeric' });
+    const open = rows.filter(r => !r.done).length;
     const body = rows.length
-      ? `<div class="next3-rows">${rows.map(r => next3RowHtml(r, day.tappable)).join('')}</div>`
-      : `<div class="next3-empty">Nothing planned</div>`;
+      ? `<div class="ag-list">${agListHtml(rows, isToday, nowMin, { tappable: day.tappable })}</div>`
+      : `<div class="ag-empty">Nothing planned</div>`;
     return `
-      <div class="next3-day${isToday ? ' next3-today' : ''}">
-        <div class="next3-day-head">
-          <span class="next3-day-label">${escapeHtml(day.label)}</span>
-          <span class="next3-day-date">${escapeHtml(dateText)}</span>
+      <div class="ag-day${isToday ? ' ag-today' : ''}">
+        <div class="ag-day-head">
+          <span class="ag-day-label">${escapeHtml(day.label)}</span>
+          <span class="ag-day-date">${escapeHtml(dateText)}</span>
+          ${rows.length ? `<span class="ag-day-count">${open ? `${open} ${open === 1 ? 'thing' : 'things'}` : 'All done'}</span>` : ''}
         </div>
-        ${next3StripHtml(rows, isToday, nowMin)}
         ${body}
       </div>`;
   };
 
-  // Footer chip counts — derived fresh from the SAME source Upcoming uses
+  // Footer counts — derived fresh from the SAME source Upcoming uses
   // (groupUpcoming already drops completed to-dos, so these are OPEN items).
   const g = groupUpcoming();
   const undatedCount = g.someday.length;                       // OPEN items with no date
@@ -3731,33 +3791,27 @@ function renderThreeDayTimeline() {
     n + g[k].filter(it => it.date && it.date >= d0 && it.date <= horizon).length, 0);
 
   wrap.innerHTML = `
-    <div class="next3-card">
-      <div class="next3-head">
-        <span class="next3-title">Next 3 days</span>
-        <button type="button" class="next3-seeall" data-next3="seeall">See all ›</button>
+    <div class="next3-card card">
+      <div class="card-head">
+        <span class="card-title">Next 3 days</span>
+        <button type="button" class="card-link" data-next3="seeall">Upcoming${icon('chevron')}</button>
       </div>
       ${days.map(dayHtml).join('')}
-      <div class="next3-footer">
-        <button type="button" class="next3-chip next3-chip-undated${undatedCount ? '' : ' next3-chip-empty'}" data-next3="undated">
-          <span class="next3-chip-count">${undatedCount}</span>
-          <span class="next3-chip-label">undated tasks</span>
-        </button>
-        <button type="button" class="next3-chip next3-chip-next14" data-next3="next14">
-          <span class="next3-chip-count">${next14Count}</span>
-          <span class="next3-chip-label">next 14 days</span>
-        </button>
+      <div class="ag-foot">
+        <button type="button" class="ag-foot-btn" data-next3="next14"><b>${next14Count}</b> in the next 2 weeks</button>
+        ${undatedCount ? `<button type="button" class="ag-foot-btn" data-next3="undated"><b>${undatedCount}</b> without a date</button>` : ''}
       </div>
     </div>`;
 
-  // Wire today's rows exactly as the old today-list did: tap -> action sheet.
-  wrap.querySelectorAll('.next3-tappable').forEach(row => {
+  // Today's rows open the action sheet, exactly as the old today-list did.
+  wrap.querySelectorAll('.ag-tappable').forEach(row => {
     row.addEventListener('click', () => openActionSheet(row.dataset.kind, row.dataset.id));
     row.addEventListener('keydown', e => {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openActionSheet(row.dataset.kind, row.dataset.id); }
     });
   });
 
-  // Header link + footer chips -> Upcoming; the undated chip also scrolls to the
+  // Header link + footer -> Upcoming; "without a date" also scrolls to the
   // Someday section AFTER the tab is laid out (visibility-safe, sleep-strip pattern).
   wrap.querySelectorAll('[data-next3]').forEach(el => {
     el.addEventListener('click', () => {
@@ -4081,7 +4135,7 @@ function renderFranklinCard() {
   if (!wrap) return;
   wrap.innerHTML = `
     <button type="button" class="vault-entry-card vault-entry-square" id="franklin-entry-card" aria-label="Open Benjamin Franklin">
-      <span class="vault-entry-icon" aria-hidden="true">🎩</span>
+      <span class="vault-entry-icon" aria-hidden="true">${icon('franklin')}</span>
       <span class="vault-entry-title">Benjamin Franklin</span>
       <span class="vault-entry-sub">Virtues &amp; vices</span>
     </button>`;
@@ -4362,12 +4416,12 @@ function renderCodeCard() {
   if (!wrap) return;
   wrap.innerHTML = `
     <button type="button" class="vault-entry-card code-entry-primary" id="code-entry-card" aria-label="Open My Code">
-      <span class="vault-entry-icon" aria-hidden="true">📜</span>
+      <span class="vault-entry-icon" aria-hidden="true">${icon('code')}</span>
       <span class="vault-entry-text">
         <span class="vault-entry-title">My Code</span>
         <span class="vault-entry-sub">Rules, virtues &amp; journal</span>
       </span>
-      <span class="vault-entry-chev" aria-hidden="true">›</span>
+      <span class="vault-entry-chev" aria-hidden="true">${icon('chevron')}</span>
     </button>`;
   document.getElementById('code-entry-card').addEventListener('click', openCode);
 }
@@ -5076,7 +5130,7 @@ function dismissBanner() {
 
 function renderTopbar() {
   const d = new Date();
-  const opts = { weekday: 'long', month: 'long', day: 'numeric' };
+  const opts = { weekday: 'long', month: 'short', day: 'numeric' };
   document.getElementById('topbar-date').textContent = d.toLocaleDateString(undefined, opts);
   refreshOffTrackChip();
 }
@@ -5831,6 +5885,9 @@ function toast(msg) {
 // ---------------- tabs ----------------
 
 function switchTab(tab) {
+  const titleEl = document.getElementById('topbar-title');
+  if (titleEl) titleEl.textContent = TAB_TITLES[tab] || '';
+  document.body.dataset.tab = tab;
   document.querySelectorAll('.tab-view').forEach(v => v.classList.remove('active'));
   document.getElementById(`tab-${tab}`).classList.add('active');
   document.querySelectorAll('.botnav button').forEach(b => {
@@ -5894,7 +5951,7 @@ function renderGoalsCard() {
   const sub = n ? `${n} goal${n === 1 ? '' : 's'}` : 'Set your direction';
   wrap.innerHTML = `
     <button type="button" class="vault-entry-card vault-entry-square" id="goals-entry-card" aria-label="Open Goals">
-      <span class="vault-entry-icon" aria-hidden="true">🎯</span>
+      <span class="vault-entry-icon" aria-hidden="true">${icon('goals')}</span>
       <span class="vault-entry-title">Goals</span>
       <span class="vault-entry-sub">${escapeHtml(sub)}</span>
     </button>`;
@@ -6218,7 +6275,7 @@ function renderPeopleCard() {
   const sub = n ? `${n} ${n === 1 ? 'person' : 'people'}` : 'Keep up with people';
   wrap.innerHTML = `
     <button type="button" class="vault-entry-card vault-entry-square" id="people-entry-card" aria-label="Open People">
-      <span class="vault-entry-icon" aria-hidden="true">👥</span>
+      <span class="vault-entry-icon" aria-hidden="true">${icon('people')}</span>
       <span class="vault-entry-title">People</span>
       <span class="vault-entry-sub">${escapeHtml(sub)}</span>
     </button>`;
@@ -6663,7 +6720,7 @@ function renderReviewCard() {
     const sub = exists ? 'Written · tap to edit' : 'Read the week. Set the next one.';
     wrap.innerHTML = `
       <button type="button" class="review-card" id="review-entry-card" aria-label="Open Sunday review">
-        <span class="review-card-icon" aria-hidden="true">🔁</span>
+        <span class="review-card-icon" aria-hidden="true">${icon('review')}</span>
         <span class="review-card-text">
           <span class="review-card-title">Sunday review</span>
           <span class="review-card-sub">${escapeHtml(sub)}</span>
@@ -6684,7 +6741,7 @@ function renderReviewCard() {
   } else {
     wrap.innerHTML = `
       <button type="button" class="review-card" id="review-entry-card" aria-label="Open review">
-        <span class="review-card-icon" aria-hidden="true">🔁</span>
+        <span class="review-card-icon" aria-hidden="true">${icon('review')}</span>
         <span class="review-card-text">
           <span class="review-card-title">Sunday review</span>
           <span class="review-card-sub">Read the week. Set the next one.</span>
@@ -7037,11 +7094,11 @@ function renderTodayCustomiser() {
   if (presets.indexOf(effStyle) < 0) effStyle = 'grid';
   const roomsGroup = `
     <div class="tc-rooms-group">
-      <div class="tc-sub-label">SHOW</div>
+      <div class="tc-sub-label">Show</div>
       <div class="tc-chips">
         ${ROOM_DEFS.map(r => `<button type="button" class="tc-chip${roomsHidden.has(r.key) ? '' : ' tc-chip-on'}" data-tc="room" data-room="${escapeHtml(r.key)}">${escapeHtml(r.label)}</button>`).join('')}
       </div>
-      <div class="tc-sub-label">LAYOUT</div>
+      <div class="tc-sub-label">Layout</div>
       <div class="tc-chips">
         ${presets.map(p => `<button type="button" class="tc-chip${p === effStyle ? ' tc-chip-on' : ''}" data-tc="style" data-style="${escapeHtml(p)}">${escapeHtml(p)}</button>`).join('')}
       </div>
@@ -7128,25 +7185,17 @@ function render() {
 
 // ---------------- Stats hub — overview tiles + doorways ----------------
 
-// Week % for the overview tile. weeklySummary().overall_pct is 0 both when the
-// week is empty AND when nothing's done, so we recompute weekExpected here (reusing
-// dailySummary) purely to decide the "—" (nothing scheduled) case. READ-ONLY.
-function statWeekPct() {
+// Tracker counts for the overview tiles (v109: counts, not percentages). READ-ONLY.
+function statWeekCounts() {
   const ws = startOfWeek(todayDate());
   const today = todayDate();
-  let expected = 0;
+  let done = 0, expected = 0;
   for (const d of weekDates(ws)) {
     if (d > today) continue;
-    expected += dailySummary(d).expected;
+    const s = dailySummary(d);
+    done += s.done; expected += s.expected;
   }
-  if (expected === 0) return null;
-  return Math.round(weeklySummary(ws).overall_pct * 100);
-}
-
-function statTodayPct() {
-  const s = dailySummary(todayDate());
-  if (s.expected === 0) return null;
-  return Math.round(s.completion_pct * 100);
+  return { done, expected };
 }
 
 // 7-night average sleep — plausible-only, mirrors renderSleepStats' rule exactly.
@@ -7160,23 +7209,25 @@ function avgSleep7() {
 function renderStatsOverview() {
   const wrap = document.getElementById('stats-overview-tiles');
   if (!wrap) return;
-  const wk = statWeekPct(), td = statTodayPct(), sl = avgSleep7();
+  // v109: counts, not percentages ("x of y" checked on the tracker).
+  const wk = statWeekCounts(), td = dailySummary(todayDate()), sl = avgSleep7();
+  const of = c => (c && c.expected > 0) ? `${c.done}<span class="stat-of"> of ${c.expected}</span>` : '—';
   const tile = (label, val) =>
     `<div class="stat-tile"><div class="stat-tile-val">${val}</div><div class="stat-tile-label">${label}</div></div>`;
   wrap.innerHTML = `<div class="stat-tiles">` +
-    tile('This week', wk == null ? '—' : wk + '%') +
-    tile('Today',     td == null ? '—' : td + '%') +
+    tile('This week', of(wk)) +
+    tile('Today',     of(td)) +
     tile('Avg sleep', sl == null ? '—' : escapeHtml(sl)) +
     `</div>`;
 }
 
 const STATS_DOORWAYS = [
-  { key: 'habits',   icon: '✓',  name: 'Habits',   sub: 'Streaks & heatmaps' },
-  { key: 'sleep',    icon: '☾',  name: 'Sleep',    sub: 'Bedtime & hours' },
-  { key: 'franklin', icon: '🔥', name: 'Franklin', sub: 'Off-track trend' },
-  { key: 'focus',    icon: '◎',  name: 'Focus',    sub: 'Sessions & lapses' },
-  { key: 'vault',    icon: '🏦', name: 'Vault',    sub: 'Money & goals' },
-  { key: 'journal',  icon: '📓', name: 'Journal',  sub: 'My Code & entries' }
+  { key: 'habits',   icon: 'habits',  name: 'Habits',   sub: 'Streaks & heatmaps' },
+  { key: 'sleep',    icon: 'sleep',  name: 'Sleep',    sub: 'Bedtime & hours' },
+  { key: 'franklin', icon: 'franklin', name: 'Franklin', sub: 'Off-track trend' },
+  { key: 'focus',    icon: 'focus',  name: 'Focus',    sub: 'Sessions & lapses' },
+  { key: 'vault',    icon: 'vault', name: 'Vault',    sub: 'Money & goals' },
+  { key: 'journal',  icon: 'journal', name: 'Journal',  sub: 'My Code & entries' }
 ];
 
 function renderStatsDoorways() {
@@ -7184,9 +7235,10 @@ function renderStatsDoorways() {
   if (!wrap) return;
   wrap.innerHTML = `<div class="doorway-grid">` + STATS_DOORWAYS.map(d =>
     `<button type="button" class="doorway-card" data-doorway="${d.key}">
-       <span class="doorway-icon">${d.icon}</span>
+       <span class="doorway-icon">${icon(d.icon)}</span>
        <span class="doorway-name">${escapeHtml(d.name)}</span>
        <span class="doorway-sub">${escapeHtml(d.sub)}</span>
+       ${icon('chevron')}
      </button>`).join('') + `</div>`;
 }
 
@@ -7433,7 +7485,7 @@ function renderFrankDoorway() {
     if (back) back.hidden = false;
     body.innerHTML = renderFrankDetail(frankSelectedTally);
   } else {
-    if (title) title.textContent = '🔥 Franklin';
+    if (title) title.textContent = 'Franklin';
     if (back) back.hidden = true;
     body.innerHTML = renderFrankMain();
   }
@@ -7802,7 +7854,7 @@ function renderHabitsDoorway() {
     if (back) back.hidden = false;
     body.innerHTML = renderHabitHeatmap(b);
   } else {
-    if (title) title.textContent = '✓ Habits';
+    if (title) title.textContent = 'Habits';
     if (back) back.hidden = true;
     body.innerHTML = renderHabitSpaceList();
   }
@@ -7835,7 +7887,8 @@ function renderCalendar() {
   if (!grid || !label) return;
 
   const monthDate = new Date(calendarViewYM.y, calendarViewYM.m, 1);
-  label.textContent = monthDate.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  label.innerHTML = `${escapeHtml(monthDate.toLocaleDateString(undefined, { month: 'long' }))} <span class="cal-year">${monthDate.getFullYear()}</span>`;
+  label.setAttribute('aria-label', monthDate.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }));
 
   const firstDow = monthDate.getDay(); // 0 = Sunday
   const daysInMonth = new Date(calendarViewYM.y, calendarViewYM.m + 1, 0).getDate();
@@ -7863,31 +7916,54 @@ function renderCalendar() {
     cells.push({ date: ymd(d), day, otherMonth: true });
   }
 
+  // v109: no completion tint (a score per day); each day shows what's ON it instead,
+  // one dot per item up to three: due, study block, event, to-do. Done to-dos drop out.
+  const marks = calendarMarksByDate(cells[0].date, cells[cells.length - 1].date);
   grid.innerHTML = cells.map(c => {
     const classes = ['calendar-day'];
     if (c.otherMonth) classes.push('other-month');
     if (c.date === today) classes.push('today');
     if (c.date === calendarSelectedDate) classes.push('selected');
-    if (c.date <= today && !c.otherMonth) {
-      const s = dailySummary(c.date);
-      if (s.expected > 0) {
-        const pct = s.completion_pct;
-        if (pct >= 0.75) classes.push('high');
-        else if (pct >= 0.40) classes.push('mid');
-        else classes.push('low');
-      }
-    }
-    return `<div class="${classes.join(' ')}" data-date="${c.date}">${c.day}</div>`;
+    if (c.date < today) classes.push('past');
+    const m = marks[c.date] || [];
+    const dots = m.slice(0, 3).map(k => `<i class="cal-dot cal-dot-${k}"></i>`).join('');
+    const label = parseYmd(c.date).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })
+      + (m.length ? `, ${m.length} item${m.length === 1 ? '' : 's'}` : '');
+    return `<div class="${classes.join(' ')}" data-date="${c.date}" role="button" tabindex="0" aria-label="${escapeHtml(label)}">`
+      + `<span class="cal-num">${c.day}</span><span class="cal-dots">${dots}</span></div>`;
   }).join('');
 
   grid.querySelectorAll('.calendar-day').forEach(el => {
-    el.addEventListener('click', () => {
+    const pick = () => {
       calendarSelectedDate = el.dataset.date;
+      const d = parseYmd(el.dataset.date);
+      if (el.classList.contains('other-month')) calendarViewYM = { y: d.getFullYear(), m: d.getMonth() };
       renderCalendar();
-    });
+    };
+    el.addEventListener('click', pick);
+    el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
   });
 
   renderCalendarDetail();
+}
+
+// date -> ['due'|'block'|'event'|'todo', ...] for the visible grid, in display order.
+function calendarMarksByDate(from, to) {
+  const rank = { due: 0, block: 1, event: 2, todo: 3 };
+  const out = Object.create(null);
+  for (const it of state.items) {
+    if (!it.date || it.date < from || it.date > to) continue;
+    let k;
+    if (it.trackCompletion) {
+      if (state.completions.some(c => c.ref_id === it.id)) continue;
+      k = it.priority === 'high' ? 'due' : 'todo';
+    } else {
+      k = it.time && NEXT3_PLAN_BLOCK.test(it.notes || '') ? 'block' : 'event';
+    }
+    (out[it.date] = out[it.date] || []).push(k);
+  }
+  for (const d in out) out[d].sort((a, b) => rank[a] - rank[b]);
+  return out;
 }
 
 function renderCalendarDetail() {
@@ -7896,7 +7972,7 @@ function renderCalendarDetail() {
   const date = calendarSelectedDate;
   const dObj = parseYmd(date);
   const dCode = DAY_CODES[dObj.getDay()];
-  const dStr = dObj.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+  const dStr = dObj.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
 
   const habits = state.habits.filter(h => !h.archived && h.days.includes(dCode));
   const items  = state.items.filter(i => i.date === date); // someday items (date null) never appear
@@ -7917,57 +7993,51 @@ function renderCalendarDetail() {
   const today = todayDate();
 
   // Pre-floor days (v100): raw logs below may still show, but no completion figure,
-  // no percentage, no verdict — the day predates the tracking-start date.
+  // no verdict — the day predates the tracking-start date. v109: counts, no percent.
   const summaryStr = summary.preFloor
-    ? 'Before your tracking-start date.'
-    : summary.expected > 0
-      ? `${summary.done}/${summary.expected} completed (${Math.round(summary.completion_pct * 100)}%)`
-      : 'Nothing scheduled.';
+    ? 'Before your tracking-start date'
+    : (summary.expected > 0 && date <= today)
+      ? `Tracker ${summary.done} of ${summary.expected}`
+      : '';
 
-  const addBtnHtml = `<button type="button" class="btn btn-primary cal-add-btn" id="cal-add-btn">+ Add to this day</button>`;
+  const nowD = new Date();
+  const nowMin = nowD.getHours() * 60 + nowD.getMinutes();
+  const rows = next3Rows(date, nowMin).map(r => {
+    r.skipped = !!r.it.trackCompletion && !r.done && state.missed.some(m => m.ref_id === r.it.id && m.date === date);
+    return r;
+  });
+  // Legacy habits (pre-Spaces) still list on their days, as to-dos.
+  const habitRows = habits.map(h => {
+    const done = date <= today && state.completions.some(c => c.ref_id === h.id && c.date === date);
+    return { it: { id: h.id, title: h.title, time: h.time, duration: h.duration }, kind: 'todo', done, habit: true };
+  });
 
-  if (all.length === 0) {
-    wrap.innerHTML = `
-      <h3>${dStr}</h3>
-      <div class="meta">${summaryStr}</div>
-      ${addBtnHtml}
-    `;
+  const head = `
+    <div class="cal-detail-head">
+      <div>
+        <h3>${escapeHtml(dStr)}</h3>
+        ${summaryStr ? `<div class="meta">${escapeHtml(summaryStr)}</div>` : ''}
+      </div>
+      <button type="button" class="btn btn-secondary btn-sm cal-add-btn" id="cal-add-btn">${icon('plus')}Add</button>
+    </div>`;
+
+  if (rows.length + habitRows.length === 0) {
+    wrap.innerHTML = head + `<div class="ag-empty cal-empty">Nothing on this day</div>`;
     wireCalendarAddBtn(date);
     return;
   }
 
-  wrap.innerHTML = `
-    <h3>${dStr}</h3>
-    <div class="meta">${summaryStr}</div>
-    ${addBtnHtml}
-    ${all.map(it => {
-      const meta = [];
-      meta.push(`<span class="item-badge badge-kind">${it.displayLabel}</span>`);
-      if (it.duration) meta.push(hoursToHuman(it.duration));
-      if (it.priority === 'high' || it.priority === 'medium') {
-        meta.push(`<span class="item-badge">${it.priority}</span>`);
-      }
-      const trackable = it.trackCompletion;
-      const done    = trackable && date <= today && state.completions.some(c => c.ref_id === it.id && c.date === date);
-      const skipped = trackable && !done && state.missed.some(m => m.ref_id === it.id && m.date === date);
-      const stateClass = done ? ' done' : skipped ? ' skipped' : '';
-      const check = done ? '&check;' : skipped ? '&minus;' : '';
-      return `
-        <div class="item-row${stateClass}" data-kind="${it.kind}" data-id="${it.id}">
-          <div class="item-time">${fmt12(it.time) || '—'}</div>
-          <div class="item-body">
-            <div class="item-title">${escapeHtml(it.title)}</div>
-            <div class="item-meta">${meta.join(' ')}</div>
-          </div>
-          <div class="item-check">${check}</div>
-        </div>
-      `;
-    }).join('')}
-  `;
+  wrap.innerHTML = head + `<div class="ag-list">`
+    + agListHtml(rows, date === today, nowMin, { tappable: true, kind: 'item' })
+    + habitRows.map(r => agRowHtml(r, { tappable: true, kind: 'habit', label: 'Habit' })).join('')
+    + `</div>`;
   wireCalendarAddBtn(date);
 
-  wrap.querySelectorAll('.item-row[data-kind][data-id]').forEach(row => {
+  wrap.querySelectorAll('.ag-row[data-kind][data-id]').forEach(row => {
     row.addEventListener('click', () => openEditModal(row.dataset.kind, row.dataset.id));
+    row.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openEditModal(row.dataset.kind, row.dataset.id); }
+    });
   });
 }
 
@@ -8071,6 +8141,7 @@ function _upcomingRowHtml(it) {
     : '';
   const classes = ['upcoming-row', `prio-${prio}`];
   if (!trackable) classes.push('is-event');
+  if (!trackable && it.time && NEXT3_PLAN_BLOCK.test(it.notes || '')) classes.push('is-block');
 
   return `
     <div class="${classes.join(' ')}" data-kind="item" data-id="${it.id}">
@@ -8357,7 +8428,7 @@ function renderVaultCard() {
   if (!wrap) return;
   wrap.innerHTML = `
     <button type="button" class="vault-entry-card vault-entry-square" id="vault-entry-card" aria-label="Open The Vault">
-      <span class="vault-entry-icon" aria-hidden="true">🏦</span>
+      <span class="vault-entry-icon" aria-hidden="true">${icon('vault')}</span>
       <span class="vault-entry-title">The Vault</span>
       <span class="vault-entry-sub">Money in, out &amp; saved</span>
     </button>`;
@@ -9033,14 +9104,21 @@ function renderSpacesHub() {
     const due = spaceDueCheckboxes(s.id);
     const left = due.filter(b => !isBlockCheckedToday(b)).length;
     let statusText, statusClass;
-    if (left === 0 && due.length >= 1)      { statusText = 'All done';    statusClass = 'done'; }
+    if (left === 0 && due.length >= 1)      { statusText = 'Done';        statusClass = 'done'; }
     else if (left === 0 && due.length === 0){ statusText = 'Nothing due'; statusClass = 'neutral'; }
-    else                                    { statusText = `${left} task${left === 1 ? '' : 's'} left`; statusClass = ''; }
+    else                                    { statusText = `${left} left`; statusClass = ''; }
+    // One dot per item due today, filled when checked (counts, not a score).
+    const doneN = due.length - left;
+    const dots = due.length && due.length <= 8
+      ? `<span class="space-dots" aria-hidden="true">${due.map((_, i) => `<i class="${i < doneN ? 'on' : ''}"></i>`).join('')}</span>`
+      : '';
     return `
     <button type="button" class="space-row${complete ? ' complete' : ''}" data-space-open="${s.id}" aria-label="Open ${escapeHtml(s.name)}${complete ? ' (all done)' : ''}">
       <span class="space-row-icon" aria-hidden="true">${escapeHtml(s.icon || '📁')}</span>
       <span class="space-row-name">${escapeHtml(s.name)}</span>
-      <span class="space-row-status ${statusClass}">${complete ? '✓ ' : ''}${escapeHtml(statusText)}</span>
+      ${dots}
+      <span class="space-row-status ${statusClass}">${statusClass === 'done' ? icon('check') : ''}${escapeHtml(statusText)}</span>
+      ${icon('chevron')}
     </button>`;
   }).join('');
 
@@ -9052,24 +9130,24 @@ function renderSpacesHub() {
   const ms = masterDoneState();
   let master = '';
   if (ms.kind === 'all') {
-    master = `<div class="spaces-master done">✓ All done for today</div>`;
+    master = `<span class="spaces-master done">${icon('check')}All done today</span>`;
   } else if (ms.kind === 'progress') {
-    master = `<div class="spaces-master">${ms.doneSpaces} of ${ms.dueSpaces} spaces done · ${ms.remainingItems} item${ms.remainingItems === 1 ? '' : 's'} left</div>`;
+    master = `<span class="spaces-master">${ms.remainingItems} left today</span>`;
   } else {
-    master = `<div class="spaces-master neutral">Nothing due today</div>`;
+    master = `<span class="spaces-master neutral">Nothing due today</span>`;
   }
 
   wrap.innerHTML = `
-    <div class="vault-section spaces-hub">
-      <div class="vault-section-head">
-        <span class="vault-section-title">Spaces</span>
+    <div class="spaces-hub card">
+      <div class="card-head">
+        <span class="card-title">Spaces</span>
+        ${spaces.length ? master : ''}
       </div>
-      ${spaces.length ? master : ''}
       ${empty}
       <div class="space-list">
         ${rows}
         <button type="button" class="space-row space-row-new" id="space-new-tile" aria-label="Create a new Space">
-          <span class="space-row-icon" aria-hidden="true">＋</span>
+          <span class="space-row-icon" aria-hidden="true">${icon('plus')}</span>
           <span class="space-row-name">New Space</span>
         </button>
       </div>
@@ -11842,6 +11920,24 @@ document.getElementById('mc-close-btn').addEventListener('click', dismissMorning
 // Calendar nav
 document.getElementById('cal-prev').addEventListener('click', () => shiftCalendarMonth(-1));
 document.getElementById('cal-next').addEventListener('click', () => shiftCalendarMonth(1));
+document.getElementById('cal-today').addEventListener('click', () => {
+  const d = new Date();
+  calendarViewYM = { y: d.getFullYear(), m: d.getMonth() };
+  calendarSelectedDate = todayDate();
+  renderCalendar();
+});
+// Swipe the month grid sideways to change month (a mostly-horizontal swipe of 50px+).
+(() => {
+  const grid = document.getElementById('cal-grid');
+  let x0 = null, y0 = null;
+  grid.addEventListener('touchstart', e => { const t = e.touches[0]; x0 = t.clientX; y0 = t.clientY; }, { passive: true });
+  grid.addEventListener('touchend', e => {
+    if (x0 == null) return;
+    const t = e.changedTouches[0], dx = t.clientX - x0, dy = t.clientY - y0;
+    x0 = y0 = null;
+    if (Math.abs(dx) >= 50 && Math.abs(dx) > Math.abs(dy) * 1.5) shiftCalendarMonth(dx < 0 ? 1 : -1);
+  }, { passive: true });
+})();
 
 // Action sheet
 document.getElementById('action-done').addEventListener('click', handleActionDone);

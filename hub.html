@@ -7,7 +7,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Hub">
-<meta name="theme-color" content="#f2f2f7">
+<meta name="theme-color" content="#f6f6f7">
 <link rel="manifest" href="hub.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <title>Hub · AgendaAI</title>
@@ -168,7 +168,7 @@
   /* ---- Recaps (Oct 31): plan posts and change cards ---- */
   /* Markers match the Next 3 days card: blue capsule = study block, graphite = event,
      red diamond = due, ring = to-do. */
-  .hub { --n3-block: linear-gradient(90deg, #0a84ff 0%, #5e5ce6 100%); --n3-event: rgba(60, 60, 67, 0.42); --n3-glow: rgba(10, 132, 255, 0.38); }
+  .hub { --n3-block: var(--accent); --n3-event: #9fa1aa; --n3-glow: rgba(54, 87, 232, 0.22); }
   .hub-p { margin: 0 0 8px; }
   .hub-p:last-child { margin-bottom: 0; }
   .hub-recap {
@@ -177,8 +177,8 @@
     box-shadow: var(--shadow-sm); font-size: 15px; line-height: 1.45; overflow-wrap: anywhere;
   }
   .hub-recap-plan {
-    width: 92%; border: 1px solid rgba(10, 132, 255, 0.18);
-    background: linear-gradient(180deg, rgba(10, 132, 255, 0.07) 0, rgba(10, 132, 255, 0) 140px), var(--card);
+    width: 92%; border: 1px solid var(--hairline);
+    background: var(--card);
   }
   .hub-recap-head { display: flex; flex-direction: column; gap: 3px; padding-bottom: 12px; margin-bottom: 10px; border-bottom: 1px solid var(--border); }
   .hub-recap-kind { font-size: 12px; font-weight: 600; color: var(--accent); }
@@ -288,7 +288,7 @@
   .hub-mail-k { color: var(--muted); }
   .hub-mail-v { overflow-wrap: anywhere; }
   .hub-mail-body { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 14px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
-  .hub-pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: 12px; background: var(--panel-2); border-radius: 10px; padding: 10px; }
+  .hub-pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; background: var(--panel-2); border-radius: 10px; padding: 10px; }
   .hub-card-why { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-tertiary); }
   .btn.hub-undo {
     background: var(--surface-inset); color: var(--text); border: none; border-radius: 999px;
@@ -305,7 +305,7 @@
   .hub-ask-why { grid-column: 1 / -1; font-size: 13px; color: var(--muted); }
   .hub-handoff {
     display: block; max-width: 92%;
-    padding: 8px 12px; border-radius: 14px; border: 1px dashed rgba(10, 132, 255, 0.35);
+    padding: 8px 12px; border-radius: 14px; border: 1px dashed rgba(54, 87, 232, 0.35);
     color: var(--muted); font-size: 13px; line-height: 1.4;
   }
   .hub-handoff::before { content: 'From a Claude chat'; display: block; margin-bottom: 2px; color: var(--accent); font-weight: 600; }
