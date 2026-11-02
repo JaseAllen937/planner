@@ -893,7 +893,7 @@ const SCHEMA_VERSION = 17;
 // Human-facing build tag shown in Settings and stamped into every export legend.
 // BUMP THIS TOGETHER WITH sw.js VERSION on every deploy — a stale tag is how a
 // rolled-back build went unnoticed for two days.
-const APP_VERSION = 'v109';
+const APP_VERSION = 'v110';
 
 // v109 (Nov 2, "it looks like AI slop ... modern and readable"): one line-icon set
 // instead of emoji tiles. Fixed paths only; nothing stored is ever put in here.
@@ -10931,7 +10931,36 @@ const INBOX_PRIORITIES = ['normal', 'medium', 'high'];
 // the restore ops, for a copy still on v106).
 const INBOX_V104_OPS = ['edit_item', 'delete_item', 'uncomplete_item', 'uncheck_block', 'add_block',
   'edit_block', 'delete_block', 'log_counter', 'delete_focus_session', 'set_sleep',
-  'restore_item', 'restore_block', 'restore_focus_session'];
+  'restore_item', 'restore_block', 'restore_focus_session',
+  // v110: People and the Sunday review from the Hub
+  'add_person', 'edit_person', 'delete_person', 'log_contact', 'edit_contact', 'delete_contact',
+  'restore_contact', 'set_review', 'delete_review'];
+// v110: rows sent together share created_at, so a new person goes in before the
+// conversation logged with them, and removing a person waits for their
+// conversations to go first (Undo sends both at once).
+const INBOX_RANK = { add_person: 0, delete_person: 2 };
+const INBOX_NAME_MAX = 80, INBOX_ABOUT_MAX = 240, INBOX_RECAP_MAX = 2000, INBOX_NOTE_MAX = 400;
+const INBOX_REVIEW_KEYS = ['q1', 'q2', 'q3', 'q4', 'q5', 'social'];
+const INBOX_REVIEW_MAX = 4000;
+const INBOX_CONTACT_BACK_DAYS = 60;
+// Optional trimmed text up to max; undefined = not given; null = invalid.
+function inboxText(v, max) {
+  if (v === undefined) return undefined;
+  if (v === null) return '';
+  if (typeof v !== 'string') return null;
+  const t = v.trim();
+  return t.length <= max ? t : null;
+}
+function inboxContactDateError(date) {
+  if (!(typeof date === 'string' && INBOX_YMD.test(date))) return 'invalid date';
+  if (date > todayDate()) return 'date is in the future';
+  if (date < addDays(todayDate(), -INBOX_CONTACT_BACK_DAYS)) return `older than ${INBOX_CONTACT_BACK_DAYS} days`;
+  return null;
+}
+function inboxLivePerson(tomb, id) {
+  const person = typeof id === 'string' ? findPerson(id) : null;
+  return person && !isTombstoned(tomb, 'people', person) ? person : null;
+}
 const INBOX_BLOCK_TYPES = ['checkbox', 'counter', 'cycle', 'goal', 'notes'];
 
 // v107: a copy of a deleted record from payload.record, under the new id
@@ -11309,6 +11338,132 @@ function applyInboxRow(row) {
     return done(null, true);
   }
 
+  // ---- v110: People (a person, a dated conversation) from the Hub ----
+  if (row.op === 'add_person') {
+    if (peopleList().some(x => x.id === row.op_id)) return done('already present');
+    if (tomb['people:' + row.op_id]) return done('deleted in app');
+    const name = inboxText(p.name, INBOX_NAME_MAX);
+    if (!name) return reject('invalid name');
+    const about = inboxText(p.about, INBOX_ABOUT_MAX);
+    if (about === null) return reject('invalid about');
+    peopleList().push({ id: row.op_id, name, about: about || '', createdAt: todayDate() });
+    return done(null, true);
+  }
+
+  if (row.op === 'edit_person') {
+    const person = inboxLivePerson(tomb, p.person_id);
+    if (!person) return reject('person not found');
+    const set = (p.set && typeof p.set === 'object' && !Array.isArray(p.set)) ? p.set : null;
+    if (!set || Object.keys(set).some(k => k !== 'name' && k !== 'about') || !Object.keys(set).length) return reject('invalid set');
+    const name = inboxText(set.name, INBOX_NAME_MAX);
+    const about = inboxText(set.about, INBOX_ABOUT_MAX);
+    if (name === null || name === '' || about === null) return reject('invalid set');
+    if ((name === undefined || name === person.name) && (about === undefined || about === (person.about || ''))) return done('already so');
+    if (name !== undefined) person.name = name;
+    if (about !== undefined) person.about = about;
+    return done(null, true);
+  }
+
+  // Only Undo sends this. Someone who has conversations logged stays (removing
+  // them would take conversations the bot didn't add).
+  if (row.op === 'delete_person') {
+    const person = typeof p.person_id === 'string' ? findPerson(p.person_id) : null;
+    if (!person || isTombstoned(tomb, 'people', person)) return done('already deleted');
+    const live = contactsForPerson(person.id).filter(c => !isTombstoned(tomb, 'contacts', c));
+    if (live.length) return done('has conversations');
+    threadsForPerson(person.id).forEach(t => tombstone('threads', t.id));
+    state.threads = threadsList().filter(t => t.personId !== person.id);
+    tombstone('people', person.id);
+    state.people = peopleList().filter(x => x.id !== person.id);
+    delete personNotesData()[person.id];
+    if (peopleSelectedId === person.id) { peopleView = 'list'; peopleSelectedId = null; }
+    return done(null, true);
+  }
+
+  if (row.op === 'log_contact') {
+    if (contactsList().some(c => c.id === row.op_id)) return done('already present');
+    if (tomb['contacts:' + row.op_id]) return done('deleted in app');
+    const person = inboxLivePerson(tomb, p.person_id);
+    if (!person) return reject('person not found');
+    const err = inboxContactDateError(p.date);
+    if (err) return reject(err);
+    const recap = inboxText(p.recap, INBOX_RECAP_MAX), note = inboxText(p.note, INBOX_NOTE_MAX);
+    if (recap === null || note === null) return reject('text too long');
+    contactsList().push({ id: row.op_id, personId: person.id, date: p.date, note: note || '', recap: recap || '', at: createdAt.toISOString() });
+    return done(null, true);
+  }
+
+  if (row.op === 'edit_contact') {
+    const c = typeof p.contact_id === 'string' ? contactsList().find(x => x.id === p.contact_id) : null;
+    if (!c || isTombstoned(tomb, 'contacts', c)) return reject('conversation not found');
+    const set = (p.set && typeof p.set === 'object' && !Array.isArray(p.set)) ? p.set : null;
+    if (!set || !Object.keys(set).length || Object.keys(set).some(k => !['date', 'recap', 'note'].includes(k))) return reject('invalid set');
+    if (set.date !== undefined) { const err = inboxContactDateError(set.date); if (err) return reject(err); }
+    const recap = inboxText(set.recap, INBOX_RECAP_MAX), note = inboxText(set.note, INBOX_NOTE_MAX);
+    if (recap === null || note === null) return reject('text too long');
+    if ((set.date === undefined || set.date === c.date) && (recap === undefined || recap === (c.recap || ''))
+        && (note === undefined || note === (c.note || ''))) return done('already so');
+    if (set.date !== undefined) c.date = set.date;
+    if (recap !== undefined) c.recap = recap;
+    if (note !== undefined) c.note = note;
+    return done(null, true);
+  }
+
+  if (row.op === 'delete_contact') {
+    const c = typeof p.contact_id === 'string' ? contactsList().find(x => x.id === p.contact_id) : null;
+    if (!c || isTombstoned(tomb, 'contacts', c)) return done('already deleted');
+    tombstone('contacts', c.id);
+    state.contacts = contactsList().filter(x => x.id !== c.id);
+    return done(null, true);
+  }
+
+  if (row.op === 'restore_contact') {
+    if (contactsList().some(c => c.id === row.op_id)) return done('already present');
+    if (tomb['contacts:' + row.op_id]) return done('deleted in app');
+    const rec = inboxRestoredCopy(p.record, row.op_id);
+    if (!rec || typeof rec.date !== 'string' || !INBOX_YMD.test(rec.date)) return reject('invalid record');
+    if (!inboxLivePerson(tomb, rec.personId)) return reject('person not found');
+    contactsList().push(rec);
+    return done(null, true);
+  }
+
+  // ---- v110: the Sunday review, answered in the Hub ----
+  // Upserts the review for that night-date, like Save in the composer: only the
+  // answers given change; a new review gets the op's id.
+  if (row.op === 'set_review') {
+    if (!(typeof p.date === 'string' && INBOX_YMD.test(p.date))) return reject('invalid date');
+    if (p.date > todayDate()) return reject('date is in the future');
+    if (p.date < addDays(todayDate(), -7)) return reject('older than 7 days');
+    const set = (p.set && typeof p.set === 'object' && !Array.isArray(p.set)) ? p.set : null;
+    if (!set || !Object.keys(set).length || Object.keys(set).some(k => !INBOX_REVIEW_KEYS.includes(k))) return reject('invalid set');
+    for (const k of Object.keys(set)) {
+      if (typeof set[k] !== 'string' || set[k].length > INBOX_REVIEW_MAX) return reject('invalid answer');
+    }
+    const list = weeklyReviewsList();
+    const existing = list.find(r => r && r.date === p.date && !isTombstoned(tomb, 'weeklyReviews', r));
+    if (existing) {
+      if (Object.keys(set).every(k => (existing[k] || '') === set[k].trim())) return done('already so');
+      for (const k of Object.keys(set)) existing[k] = set[k].trim();
+      existing.at = nowIso();
+      return done(null, true);
+    }
+    if (list.some(r => r && r.id === row.op_id)) return done('already present');
+    if (tomb['weeklyReviews:' + row.op_id]) return done('deleted in app');
+    const rec = { id: row.op_id, date: p.date, q1: '', q2: '', q3: '', q4: '', q5: '', social: '', at: nowIso(), createdAt: createdAt.toISOString() };
+    for (const k of Object.keys(set)) rec[k] = set[k].trim();
+    list.push(rec);
+    return done(null, true);
+  }
+
+  // Only Undo sends this: removes the review a set_review created (by its id).
+  if (row.op === 'delete_review') {
+    const rec = typeof p.review_id === 'string' ? weeklyReviewsList().find(r => r && r.id === p.review_id) : null;
+    if (!rec || isTombstoned(tomb, 'weeklyReviews', rec)) return done('already deleted');
+    tombstone('weeklyReviews', rec.id);
+    state.weeklyReviews = weeklyReviewsList().filter(r => r.id !== rec.id);
+    return done(null, true);
+  }
+
   return reject('unknown op');
 }
 
@@ -11345,6 +11500,10 @@ async function applyAgentInbox() {
       console.warn('Agent inbox retry fetch failed:', e);
     }
     if (!rows.length) return;
+    // Same created_at: a new person first, removing one last (INBOX_RANK). Stable otherwise.
+    rows = rows.map((r, i) => [r, i]).sort((a, b) =>
+      String(a[0] && a[0].created_at).localeCompare(String(b[0] && b[0].created_at))
+      || ((INBOX_RANK[a[0] && a[0].op] ?? 1) - (INBOX_RANK[b[0] && b[0].op] ?? 1)) || (a[1] - b[1])).map(x => x[0]);
 
     const results = [];
     let changed = 0;
@@ -11360,6 +11519,7 @@ async function applyAgentInbox() {
       saveState();
       render();
       if (spaceOverlay.classList.contains('open')) renderSpaceView();
+      if (peopleOverlay && peopleOverlay.classList.contains('open')) renderPeople();
       toast(`Applied ${changed} from your assistant`);
     }
 

@@ -252,6 +252,15 @@
   .hub-mark-check::before { content: '\2713'; color: var(--ok); }
   .hub-mark-uncheck::before { content: '\2013'; color: var(--text-tertiary); }
   .hub-mark-log::before { content: '\2022'; color: var(--accent); }
+  /* v110: People and the Sunday review */
+  .hub-mark-person, .hub-mark-talk, .hub-mark-review { width: 18px; height: 18px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; }
+  .hub-mark-person { background: var(--accent-soft); }
+  .hub-mark-person::before { content: ''; width: 7px; height: 7px; border-radius: 999px; background: var(--accent); }
+  .hub-mark-talk { background: var(--surface-inset); }
+  .hub-mark-talk::before { content: ''; width: 9px; height: 7px; border-radius: 3px 3px 3px 0; background: var(--text-secondary); }
+  .hub-mark-review { background: var(--ok-dim); }
+  .hub-mark-review::before { content: '\2713'; font-size: 11px; font-weight: 700; color: var(--ok-ink); }
+  .rv-people { font-size: 14px; color: var(--text); line-height: 1.45; }
   .hub-mark-allday { width: 4px; height: 14px; border-radius: 2px; background: var(--n3-event); }
   .hub-op-del .hub-op-title { color: var(--muted); text-decoration: line-through; }
   .hub-op-del .hub-op-sub { text-decoration: none; display: none; }
@@ -899,6 +908,13 @@ function renderReview(data, rowId) {
     html += `<section class="rv-sec"><div class="rv-sec-h"><span class="rv-sec-t">Sleep</span>`
       + `<span class="rv-sec-n">${s.typical_bed ? `bed around <b>${escapeHtml(s.typical_bed)}</b>` : `${num(s.count)} nights`}</span></div>${rvSleep(data)}</section>`;
   }
+  const pp = data.people;
+  if (pp && typeof pp === 'object' && num(pp.conversations)) {
+    const names = arr(pp.names).filter(x => typeof x === 'string').slice(0, 6).map(escapeHtml).join(', ');
+    html += `<section class="rv-sec"><div class="rv-sec-h"><span class="rv-sec-t">People</span>`
+      + `<span class="rv-sec-n"><b>${num(pp.conversations)}</b> conversation${num(pp.conversations) === 1 ? '' : 's'}, <b>${num(pp.people)}</b> ${num(pp.people) === 1 ? 'person' : 'people'}</span></div>`
+      + (names ? `<div class="rv-people">${names}</div>` : '') + '</section>';
+  }
   if (p && typeof p === 'object') {
     const tile = (n, l) => `<div class="rv-plan"><b>${num(n)}</b><span>${l}</span></div>`;
     html += `<section class="rv-sec"><div class="rv-sec-h"><span class="rv-sec-t">Planner study blocks</span></div><div class="rv-plans">`
@@ -906,15 +922,15 @@ function renderReview(data, rowId) {
       + (num(p.prep) ? tile(p.prep_done, `of ${num(p.prep)} prep done`) : tile(p.other_time, 'done another time')) + '</div></section>';
   }
   const read = arr(data.read).filter(x => typeof x === 'string' && x.trim());
+  // v110: the buttons show on every card (a thin week still gets "Do my Sunday review")
+  const asks = arr(data.asks).filter(x => typeof x === 'string' && x.trim()).slice(0, 3);
+  const askHtml = asks.length ? `<div class="rv-asks">${asks.map(q => `<button type="button" class="rv-ask" data-ask="${escapeHtml(q)}">${escapeHtml(q)}</button>`).join('')}</div>` : '';
   if (data.thin) {
-    html += `<p class="rv-thin">Not much was logged in this stretch (${num(data.used_days)} day${num(data.used_days) === 1 ? '' : 's'} used), so there's no read.</p>`;
+    html += `<p class="rv-thin">Not much was logged in this stretch (${num(data.used_days)} day${num(data.used_days) === 1 ? '' : 's'} used), so there's no read.</p>` + askHtml;
   } else if (read.length) {
-    html += `<div class="rv-read"><div class="hub-sec-head">Claude's read</div>${read.map(r => `<p>${formatAssistant(r)}</p>`).join('')}`;
-    const asks = arr(data.asks).filter(x => typeof x === 'string' && x.trim()).slice(0, 3);
-    if (asks.length) html += `<div class="rv-asks">${asks.map(q => `<button type="button" class="rv-ask" data-ask="${escapeHtml(q)}">${escapeHtml(q)}</button>`).join('')}</div>`;
-    html += '</div>';
+    html += `<div class="rv-read"><div class="hub-sec-head">Claude's read</div>${read.map(r => `<p>${formatAssistant(r)}</p>`).join('')}${askHtml}</div>`;
   } else {
-    html += `<p class="rv-thin">The counts are in, but Claude's read didn't come this time. Ask about any of it.</p>`;
+    html += `<p class="rv-thin">The counts are in, but Claude's read didn't come this time. Ask about any of it.</p>` + askHtml;
   }
   return html + '</div>';
 }
@@ -1036,8 +1052,31 @@ const OP_BACK_RE = /^Bring back (event|to-do): (.+) \((\d{4}-\d{2}-\d{2}|someday
 const OP_CHECK_RE = /^(Check|Uncheck) (.+) \((.+)\) for (\d{4}-\d{2}-\d{2})$/;
 const OP_DONE_RE = /^Mark (done|not done): (.+)$/;
 const OP_LOG_RE = /^Log (.+?): (.+) for (\d{4}-\d{2}-\d{2})$/;
+// v110: People and the Sunday review (agentkit describe_op)
+const PERSON_ADD_RE = /^Add person: (.+?)(?: \((.+)\))?$/;
+const PERSON_EDIT_RE = /^Update (.+?): (.+)$/;
+const PERSON_DEL_RE = /^Remove person: (.+)$/;
+const TALK_RE = /^(Log|Change|Remove|Bring back) talk with (.+?) \((\d{4}-\d{2}-\d{2})\)(?:: (.*))?$/;
+const SUNDAY_RE = /^(Remove )?Sunday review \((\d{4}-\d{2}-\d{2})\)(?:: (.*))?$/;
 function parseOp(t, schedule) {
-  let a = t.match(ADD_RE);
+  let a = t.match(TALK_RE);
+  if (a) {
+    const [, verb, name, date, rest] = a;
+    if (verb === 'Remove') return { marker: 'del', title: `Talk with ${name}`, date, sub: 'Removed' };
+    if (verb === 'Bring back') return { marker: 'back', title: `Talk with ${name}`, date, sub: 'Back in People' };
+    if (verb === 'Change') return { marker: 'move', title: `Talk with ${name}`, date, sub: rest || '' };
+    return { marker: 'talk', title: `Talked with ${name}`, date, sub: rest || '' };
+  }
+  if ((a = t.match(SUNDAY_RE))) {
+    if (a[1]) return { marker: 'del', title: 'Sunday review', date: a[2], sub: 'Removed' };
+    return { marker: 'review', title: 'Sunday review', date: a[2], sub: a[3] ? `Answered: ${a[3]}` : '' };
+  }
+  if ((a = t.match(PERSON_ADD_RE))) return { marker: 'person', title: a[1], sub: a[2] || 'New in People' };
+  if ((a = t.match(PERSON_DEL_RE))) return { marker: 'del', title: a[1], sub: 'Removed from People' };
+  if ((a = t.match(PERSON_EDIT_RE)) && /^(name to|about to|clear about)/.test(a[2])) {
+    return { marker: 'person', title: a[1], sub: a[2].replace(/^about to (['"])(.*)\1$/, 'About: $2').replace(/^name to (['"])(.*)\1/, 'Name: $2') };
+  }
+  a = t.match(ADD_RE);
   if (a) {
     const [, kind, title, date, time, dur, prio] = a;
     const marker = prio === 'high' ? 'due' : kind === 'to-do' ? 'todo' : (schedule ? 'block' : 'event');
