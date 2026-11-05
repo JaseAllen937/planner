@@ -700,7 +700,7 @@ function showSignIn(message) {
   stopPolling();
   rowsById.clear(); cardState.clear(); hasOlder = false; lastSig = ''; lastMaxId = 0;
   showEarlier = false; floorId = 0; opening = true;
-  waitItems = []; waitSent.clear(); setReply(null); closeWaiting(true); renderWaiting(); $('wait-btn').hidden = true;
+  waitItems = []; waitSent.clear(); waitSeen.clear(); waitAsked.clear(); setReply(null); closeWaiting(true); renderWaiting(); $('wait-btn').hidden = true;
   listEl.innerHTML = '';
   $('chat-view').hidden = true;
   $('signout').hidden = true;
@@ -1361,10 +1361,11 @@ let painted = false;
 const reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 
 // Re-renders the list only when something visible changed.
+let waitRev = 0;   // v113: bumps when a Waiting on you title arrives, so "Answering: ..." lines redraw
 function render({ forceBottom = false, keepTopAnchor = false } = {}) {
   if (bottomNext && !keepTopAnchor) { forceBottom = true; bottomNext = false; }
   const rows = sortedRows();
-  const sig = JSON.stringify([hasOlder, loadingOlder, showEarlier, floorId, [...cardState], [...expanded], rows.map(r => [r.id, r.status, r.buttons, r.body, r.data ? 1 : 0])]);
+  const sig = JSON.stringify([waitRev, hasOlder, loadingOlder, showEarlier, floorId, [...cardState], [...expanded], rows.map(r => [r.id, r.status, r.buttons, r.body, r.data ? 1 : 0])]);
   updateWorking();
   if (sig === lastSig && !forceBottom) return;
   lastSig = sig;
@@ -1796,16 +1797,40 @@ async function loadWaiting() {
     const rows = await r.json();
     const now = Date.now();
     const list = Array.isArray(rows) ? rows : [];
-    for (const w of list) waitSeen.set(Number(w.id), w);
+    for (const w of list) { if (!waitSeen.has(Number(w.id))) waitRev++; waitSeen.set(Number(w.id), w); }
     for (const [id, at] of waitSent) if (now - at > WAIT_HOLD_MS) waitSent.delete(id);
     waitItems = list.filter(w => !waitSent.has(Number(w.id)) && (!w.snooze_until || Date.parse(w.snooze_until) <= now));
   } catch (e) {
     if (e && (isMissingTable(e) || e.code === '42P01')) { waitOff = true; waitItems = []; }
     else return;
   }
-  if (replyTo && !waitItems.some(w => Number(w.id) === replyTo.id)) setReply(null);
+  // v113: the tag stays even if the item left the list meanwhile (a bot reworded or cleared it while he was typing);
+  // his answer still goes out with its question. Only Send, the X, or signing out clear it.
   renderWaiting();
+  await fillWaitTitles();
   render();
+}
+// v113: after a reload, answers he already sent showed "Answering: a question from your list". Look up the titles of
+// the items those messages answered (any status), once each.
+const waitAsked = new Set();
+async function fillWaitTitles() {
+  if (waitOff) return;
+  const want = [];
+  for (const row of rowsById.values()) {
+    if (row.role !== 'user') continue;
+    const m = WAIT_PREFIX.exec(String(row.body || ''));
+    const id = m ? Number(m[1]) : 0;
+    if (id && !waitSeen.has(id) && !waitAsked.has(id)) { want.push(id); waitAsked.add(id); }
+    if (want.length >= 50) break;
+  }
+  if (!want.length) return;
+  try {
+    const r = await hubFetch(`/waiting?select=id,title&id=in.(${want.join(',')})`, { method: 'GET' });
+    const rows = await r.json();
+    for (const w of Array.isArray(rows) ? rows : []) if (!waitSeen.has(Number(w.id))) { waitSeen.set(Number(w.id), w); waitRev++; }
+  } catch (e) {
+    for (const id of want) waitAsked.delete(id);   // try again on the next pass
+  }
 }
 function scheduleWaiting() {
   clearTimeout(waitTimer);
