@@ -383,6 +383,55 @@
     .hub-typing i { opacity: 0.6; }
   }
 
+  /* ---- Waiting on you (Nov 5): questions, dates and mail the bots need him for; kept until answered or cleared ---- */
+  .hub-wait-btn {
+    position: relative; width: 40px; height: 40px; border-radius: 999px; border: 1px solid var(--border);
+    background: var(--card); display: inline-flex; align-items: center; justify-content: center; padding: 0; cursor: pointer;
+    color: var(--text);
+  }
+  .hub-wait-btn svg { width: 19px; height: 19px; }
+  .hub-badge {
+    position: absolute; top: -4px; right: -4px; min-width: 19px; height: 19px; padding: 0 5px; box-sizing: border-box;
+    border-radius: 999px; background: var(--accent); color: #fff; font-size: 11px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center; border: 2px solid var(--bg);
+  }
+  .hub-wait-bar {
+    margin: 8px 16px 0; min-height: 44px; width: calc(100% - 32px); box-sizing: border-box;
+    display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 14px;
+    border-radius: 12px; border: 1px solid rgba(54,87,232,0.25); background: var(--accent-soft);
+    color: var(--accent-ink); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; text-align: left;
+  }
+  .hub-wait-bar .n { flex: none; white-space: nowrap; }
+  .hub-wait-bar .sum { min-width: 0; color: var(--text-secondary); font-weight: 400; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hub-wait-dot { width: 8px; height: 8px; border-radius: 4px; background: var(--accent); display: inline-block; margin-right: 8px; }
+  .hub-sheet-back { position: fixed; inset: 0; background: rgba(17,17,20,0.38); z-index: 40; }
+  .hub-sheet {
+    position: fixed; left: 50%; bottom: 0; transform: translateX(-50%); width: 100%; max-width: 720px;
+    max-height: 86vh; max-height: 86dvh; z-index: 41; background: var(--card); border-radius: 20px 20px 0 0;
+    display: flex; flex-direction: column; box-shadow: var(--shadow-lg); box-sizing: border-box;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .hub-sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 16px 4px; }
+  .hub-sheet-head h2 { margin: 0; font-size: 19px; font-weight: 700; }
+  .hub-sheet-head h2 span { color: var(--text-tertiary); font-weight: 500; }
+  .hub-sheet-note { margin: 0; padding: 0 16px 8px; font-size: 13px; color: var(--muted); }
+  .hub-sheet-list { overflow-y: auto; padding: 4px 16px 16px; display: flex; flex-direction: column; gap: 14px; }
+  .hub-wait-group h3 { margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
+  .hub-wait-item { border: 1px solid var(--border); border-radius: 12px; padding: 11px 12px; display: flex; flex-direction: column; gap: 9px; margin-bottom: 8px; }
+  .hub-wait-item .t { font-size: 15px; font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
+  .hub-wait-item .d { font-size: 12px; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; }
+  .hub-wait-item .acts { display: flex; gap: 8px; flex-wrap: wrap; }
+  .hub-wait-item .acts .btn { min-height: 36px; padding: 4px 14px; font-size: 14px; }
+  .hub-reply {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 6px;
+    padding: 6px 6px 6px 12px; border-radius: 10px; background: var(--accent-soft);
+  }
+  .hub-reply .w { min-width: 0; display: flex; flex-direction: column; }
+  .hub-reply .k { font-size: 11px; font-weight: 700; color: var(--accent-ink); }
+  .hub-reply .q { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hub-reply .btn { min-height: 36px; min-width: 36px; padding: 0 10px; }
+  .hub-answering { font-size: 12px; color: var(--muted); margin: 0 4px 4px; text-align: right; overflow-wrap: anywhere; }
+
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -392,6 +441,7 @@
     <h1>Hub</h1>
     <div class="hub-head-links">
       <a href="./index.html">Back to app</a>
+      <button type="button" class="hub-wait-btn" id="wait-btn" hidden aria-label="Waiting on you"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg><span class="hub-badge" id="wait-badge" hidden></span></button>
       <button type="button" class="hub-link" id="signout" hidden>Sign out of Hub</button>
     </div>
   </header>
@@ -425,8 +475,13 @@
     <div class="hub-notice setup" id="setup-notice" hidden>The Hub isn't set up yet: run sql/hub_messages.sql in Supabase.</div>
     <div class="hub-notice" id="retry-notice" hidden>Can't reach the Hub right now. Retrying…</div>
     <div class="hub-working" id="working" hidden></div>
+    <button type="button" class="hub-wait-bar" id="wait-bar" hidden></button>
 
     <form class="hub-composer" id="composer" novalidate>
+      <div class="hub-reply" id="reply-tag" hidden>
+        <span class="w"><span class="k">Answering</span><span class="q" id="reply-q"></span></span>
+        <button type="button" class="btn" id="reply-x" aria-label="Stop answering this">✕</button>
+      </div>
       <div class="hub-chips" id="attach-chips" hidden></div>
       <div class="hub-compose-row">
         <button type="button" class="btn hub-attach" id="attach" aria-label="Attach a file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
@@ -441,6 +496,16 @@
     </form>
   </div>
 </div>
+
+<div class="hub-sheet-back" id="wait-back" hidden></div>
+<section class="hub-sheet" id="wait-sheet" role="dialog" aria-modal="true" aria-labelledby="wait-title" hidden>
+  <div class="hub-sheet-head">
+    <h2 id="wait-title">Waiting on you <span id="wait-n"></span></h2>
+    <button type="button" class="btn" id="wait-close">Close</button>
+  </div>
+  <p class="hub-sheet-note">Stays here until you answer or clear it. Oldest first.</p>
+  <div class="hub-sheet-list" id="wait-list"></div>
+</section>
 
 <script>
 'use strict';
@@ -635,6 +700,7 @@ function showSignIn(message) {
   stopPolling();
   rowsById.clear(); cardState.clear(); hasOlder = false; lastSig = ''; lastMaxId = 0;
   showEarlier = false; floorId = 0; opening = true;
+  waitItems = []; waitSent.clear(); setReply(null); closeWaiting(true); renderWaiting(); $('wait-btn').hidden = true;
   listEl.innerHTML = '';
   $('chat-view').hidden = true;
   $('signout').hidden = true;
@@ -1207,12 +1273,25 @@ function renderApproval(row) {
   return `<div class="hub-card${CARD_RE.test(first) || PROPOSAL_RE.test(first) ? ' hub-card-change' : ''}">${renderCardBody(row)}${actions}</div>`;
 }
 
+// A message he sent from his Waiting on you list: "[w:<id>] text" -> "Answering: <title>" over the bubble.
+function renderAnswerRow(row, id, text, time) {
+  const it = waitSeen.get(id);
+  const about = `<div class="hub-answering">Answering: ${escapeHtml(it ? it.title : 'a question from your list')}</div>`;
+  const files = Array.isArray(row.files) ? row.files.filter(f => f && typeof f === 'object') : [];
+  const names = files.map(f => String(f.name == null ? '' : f.name));
+  const chips = names.length ? `<div class="hub-chips">${names.map(n => `<span class="hub-chip"><span class="hub-chip-name">File: ${escapeHtml(n)}</span></span>`).join('')}</div>` : '';
+  const bubble = !text || (names.length && text === 'Sent ' + names.join(', ')) ? '' : `<div class="hub-bubble">${escapeHtml(text)}</div>`;
+  return `<div class="hub-msg me">${about}${bubble}${chips}${time}</div>`;
+}
+
 function renderRow(row) {
   const d = new Date(row.created_at);
   const time = isNaN(d) ? '' : `<div class="hub-time">${escapeHtml(fmtTime(d))}</div>`;
   const body = row.body == null ? '' : String(row.body);
   switch (row.role) {
     case 'user': {
+      const wm = WAIT_PREFIX.exec(body);
+      if (wm) return renderAnswerRow(row, Number(wm[1]), body.slice(wm[0].length), time);
       const label = COMMAND_LABELS[body.trim()];
       const files = Array.isArray(row.files) ? row.files.filter(f => f && typeof f === 'object') : [];
       if (files.length) {
@@ -1461,6 +1540,7 @@ function stopPolling() {
   pollingOn = false;
   clearTimeout(pollTimer);
   pollTimer = null;
+  clearTimeout(waitTimer);
 }
 function schedulePoll() {
   clearTimeout(pollTimer);
@@ -1500,6 +1580,12 @@ async function startChat() {
   pollingOn = true;
   await loadInitial();
   if (pollingOn) schedulePoll();
+  if (pollingOn) { await loadWaiting(); scheduleWaiting(); }
+  // The app's "N waiting on you" banner links to hub.html#waiting: open the tray once.
+  if (pollingOn && location.hash === '#waiting') {
+    history.replaceState(null, '', location.pathname + location.search);
+    if (waitItems.length) openWaiting();
+  }
 }
 
 document.addEventListener('visibilitychange', () => {
@@ -1510,6 +1596,7 @@ document.addEventListener('visibilitychange', () => {
   } else if (pollingOn) {
     if (hiddenAt && Date.now() - hiddenAt >= AWAY_MS) { bottomNext = true; render(); }
     pollNow();
+    loadWaiting();
   }
 });
 
@@ -1600,8 +1687,10 @@ async function uploadFile(file, path) {
 }
 
 let sending = false;
-async function sendText(raw, fromComposer) {
+async function sendText(raw, fromComposer, answering) {
   const text = String(raw || '').trim();
+  const ans = answering || (fromComposer ? replyTo : null);
+  const pre = ans ? `[w:${ans.id}] ` : '';
   const files = fromComposer ? attached.slice() : [];
   if ((!text && !files.length) || sending) return;
   if (text.length > MAX_LEN) { sendErrEl.textContent = `Too long: ${text.length} / ${MAX_LEN} characters.`; return; }
@@ -1626,12 +1715,13 @@ async function sendText(raw, fromComposer) {
         meta.push({ path, name: f.name, type: f.type, size: f.size });
       }
       sendBtn.textContent = 'Send';
-      await insertRow({ role: 'user', body: text || ('Sent ' + files.map(f => f.name).join(', ')), files: meta });
+      await insertRow({ role: 'user', body: pre + (text || ('Sent ' + files.map(f => f.name).join(', '))), files: meta });
       attached = [];
       renderAttached();
     } else {
-      await insertRow({ role: 'user', body: text });
+      await insertRow({ role: 'user', body: pre + text });
     }
+    if (ans) answeredHere(ans.id);
     if (fromComposer) { inputEl.value = ''; onInput(); }
     if (text === '/new') showEarlier = false;   // the new conversation starts on a clean screen
     noteSuccess();
@@ -1676,6 +1766,137 @@ async function tapCardButton(cardId, gi, bi) {
     }
   }
 }
+
+// ---- Waiting on you (Nov 5) ----
+// Open items from public.waiting (agentkit/waiting.py writes them). Answer: a tag over the composer, and the next
+// message goes out as "[w:<id>] text"; the PC turns that into context and marks the item answered. A "send" action
+// sends its text right away with the same prefix. Clear and Later PATCH status / snooze_until, the only columns
+// the page may change. No waiting table in Supabase: the feature stays hidden.
+const WAIT_PREFIX = /^\[w:(\d{1,12})\]\s*/;
+const WAIT_EVERY_MS = 15000;
+const WAIT_HOLD_MS = 10 * 60000;   // an item answered here stays hidden while the PC catches up
+const WAIT_GROUPS = [['question', 'Questions'], ['confirm', 'Confirm'], ['mail', 'Mail'], ['note', 'From the bots']];
+let waitItems = [];
+let waitOff = false;
+let waitTimer = null;
+let replyTo = null;
+const waitSeen = new Map();   // id -> item, so a sent answer can still show its question
+const waitSent = new Map();   // id -> when it was answered on this page
+
+function answeredHere(id) {
+  waitSent.set(id, Date.now());
+  waitItems = waitItems.filter(w => Number(w.id) !== id);
+  if (replyTo && replyTo.id === id) setReply(null);
+  renderWaiting();
+}
+async function loadWaiting() {
+  if (waitOff || !getHubSession()) return;
+  try {
+    const r = await hubFetch('/waiting?select=id,created_at,kind,source,title,detail,actions,snooze_until&status=eq.open&order=id.asc&limit=100', { method: 'GET' });
+    const rows = await r.json();
+    const now = Date.now();
+    const list = Array.isArray(rows) ? rows : [];
+    for (const w of list) waitSeen.set(Number(w.id), w);
+    for (const [id, at] of waitSent) if (now - at > WAIT_HOLD_MS) waitSent.delete(id);
+    waitItems = list.filter(w => !waitSent.has(Number(w.id)) && (!w.snooze_until || Date.parse(w.snooze_until) <= now));
+  } catch (e) {
+    if (e && (isMissingTable(e) || e.code === '42P01')) { waitOff = true; waitItems = []; }
+    else return;
+  }
+  if (replyTo && !waitItems.some(w => Number(w.id) === replyTo.id)) setReply(null);
+  renderWaiting();
+  render();
+}
+function scheduleWaiting() {
+  clearTimeout(waitTimer);
+  if (waitOff) return;
+  waitTimer = setTimeout(async () => {
+    if (!document.hidden && pollingOn) await loadWaiting();
+    if (pollingOn) scheduleWaiting();
+  }, WAIT_EVERY_MS);
+}
+function waitSummary(items) {
+  const n = k => items.filter(w => w.kind === k).length;
+  const q = n('question'), c = n('confirm'), m = n('mail'), o = n('note');
+  const parts = [];
+  if (q) parts.push(`${q} question${q > 1 ? 's' : ''}`);
+  if (c) parts.push(`${c} date${c > 1 ? 's' : ''}`);
+  if (m) parts.push(`${m} mail`);
+  if (o) parts.push(`${o} from the bots`);
+  return parts.join(', ');
+}
+function renderWaiting() {
+  const n = waitItems.length;
+  const btn = $('wait-btn'), badge = $('wait-badge'), bar = $('wait-bar');
+  btn.hidden = waitOff;
+  badge.hidden = !n;
+  badge.textContent = n > 99 ? '99+' : String(n);
+  btn.setAttribute('aria-label', n ? `${n} waiting on you` : 'Waiting on you: nothing');
+  bar.hidden = !n;
+  bar.innerHTML = n ? `<span class="n"><span class="hub-wait-dot" aria-hidden="true"></span>${n} waiting on you</span><span class="sum">${escapeHtml(waitSummary(waitItems))}</span>` : '';
+  $('wait-n').textContent = n ? String(n) : '';
+  const list = $('wait-list');
+  if (!n) { list.innerHTML = '<div class="hub-empty">Nothing waiting on you.</div>'; return; }
+  list.innerHTML = WAIT_GROUPS.map(([kind, label]) => {
+    const items = waitItems.filter(w => w.kind === kind || (kind === 'note' && !WAIT_GROUPS.some(g => g[0] === w.kind)));
+    if (!items.length) return '';
+    return `<div class="hub-wait-group"><h3>${escapeHtml(label)}</h3>${items.map(w => {
+      const acts = (Array.isArray(w.actions) ? w.actions : []).slice(0, 3).map((a, i) =>
+        `<button type="button" class="btn${i === 0 ? ' btn-primary' : ''}" data-wait="${Number(w.id)}" data-act="${i}">${escapeHtml(String((a && a.label) || 'OK'))}</button>`).join('');
+      return `<div class="hub-wait-item"><div><div class="t">${escapeHtml(String(w.title || ''))}</div>${w.detail ? `<div class="d">${escapeHtml(String(w.detail))}</div>` : ''}</div><div class="acts">${acts}</div></div>`;
+    }).join('')}</div>`;
+  }).join('');
+}
+let waitOpener = null;
+function openWaiting() {
+  waitOpener = document.activeElement;
+  $('wait-back').hidden = false; $('wait-sheet').hidden = false; $('wait-close').focus();
+}
+function closeWaiting(keepFocus) {
+  const was = !$('wait-sheet').hidden;
+  $('wait-back').hidden = true; $('wait-sheet').hidden = true;
+  if (was && !keepFocus && waitOpener && waitOpener.focus) waitOpener.focus();
+}
+function setReply(item) {
+  replyTo = item ? { id: Number(item.id), title: String(item.title || '') } : null;
+  $('reply-tag').hidden = !replyTo;
+  $('reply-q').textContent = replyTo ? replyTo.title : '';
+}
+async function patchWaiting(id, body) {
+  await hubFetch(`/waiting?id=eq.${Number(id)}&status=eq.open`, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify(body) });
+}
+async function tapWaiting(id, i) {
+  const w = waitItems.find(x => Number(x.id) === id);
+  const a = w && Array.isArray(w.actions) ? w.actions[i] : null;
+  if (!a) return;
+  const doing = String(a.do || '');
+  sendErrEl.textContent = '';
+  try {
+    if (doing === 'answer') { setReply(w); closeWaiting(true); inputEl.focus(); return; }
+    if (doing === 'send') {
+      closeWaiting();
+      await sendText(String(a.text || a.label || 'OK'), false, { id, title: String(w.title || '') });
+      return;
+    }
+    if (doing === 'snooze') await patchWaiting(id, { snooze_until: new Date(Date.now() + 86400000).toISOString() });
+    else await patchWaiting(id, { status: 'cleared', resolved_at: new Date().toISOString() });
+    waitItems = waitItems.filter(x => Number(x.id) !== id);
+    if (replyTo && replyTo.id === id) setReply(null);
+    renderWaiting();
+  } catch (e) {
+    if (e.status !== 401) sendErrEl.textContent = `Couldn't update that: ${e.message || 'network error'}.`;
+  }
+}
+$('wait-btn').addEventListener('click', openWaiting);
+$('wait-bar').addEventListener('click', openWaiting);
+$('wait-close').addEventListener('click', () => closeWaiting());
+$('wait-back').addEventListener('click', () => closeWaiting());
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('wait-sheet').hidden) closeWaiting(); });
+$('wait-list').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-wait]');
+  if (b) tapWaiting(Number(b.dataset.wait), Number(b.dataset.act));
+});
+$('reply-x').addEventListener('click', () => { setReply(null); inputEl.focus(); });
 
 // ---- Composer ----
 
