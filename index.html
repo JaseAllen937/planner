@@ -111,6 +111,13 @@
         </div>
         <button class="btn" id="today-customise-btn">Customise</button>
       </div>
+      <div class="settings-row">
+        <div>
+          <div>Morning card</div>
+          <div class="meta">The &ldquo;I GET to&rdquo; card after your sleep log; a bot writes it each morning</div>
+        </div>
+        <button class="btn" id="iget-preview-btn">Preview</button>
+      </div>
     </div>
 
     <div class="settings-section">
@@ -270,8 +277,9 @@
 <div class="modal iget-modal" id="iget-modal" role="dialog" aria-modal="true" aria-labelledby="iget-title">
   <div class="iget-panel">
     <h2 class="iget-title" id="iget-title">I <span>GET</span> to.</h2>
-    <p class="iget-sub">Not &ldquo;I have to.&rdquo;</p>
+    <p class="iget-sub" id="iget-sub">Not &ldquo;I have to.&rdquo;</p>
     <div class="iget-list" id="iget-list"></div>
+    <p class="iget-note" id="iget-note" hidden></p>
     <button type="button" class="btn btn-primary iget-go" id="iget-go">Let&rsquo;s go</button>
   </div>
 </div>
@@ -884,7 +892,7 @@ const SCHEMA_VERSION = 17;
 // Human-facing build tag shown in Settings and stamped into every export legend.
 // BUMP THIS TOGETHER WITH sw.js VERSION on every deploy — a stale tag is how a
 // rolled-back build went unnoticed for two days.
-const APP_VERSION = 'v114';
+const APP_VERSION = 'v115';
 
 // v109 (Nov 2, "it looks like AI slop ... modern and readable"): one line-icon set
 // instead of emoji tiles. Fixed paths only; nothing stored is ever put in here.
@@ -2180,17 +2188,60 @@ function iGetToTodos(today) {
       && !state.completions.some(c => c.ref_id === it.id) && !findMissed(it.id, today))
     .sort((a, b) => (a.time ? 1 : 0) - (b.time ? 1 : 0) || String(a.time || '').localeCompare(String(b.time || '')));
 }
-function showIGetTo(force) {
+// v115: the morning card bot (agentkit/morning.py) writes what goes under the headline each morning, to fit the day
+// (Jase: "a bot editing the thing each morning to fit would be better"). Fetched ahead of time and again at Save
+// (1.5 s at most); no card, no table or offline: today's to-dos as before. Showing it stamps seen_at, so the bot
+// stops rewriting it.
+const MCARD_WAIT_MS = 1500;
+let morningCard = null;    // { day, card, at } for the newest card fetched
+let _mcardOff = false;
+async function loadMorningCard() {
+  if (_mcardOff || !getSession() || !supaConfigured() || !navigator.onLine) return morningCard;
+  const day = todayDate();
+  try {
+    const r = await supaFetch(`/morning_card?select=day,card&day=eq.${day}`, { method: 'GET' });
+    const rows = await r.json();
+    const row = Array.isArray(rows) ? rows[0] : null;
+    if (row && row.card && typeof row.card === 'object' && !Array.isArray(row.card)) morningCard = { day, card: row.card, at: Date.now() };
+  } catch (e) {
+    if (/-> 404\b|PGRST205|42P01/.test(String(e && e.message || ''))) _mcardOff = true;
+  }
+  return morningCard;
+}
+function markMorningCardSeen(day) {
+  if (_mcardOff || !getSession() || !supaConfigured()) return;
+  supaFetch(`/morning_card?day=eq.${day}`, { method: 'PATCH', headers: { Prefer: 'return=minimal' },
+    body: JSON.stringify({ seen_at: new Date().toISOString() }) }).catch(() => {});
+}
+function iGetToCardHtml(card) {
+  const items = (Array.isArray(card.items) ? card.items : []).filter(x => typeof x === 'string' && x.trim()).slice(0, IGET_MAX);
+  return items.length ? '<ul>' + items.map(x => `<li>${escapeHtml(x)}</li>`).join('') + '</ul>' : '';
+}
+// preview (Settings > Morning card): shows today's card without counting as seen, so the bot can still update it
+// and the real one still comes after the next sleep log.
+async function showIGetTo(force, preview) {
   const today = todayDate();
-  try { if (!force && localStorage.getItem(IGET_KEY) === today) return; } catch (e) { /* storage off: show it anyway */ }
-  const todos = iGetToTodos(today);
-  const list = document.getElementById('iget-list');
-  list.innerHTML = todos.length
-    ? '<div class="iget-list-head">Today I get to:</div><ul>' + todos.slice(0, IGET_MAX).map(it => `<li>${escapeHtml(it.title)}</li>`).join('')
-      + '</ul>' + (todos.length > IGET_MAX ? `<div class="iget-more">and ${todos.length - IGET_MAX} more</div>` : '')
-    : '';
+  try { if (!force && !preview && localStorage.getItem(IGET_KEY) === today) return; } catch (e) { /* storage off: show it anyway */ }
+  if (!preview) { try { localStorage.setItem(IGET_KEY, today); } catch (e) { /* fine */ } }
+  const got = await Promise.race([loadMorningCard(), new Promise(r => setTimeout(() => r(morningCard), MCARD_WAIT_MS))]);
+  const card = got && got.day === today ? got.card : null;
+  const sub = document.getElementById('iget-sub'), list = document.getElementById('iget-list'), note = document.getElementById('iget-note');
+  if (card && typeof card.line === 'string' && card.line.trim()) {
+    sub.textContent = card.line;
+    list.innerHTML = iGetToCardHtml(card);
+    note.textContent = typeof card.note === 'string' ? card.note : '';
+    note.hidden = !note.textContent.trim();
+    if (!preview) markMorningCardSeen(today);
+  } else {
+    const todos = iGetToTodos(today);
+    sub.textContent = 'Not \u201cI have to.\u201d';
+    list.innerHTML = todos.length
+      ? '<div class="iget-list-head">Today I get to:</div><ul>' + todos.slice(0, IGET_MAX).map(it => `<li>${escapeHtml(it.title)}</li>`).join('')
+        + '</ul>' + (todos.length > IGET_MAX ? `<div class="iget-more">and ${todos.length - IGET_MAX} more</div>` : '')
+      : '';
+    note.textContent = ''; note.hidden = true;
+  }
   document.getElementById('iget-modal').classList.add('open');
-  try { localStorage.setItem(IGET_KEY, today); } catch (e) { /* fine */ }
   requestAnimationFrame(() => { const b = document.getElementById('iget-go'); if (b) b.focus(); });
 }
 function hideIGetTo() { document.getElementById('iget-modal').classList.remove('open'); }
@@ -10809,6 +10860,7 @@ async function initialSync() {
     if (_pendingPush) triggerSync();
     applyAgentInbox();   // v102 — fire-and-forget; never throws
     refreshWaiting(); scheduleWaiting();   // v112: the Hub's Waiting on you count
+    loadMorningCard();                    // v115: today's morning card, ready before the sleep log
     noteStartup();       // app events — first open + running-focus re-log, once per page load
   } catch (e) {
     console.warn('Initial sync failed:', e);
@@ -11622,7 +11674,7 @@ function scheduleWaiting() {
   if (_waitingOff) return;
   _waitingTimer = setTimeout(async () => { await refreshWaiting(); scheduleWaiting(); }, WAITING_EVERY_MS);
 }
-document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshWaiting(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshWaiting(); loadMorningCard(); } });
 window.addEventListener('online', refreshWaiting);
 
 // ---- App events (focus nudges + check times) ----
@@ -12140,6 +12192,7 @@ document.querySelectorAll('#mc-flags .flag-chip').forEach(b => {
 document.getElementById('mc-submit-btn').addEventListener('click', submitMorningPopup);
 document.getElementById('mc-close-btn').addEventListener('click', dismissMorningPopup);
 document.getElementById('iget-go').addEventListener('click', hideIGetTo);
+document.getElementById('iget-preview-btn').addEventListener('click', () => showIGetTo(true, true));
 document.getElementById('iget-modal').addEventListener('click', (e) => { if (e.target.id === 'iget-modal') hideIGetTo(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && document.getElementById('iget-modal').classList.contains('open')) hideIGetTo(); });
 

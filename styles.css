@@ -516,6 +516,8 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
 .iget-list li { overflow-wrap: anywhere; }
 .iget-more { font-size: 13px; color: var(--muted); margin-top: 4px; }
 .iget-go { width: 100%; min-height: 52px; margin-top: 28px; font-size: 17px; }
+.iget-note { margin: 18px 0 0; padding: 10px 12px; border-radius: 12px; background: var(--accent-soft); color: var(--accent-ink); font-size: 15px; text-align: left; overflow-wrap: anywhere; }
+.iget-note[hidden] { display: none; }
 
 /* Dismiss control for the morning popup — the explicit exit so a blocking modal
    can never hide the recovery surface (Settings / Sync now / Import / Export). */
