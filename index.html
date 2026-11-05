@@ -245,29 +245,7 @@
       <div class="mc-warn" id="mc-bed-warn" role="alert" hidden></div>
     </div>
 
-    <div class="field">
-      <label>Mood</label>
-      <div class="scale" id="mc-mood">
-        <button type="button" class="scale-btn" data-val="1">1</button>
-        <button type="button" class="scale-btn" data-val="2">2</button>
-        <button type="button" class="scale-btn" data-val="3">3</button>
-        <button type="button" class="scale-btn" data-val="4">4</button>
-        <button type="button" class="scale-btn" data-val="5">5</button>
-      </div>
-      <div class="scale-labels"><span>low</span><span>high</span></div>
-    </div>
-
-    <div class="field">
-      <label>Energy</label>
-      <div class="scale" id="mc-energy">
-        <button type="button" class="scale-btn" data-val="1">1</button>
-        <button type="button" class="scale-btn" data-val="2">2</button>
-        <button type="button" class="scale-btn" data-val="3">3</button>
-        <button type="button" class="scale-btn" data-val="4">4</button>
-        <button type="button" class="scale-btn" data-val="5">5</button>
-      </div>
-      <div class="scale-labels"><span>low</span><span>high</span></div>
-    </div>
+    <!-- v111: the Mood and Energy 1-5 ratings are gone (Jase, Nov 4). Older days keep what they logged. -->
 
     <div class="field">
       <label>Flags</label>
@@ -893,7 +871,7 @@ const SCHEMA_VERSION = 17;
 // Human-facing build tag shown in Settings and stamped into every export legend.
 // BUMP THIS TOGETHER WITH sw.js VERSION on every deploy — a stale tag is how a
 // rolled-back build went unnoticed for two days.
-const APP_VERSION = 'v110';
+const APP_VERSION = 'v111';
 
 // v109 (Nov 2, "it looks like AI slop ... modern and readable"): one line-icon set
 // instead of emoji tiles. Fixed paths only; nothing stored is ever put in here.
@@ -2078,8 +2056,6 @@ function renderWeeklySummary() {
 // ---------------- morning popup (blocking) ----------------
 
 const morningState = {
-  mood: null,
-  energy: null,
   flags: { illness: false, travel: false, menstrual: false }
 };
 
@@ -2091,8 +2067,6 @@ function shouldShowMorningPopup() {
 }
 
 function showMorningPopup() {
-  morningState.mood = null;
-  morningState.energy = null;
   morningState.flags = { illness: false, travel: false, menstrual: false };
   const wake = nowHHMM();
   const dsYest = state.daily_state.find(d => d.date === yesterdayDate());
@@ -2103,8 +2077,6 @@ function showMorningPopup() {
   requestAnimationFrame(() => {
     if (wheelPickers.morningWake) wheelPickers.morningWake.setValue(wake);
     if (wheelPickers.morningBed)  wheelPickers.morningBed.setValue(bed);
-    refreshScale('#mc-mood',   null);
-    refreshScale('#mc-energy', null);
     refreshFlags();
   });
 }
@@ -2172,8 +2144,6 @@ function submitMorningPopup() {
 
   const dsToday = ensureDailyState(todayDate());
   dsToday.wake_time = wake;
-  if (morningState.mood   != null) dsToday.mood_am = morningState.mood;
-  if (morningState.energy != null) dsToday.energy  = morningState.energy;
   dsToday.illness = !!morningState.flags.illness;
   dsToday.travel  = !!morningState.flags.travel;
 
@@ -10719,6 +10689,18 @@ function _schedulePush(delay) {
   setSyncStatus('saving');
   _syncTimer = setTimeout(_doPush, delay);
 }
+// v111: upload right away when the app goes to the background. A hidden PWA's
+// timers stop (iOS suspends it), so a change saved in the last 1.5 s (end a
+// focus session, lock the phone) used to wait until the next open: the agents
+// saw a 10:51 AM session at 2:40 PM. A push already in flight has no timer.
+function flushPushOnHide() {
+  if (!_pendingPush || !_syncTimer) return;
+  if (!getSession() || !supaConfigured() || !navigator.onLine) return;
+  clearTimeout(_syncTimer);
+  _doPush();
+}
+document.addEventListener('visibilitychange', () => { if (document.hidden) flushPushOnHide(); });
+window.addEventListener('pagehide', flushPushOnHide);
 // One push attempt. Clears _pendingPush on EVERY exit (success, failure, offline)
 // so a failed/aborted push can never wedge the pull guard for the life of the
 // page — the v89 deadlock. Failure is recorded in _pushFailed, kept distinct
@@ -12055,18 +12037,6 @@ document.querySelectorAll('#f-item-priority .prio-btn').forEach(b => {
 });
 
 // Morning popup
-document.querySelectorAll('#mc-mood .scale-btn').forEach(b => {
-  b.addEventListener('click', () => {
-    morningState.mood = Number(b.dataset.val);
-    refreshScale('#mc-mood', morningState.mood);
-  });
-});
-document.querySelectorAll('#mc-energy .scale-btn').forEach(b => {
-  b.addEventListener('click', () => {
-    morningState.energy = Number(b.dataset.val);
-    refreshScale('#mc-energy', morningState.energy);
-  });
-});
 document.querySelectorAll('#mc-flags .flag-chip').forEach(b => {
   b.addEventListener('click', () => {
     const f = b.dataset.flag;
