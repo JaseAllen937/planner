@@ -500,6 +500,23 @@ textarea { min-height: 80px; resize: vertical; line-height: 1.4; }
   margin: 0 16px;
   max-height: 88vh;
 }
+/* v114: "I GET to" after the morning log: big, centered, one tap to dismiss */
+.iget-modal { align-items: center; z-index: 120; background: rgba(17, 17, 20, 0.55); }
+.iget-panel {
+  width: calc(100% - 32px); max-width: 520px; box-sizing: border-box; padding: 40px 24px 24px;
+  background: var(--card); border-radius: var(--radius-xl); box-shadow: var(--shadow-lg); text-align: center;
+}
+.iget-title { margin: 0; font-size: clamp(48px, 15vw, 76px); line-height: 1.02; font-weight: 800; letter-spacing: -0.02em; }
+.iget-title span { color: var(--accent); }
+.iget-sub { margin: 10px 0 0; font-size: 18px; color: var(--text-secondary); }
+.iget-list { margin: 24px 0 0; text-align: left; }
+.iget-list:empty { display: none; }
+.iget-list-head { font-size: 13px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
+.iget-list ul { margin: 0; padding-left: 20px; font-size: 17px; line-height: 1.5; }
+.iget-list li { overflow-wrap: anywhere; }
+.iget-more { font-size: 13px; color: var(--muted); margin-top: 4px; }
+.iget-go { width: 100%; min-height: 52px; margin-top: 28px; font-size: 17px; }
+
 /* Dismiss control for the morning popup — the explicit exit so a blocking modal
    can never hide the recovery surface (Settings / Sync now / Import / Export). */
 .mc-close-btn {

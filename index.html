@@ -264,6 +264,18 @@
   </div>
 </div>
 
+<!-- v114: right after the morning sleep log, a big "I GET to" reminder (Jase, Nov 5: "every morning after I fill in
+     the wake and sleep time. a popup big on my screen telling me to remember that"). Atomic Habits ch. 10: "I have
+     to" becomes "I get to". Once a day, on this device. -->
+<div class="modal iget-modal" id="iget-modal" role="dialog" aria-modal="true" aria-labelledby="iget-title">
+  <div class="iget-panel">
+    <h2 class="iget-title" id="iget-title">I <span>GET</span> to.</h2>
+    <p class="iget-sub">Not &ldquo;I have to.&rdquo;</p>
+    <div class="iget-list" id="iget-list"></div>
+    <button type="button" class="btn btn-primary iget-go" id="iget-go">Let&rsquo;s go</button>
+  </div>
+</div>
+
 <div class="modal" id="form-modal" role="dialog" aria-modal="true">
   <div class="modal-panel">
     <h2 id="form-title">Add item</h2>
@@ -872,7 +884,7 @@ const SCHEMA_VERSION = 17;
 // Human-facing build tag shown in Settings and stamped into every export legend.
 // BUMP THIS TOGETHER WITH sw.js VERSION on every deploy — a stale tag is how a
 // rolled-back build went unnoticed for two days.
-const APP_VERSION = 'v113';
+const APP_VERSION = 'v114';
 
 // v109 (Nov 2, "it looks like AI slop ... modern and readable"): one line-icon set
 // instead of emoji tiles. Fixed paths only; nothing stored is ever put in here.
@@ -2156,7 +2168,32 @@ function submitMorningPopup() {
   hideMorningPopup();
   toast('Morning log saved');
   render();
+  showIGetTo();
 }
+
+// ---- v114: "I GET to" after the morning log ----
+const IGET_KEY = 'agendaai_iget_shown';   // the day it was last shown on this device; nothing synced
+const IGET_MAX = 4;
+function iGetToTodos(today) {
+  return state.items
+    .filter(it => it && it.trackCompletion && it.date === today && it.title
+      && !state.completions.some(c => c.ref_id === it.id) && !findMissed(it.id, today))
+    .sort((a, b) => (a.time ? 1 : 0) - (b.time ? 1 : 0) || String(a.time || '').localeCompare(String(b.time || '')));
+}
+function showIGetTo(force) {
+  const today = todayDate();
+  try { if (!force && localStorage.getItem(IGET_KEY) === today) return; } catch (e) { /* storage off: show it anyway */ }
+  const todos = iGetToTodos(today);
+  const list = document.getElementById('iget-list');
+  list.innerHTML = todos.length
+    ? '<div class="iget-list-head">Today I get to:</div><ul>' + todos.slice(0, IGET_MAX).map(it => `<li>${escapeHtml(it.title)}</li>`).join('')
+      + '</ul>' + (todos.length > IGET_MAX ? `<div class="iget-more">and ${todos.length - IGET_MAX} more</div>` : '')
+    : '';
+  document.getElementById('iget-modal').classList.add('open');
+  try { localStorage.setItem(IGET_KEY, today); } catch (e) { /* fine */ }
+  requestAnimationFrame(() => { const b = document.getElementById('iget-go'); if (b) b.focus(); });
+}
+function hideIGetTo() { document.getElementById('iget-modal').classList.remove('open'); }
 
 // ---------------- focus sessions ----------------
 //
@@ -12102,6 +12139,9 @@ document.querySelectorAll('#mc-flags .flag-chip').forEach(b => {
 });
 document.getElementById('mc-submit-btn').addEventListener('click', submitMorningPopup);
 document.getElementById('mc-close-btn').addEventListener('click', dismissMorningPopup);
+document.getElementById('iget-go').addEventListener('click', hideIGetTo);
+document.getElementById('iget-modal').addEventListener('click', (e) => { if (e.target.id === 'iget-modal') hideIGetTo(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && document.getElementById('iget-modal').classList.contains('open')) hideIGetTo(); });
 
 // Calendar nav
 document.getElementById('cal-prev').addEventListener('click', () => shiftCalendarMonth(-1));
