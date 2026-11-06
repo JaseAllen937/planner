@@ -419,6 +419,7 @@
       <div class="focus-count" id="focus-count">0</div>
       <div class="focus-count-label">lapses</div>
       <div class="focus-timer" id="focus-timer">0:00</div>
+      <div class="focus-tap-hint focus-countdown-line" id="focus-countdown-line" hidden></div>
       <div class="focus-tap-hint" id="focus-plan-line" hidden></div>
       <div class="focus-tap-hint">Tap anywhere here when you notice your focus slipped</div>
     </button>
@@ -892,7 +893,7 @@ const SCHEMA_VERSION = 17;
 // Human-facing build tag shown in Settings and stamped into every export legend.
 // BUMP THIS TOGETHER WITH sw.js VERSION on every deploy — a stale tag is how a
 // rolled-back build went unnoticed for two days.
-const APP_VERSION = 'v116';
+const APP_VERSION = 'v117';
 
 // v109 (Nov 2, "it looks like AI slop ... modern and readable"): one line-icon set
 // instead of emoji tiles. Fixed paths only; nothing stored is ever put in here.
@@ -979,6 +980,11 @@ const FOCUS_TYPE_SEEDS = [
   { id: 'work',    label: 'Work',    color: 'blue',   order: 0 },
   { id: 'reading', label: 'Reading', color: 'purple', order: 1 }
 ];
+// v117: the wall stare (Jase, Nov 6: "add a focus session where it is just a 15 minute countdown and that is the wall
+// stare ... make it make a noise when complete"). A focus type with countdownMin counts down, chimes, and saves itself
+// at exactly that length. Seeded once with a stable id, unless he already has a type by that name.
+const FOCUS_COUNTDOWN_SEED = { id: 'wallstare', label: 'Wall stare', color: 'teal', order: 99, countdownMin: 15 };
+const FOCUS_COUNTDOWN_MAX = 180;
 const FOCUS_TYPE_LABEL_MAX = 14;   // characters (code points), enforced on input and in the guard
 const FOCUS_TYPE_ACTIVE_MAX = 6;   // unarchived types; archived ones do not count
 
@@ -1141,12 +1147,21 @@ function ensureShape(s) {
       r.order = (typeof r.order === 'number' && isFinite(r.order)) ? Math.round(r.order) : 1e6;
       r.archived = r.archived === true;
       if (typeof r.createdAt !== 'string' || !/^\d{4}-\d{2}-\d{2}/.test(r.createdAt)) r.createdAt = todayDate();
+      if (r.countdownMin != null) {   // v117: minutes, 1 to 180; anything else counts up
+        const n = Math.round(Number(r.countdownMin));
+        if (n >= 1 && n <= FOCUS_COUNTDOWN_MAX) r.countdownMin = n; else delete r.countdownMin;
+      }
     }
     const seen = new Set();                                                              // 4
     list = list.filter(r => (seen.has(r.id) ? false : (seen.add(r.id), true)));
     for (const sd of FOCUS_TYPE_SEEDS) {                                                 // 5
       if (!seen.has(sd.id)) list.push({ ...sd, archived: false, createdAt: todayDate() });
     }
+    if (!seen.has(FOCUS_COUNTDOWN_SEED.id) && !s.focusCountdownSeeded                    // 5b (v117, once per state)
+        && !list.some(r => r.label.trim().toLowerCase() === FOCUS_COUNTDOWN_SEED.label.toLowerCase())) {
+      list.push({ ...FOCUS_COUNTDOWN_SEED, archived: false, createdAt: todayDate() });
+    }
+    s.focusCountdownSeeded = true;
     const byOrder = (a, b) => (a.order - b.order) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
     list.sort(byOrder);
     if (!list.some(r => !r.archived)) list[0].archived = false;                          // 6 (list is never empty: seeds)
@@ -2486,10 +2501,103 @@ function startFocusSession(plan) {
   // pointing at an unarchived type).
   state.activeFocus = { start: nowIso(), type: state.focusLastType, lapses: 0, lapseOffsets: [] };
   if (plan) state.activeFocus.plan = plan;   // v105: optional { text, ref? }
+  const ft = focusTypeById(state.focusLastType);
+  if (ft && ft.countdownMin) {               // v117: fixed at start, so editing the type mid-session changes nothing
+    state.activeFocus.countdownMin = ft.countdownMin;
+    primeFocusChime();                       // the tap unlocks sound for the chime later (iOS needs a tap)
+  }
   saveState();
   logQueued('focus_start', { focus_start: state.activeFocus.start });
   openFocusOverlay();
+  scheduleFocusCountdown();
 }
+
+// ---- v117: countdown sessions (the wall stare) ----
+const CHIME_LATE_MS = 2 * 60 * 1000;   // back in the app later than this: a toast, no chime
+let _focusChime = null;
+let _countdownTimer = null;
+let _focusWakeLock = null;
+function focusCountdownEndMs(af) {
+  return af && af.countdownMin ? Date.parse(af.start) + af.countdownMin * 60000 : NaN;
+}
+// A short three-note chime, made here (no sound file to cache): 16-bit mono WAV in a Blob, played by an <audio>
+// element so it still plays with the ringer switch off.
+function focusChimeUrl() {
+  const rate = 22050, notes = [659.25, 783.99, 1046.5], each = 0.42, len = Math.round(rate * each * notes.length + rate * 0.5);
+  const data = new Int16Array(len);
+  notes.forEach((f, k) => {
+    const off = Math.round(k * each * rate);
+    for (let i = 0; i < rate * 0.9 && off + i < len; i++) {
+      const t = i / rate, env = Math.min(1, t / 0.01) * Math.exp(-t * 4.5);
+      data[off + i] += Math.round(0.32 * 32767 * env * Math.sin(2 * Math.PI * f * t));
+    }
+  });
+  const buf = new ArrayBuffer(44 + len * 2), v = new DataView(buf);
+  const str = (o, x) => { for (let i = 0; i < x.length; i++) v.setUint8(o + i, x.charCodeAt(i)); };
+  str(0, 'RIFF'); v.setUint32(4, 36 + len * 2, true); str(8, 'WAVE'); str(12, 'fmt '); v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true);
+  v.setUint16(32, 2, true); v.setUint16(34, 16, true); str(36, 'data'); v.setUint32(40, len * 2, true);
+  new Int16Array(buf, 44).set(data);
+  return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+}
+function primeFocusChime() {
+  try {
+    if (!_focusChime) { _focusChime = new Audio(focusChimeUrl()); _focusChime.preload = 'auto'; }
+    _focusChime.muted = true;
+    const p = _focusChime.play();
+    if (p && p.then) p.then(() => { _focusChime.pause(); _focusChime.currentTime = 0; _focusChime.muted = false; }).catch(() => { _focusChime.muted = false; });
+    else _focusChime.muted = false;
+  } catch (e) { /* no sound on this device: the toast still says it's done */ }
+}
+function playFocusChime() {
+  try {
+    if (!_focusChime) _focusChime = new Audio(focusChimeUrl());
+    _focusChime.muted = false;
+    _focusChime.currentTime = 0;
+    const p = _focusChime.play();
+    if (p && p.catch) p.catch(() => {});
+  } catch (e) { /* fine */ }
+  try { if (navigator.vibrate) navigator.vibrate([250, 120, 250, 120, 400]); } catch (e) { /* fine */ }
+  window.__focusChimes = (window.__focusChimes || 0) + 1;   // for the page checks
+}
+async function holdFocusWakeLock(on) {
+  try {
+    if (on && !_focusWakeLock && navigator.wakeLock && document.visibilityState === 'visible') {
+      _focusWakeLock = await navigator.wakeLock.request('screen');
+      _focusWakeLock.addEventListener('release', () => { _focusWakeLock = null; });
+    } else if (!on && _focusWakeLock) {
+      const w = _focusWakeLock; _focusWakeLock = null; await w.release();
+    }
+  } catch (e) { _focusWakeLock = null; /* no wake lock here: the screen may sleep, and the chime waits for him */ }
+}
+function scheduleFocusCountdown() {
+  clearTimeout(_countdownTimer); _countdownTimer = null;
+  const af = state.activeFocus;
+  const end = focusCountdownEndMs(af);
+  if (!isFinite(end)) { holdFocusWakeLock(false); return; }
+  holdFocusWakeLock(true);
+  const left = end - Date.now();
+  if (left <= 0) { completeFocusCountdown(); return; }
+  _countdownTimer = setTimeout(completeFocusCountdown, Math.min(left, 2 ** 31 - 1));
+}
+// Saves the session at exactly its length, whenever the app notices (on time, or when he comes back to it).
+function completeFocusCountdown() {
+  const af = state.activeFocus;
+  const end = focusCountdownEndMs(af);
+  if (!isFinite(end) || Date.now() < end) return;
+  clearTimeout(_countdownTimer); _countdownTimer = null;
+  const late = Date.now() - end > CHIME_LATE_MS;
+  const label = focusTypeLabel(af.type) || 'Countdown';
+  if (!late) playFocusChime();
+  finishFocusSession(new Date(end), false, { countdown: true });
+  holdFocusWakeLock(false);
+  toast(late ? `${label} done at ${fmt12(hhmmOf(new Date(end)))} (${af.countdownMin} min)` : `${label} done (${af.countdownMin} min)`);
+}
+function hhmmOf(d) { return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; }
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden || !state || !state.activeFocus || !state.activeFocus.countdownMin) return;
+  scheduleFocusCountdown();   // back in the app: done if the time passed, and the wake lock comes back
+});
 
 function endFocusSession() {
   if (!state.activeFocus) { closeFocusOverlay(); return; }
@@ -2501,11 +2609,13 @@ function endFocusSession() {
 // you get done?" sheet only adds `done` to it — so closing the sheet any way
 // can never lose or half-save the session. `stated` = an end Jase entered for a
 // forgotten session: dated by its start, lapses after the end dropped.
-function finishFocusSession(endAt, stated) {
+function finishFocusSession(endAt, stated, opts = {}) {
   const af = state.activeFocus;
   if (!af) return;
   const startMs = Date.parse(af.start);
   closeFocusOverlay();
+  clearTimeout(_countdownTimer); _countdownTimer = null;
+  if (af.countdownMin) holdFocusWakeLock(false);
   if (!(endAt.getTime() - startMs >= FOCUS_MIN_SAVE_MS)) {
     state.activeFocus = null;
     saveState();
@@ -2516,7 +2626,7 @@ function finishFocusSession(endAt, stated) {
   }
   const rec = {
     id: uuid(),
-    date: stated ? ymd(new Date(startMs)) : todayDate(),
+    date: stated ? ymd(new Date(startMs)) : opts.countdown ? ymd(endAt) : todayDate(),
     start: af.start,
     end: endAt.toISOString(),
     lapses: af.lapses | 0,
@@ -2534,11 +2644,13 @@ function finishFocusSession(endAt, stated) {
   if (focusTypeById(af.type)) rec.type = af.type;
   if (af.plan && typeof af.plan.text === 'string' && af.plan.text) rec.plan = JSON.parse(JSON.stringify(af.plan));
   if (stated) rec.endStated = true;
+  if (af.countdownMin) rec.countdownMin = af.countdownMin;   // v117: what it was set for (ended early = shorter)
   state.focusSessions.push(rec);
   state.activeFocus = null;
   saveState();
   logQueued('focus_end', { focus_start: af.start });
   render();
+  if (opts.countdown) return;   // a wall stare has nothing to "get done"; the toast says it's saved
   openFocusDoneSheet(rec.id);
 }
 
@@ -2585,6 +2697,7 @@ function focusNightDay(ms) { return ymd(new Date(ms - 6 * 60 * 60 * 1000)); }
 function focusBoundaryPassed(af, now) { return focusNightDay(now) > focusNightDay(Date.parse(af.start)); }
 function focusIsForgotten(af, now = Date.now()) {
   if (!af || !af.start || !isFinite(Date.parse(af.start))) return false;
+  if (af.countdownMin) return false;   // v117: a countdown ends itself at its length; never "still running?"
   if (focusBoundaryPassed(af, now)) return true;
   const still = af.stillGoingAt ? Date.parse(af.stillGoingAt) : NaN;
   const since = isFinite(still) ? still : Date.parse(af.start);
@@ -2593,6 +2706,10 @@ function focusIsForgotten(af, now = Date.now()) {
 // Shows the "still running" sheet when the running session is forgotten.
 // Returns true when that sheet is showing. Never takes over another open sheet.
 function checkForgottenFocus() {
+  if (state.activeFocus && state.activeFocus.countdownMin && Date.now() >= focusCountdownEndMs(state.activeFocus)) {
+    completeFocusCountdown();   // v117: opened after it ran out: save it at its length
+    return false;
+  }
   if (!focusIsForgotten(state.activeFocus)) return false;
   if (spaceSheet.classList.contains('open')) return !!(spaceForm && spaceForm.mode === 'focus-forgot');
   closeFocusOverlay();
@@ -2660,6 +2777,7 @@ function discardFocusSession() {
   if (!state.activeFocus) { closeFocusOverlay(); return; }
   if (!confirm('Discard this focus session? Nothing will be saved.')) return;
   const discardedStart = state.activeFocus.start;
+  if (state.activeFocus.countdownMin) { clearTimeout(_countdownTimer); _countdownTimer = null; holdFocusWakeLock(false); }
   state.activeFocus = null;
   saveState();
   logQueued('focus_end', { focus_start: discardedStart });
@@ -2714,8 +2832,15 @@ function refreshFocusOverlayDynamic() {
   const timerEl = document.getElementById('focus-timer');
   if (countEl) countEl.textContent = String(state.activeFocus.lapses | 0);
   if (timerEl) {
-    const elapsed = Date.now() - new Date(state.activeFocus.start).getTime();
-    timerEl.textContent = formatFocusTimer(elapsed);
+    const end = focusCountdownEndMs(state.activeFocus);
+    if (isFinite(end)) {
+      const left = end - Date.now();
+      timerEl.textContent = formatFocusTimer(Math.max(0, left) + 999);   // counts 15:00 down to 0:01, then done
+      if (left <= 0) completeFocusCountdown();
+    } else {
+      const elapsed = Date.now() - new Date(state.activeFocus.start).getTime();
+      timerEl.textContent = formatFocusTimer(elapsed);
+    }
   }
 }
 
@@ -2728,6 +2853,13 @@ function openFocusOverlay() {
     planEl.textContent = plan && typeof plan.text === 'string' ? plan.text : '';
     planEl.hidden = !planEl.textContent;
   }
+  const cdEl = document.getElementById('focus-countdown-line');
+  if (cdEl) {
+    const n = state.activeFocus.countdownMin;
+    cdEl.textContent = n ? `${focusTypeLabel(state.activeFocus.type) || 'Countdown'}: ${n} min. It chimes and saves when it's done. Keep the app open.` : '';
+    cdEl.hidden = !n;
+  }
+  document.getElementById('focus-overlay').classList.toggle('focus-countdown', !!state.activeFocus.countdownMin);
   refreshFocusOverlayDynamic();
   focusOverlay.classList.add('open');
 
@@ -5804,7 +5936,7 @@ function renderFocusTypesSheet() {
   // The drafts are also held in ftNewDraft / ftEditDraft, so a re-render after
   // the input blurs restores the text rather than losing it.
   const ae = document.activeElement;
-  if (ae && (ae.id === 'ft-new-input' || ae.id === 'ft-edit-input')) return;
+  if (ae && (ae.id === 'ft-new-input' || ae.id === 'ft-edit-input' || ae.id === 'ft-edit-countdown')) return;
   const all = focusTypesOrdered();
   const active = all.filter(t => !t.archived), archived = all.filter(t => t.archived);
   const msg = where => (ftMsg && ftMsg.where === where) ? `<div class="ft-msg" role="alert">${escapeHtml(ftMsg.text)}</div>` : '';
@@ -5816,6 +5948,8 @@ function renderFocusTypesSheet() {
         <label class="ft-field-label" for="ft-edit-input">Name</label>
         <input type="text" id="ft-edit-input" class="ft-input" maxlength="${FOCUS_TYPE_LABEL_MAX}" autocomplete="off" value="${escapeHtml(ftEditDraft.label)}">
         ${ftSwatches(ftEditDraft.color, 'edit-color')}
+        <label class="ft-field-label" for="ft-edit-countdown">Countdown minutes (blank counts up)</label>
+        <input type="number" id="ft-edit-countdown" class="ft-input ft-countdown-input" min="1" max="${FOCUS_COUNTDOWN_MAX}" inputmode="numeric" value="${ftEditDraft.countdown || ''}">
         <div class="ft-edit-actions">
           <button type="button" class="btn" data-ftact="archive" data-ftid="${escapeHtml(t.id)}">Archive</button>
           <button type="button" class="btn" data-ftact="edit-cancel">Cancel</button>
@@ -5826,7 +5960,7 @@ function renderFocusTypesSheet() {
     return `
       <div class="ft-row">
         <span class="ft-dot">${focusTypeDot(t.id)}</span>
-        <span class="ft-label">${escapeHtml(t.label)}</span>
+        <span class="ft-label">${escapeHtml(t.label)}${t.countdownMin ? ` <span class="ft-countdown">${t.countdownMin} min countdown</span>` : ''}</span>
         <span class="ft-count">${count(t.id)}</span>
         <button type="button" class="btn ft-edit-btn" data-ftact="edit" data-ftid="${escapeHtml(t.id)}">Edit</button>
       </div>${msg(t.id)}`;
@@ -5876,7 +6010,7 @@ function handleFocusTypesAction(btn) {
   const t = id ? focusTypeById(id) : null;
   const activeCount = () => (state.focusTypes || []).filter(x => !x.archived).length;
   if (act === 'close') { closeFocusTypesSheet(); return; }
-  if (act === 'edit' && t) { ftEditId = t.id; ftEditDraft = { label: t.label, color: t.color }; renderFocusTypesSheet(); return; }
+  if (act === 'edit' && t) { ftEditId = t.id; ftEditDraft = { label: t.label, color: t.color, countdown: t.countdownMin || '' }; renderFocusTypesSheet(); return; }
   if (act === 'edit-cancel') { ftEditId = null; renderFocusTypesSheet(); return; }
   if (act === 'edit-color') { ftEditDraft.color = btn.dataset.color; renderFocusTypesSheet(); return; }
   if (act === 'new-color')  { ftNewDraft.color = btn.dataset.color;  renderFocusTypesSheet(); return; }
@@ -5885,8 +6019,16 @@ function handleFocusTypesAction(btn) {
     if (chk.error) { ftMsg = { where: t.id, text: chk.error }; renderFocusTypesSheet(); return; }
     // Only the id is stored on sessions, so a rename/recolor shows everywhere at
     // once — log, detail, scatter, weekly rows — with no backfill.
+    const cd = document.getElementById('ft-edit-countdown');
+    const raw = cd ? String(cd.value).trim() : String(ftEditDraft.countdown || '');
+    const n = Math.round(Number(raw));
+    if (raw && !(n >= 1 && n <= FOCUS_COUNTDOWN_MAX)) {
+      ftMsg = { where: t.id, text: `Countdown: 1 to ${FOCUS_COUNTDOWN_MAX} minutes, or blank to count up.` };
+      renderFocusTypesSheet(); return;
+    }
     t.label = chk.label;
     t.color = FOCUS_TYPE_COLORS[ftEditDraft.color] ? ftEditDraft.color : 'blue';
+    if (raw) t.countdownMin = n; else delete t.countdownMin;
     ftEditId = null;
     saveState(); render();
     return;
@@ -12106,6 +12248,7 @@ if (focusTypesSheet) {
   focusTypesSheet.addEventListener('input', e => {
     if (e.target.id === 'ft-new-input')  ftNewDraft.label = e.target.value;
     if (e.target.id === 'ft-edit-input') ftEditDraft.label = e.target.value;
+    if (e.target.id === 'ft-edit-countdown') ftEditDraft.countdown = e.target.value;   // v117
   });
   focusTypesSheet.addEventListener('keydown', e => {
     if (e.key !== 'Enter') return;
@@ -12368,6 +12511,7 @@ document.getElementById('journalstats-close-btn').addEventListener('click', clos
 
 initWheelPickers();
 render();
+if (state.activeFocus && state.activeFocus.countdownMin) scheduleFocusCountdown();   // v117: a countdown that was running
 
 // Resume an in-progress focus session if one was running when the app closed.
 if (state.activeFocus) {
