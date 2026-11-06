@@ -892,7 +892,7 @@ const SCHEMA_VERSION = 17;
 // Human-facing build tag shown in Settings and stamped into every export legend.
 // BUMP THIS TOGETHER WITH sw.js VERSION on every deploy — a stale tag is how a
 // rolled-back build went unnoticed for two days.
-const APP_VERSION = 'v115';
+const APP_VERSION = 'v116';
 
 // v109 (Nov 2, "it looks like AI slop ... modern and readable"): one line-icon set
 // instead of emoji tiles. Fixed paths only; nothing stored is ever put in here.
@@ -4729,11 +4729,12 @@ function codeReadSlice() {
   const n = seq.length;
   if (n === 0 && orderedRules.length === 0) return null; // nothing to read
 
-  // Virtue = the Franklin focus virtue for the night-date (codeNightDate, so a
-  // pre-06:00 session still shows the night's virtue, not the new day's). The
-  // sequential walk holds each virtue cycleDays nights and can never repeat
-  // back-to-back. No shuffle; anchorDate/cycleDays drive it.
-  const virtue = franklinVirtueForDate(codeNightDate());
+  // Virtue = the Franklin focus virtue for the day AFTER the night-date (v116, Jase Nov 6: "last night I did
+  // cimitas but today is discipline so I wasnt able to practice the virtue im doing today at all before I start.
+  // basically make the virtue practice at night one day ahead"). The night before a virtue's first day he reads
+  // it, so he starts the day ready; each virtue's nights end one night early for the next one. codeNightDate keeps
+  // a pre-06:00 session on the night before. The Practising card on Today and slips stay on the day's virtue.
+  const virtue = franklinVirtueForDate(addDays(codeNightDate(), 1));
   const notes = (virtue && c.virtueNotes[virtue.id]) || null;
 
   // Per-night deterministic seed for the read-mode single-rule pick — days since
@@ -4842,7 +4843,7 @@ function renderCodeReadSlice(body, slice) {
   // ---- Recite mode: the night's virtue has assigned rules ----
   if (v && slice.mode === 'recite') {
     const rules = slice.virtueRules || [];
-    const head = `<div class="vault-section-head"><span class="vault-section-title">Tonight's recite · ${escapeHtml(v.name)}</span></div>`;
+    const head = `<div class="vault-section-head"><span class="vault-section-title">Tonight's recite · ${escapeHtml(v.name)}, for tomorrow</span></div>`;
     const virtueTop = `<div class="code-readslice-virtue"><div class="code-virtue-name">${escapeHtml(v.name)}</div><div class="code-virtue-def">${escapeHtml(v.definition)}</div></div>`;
     const coreCount = rules.filter(r => ruleIsCoreFor(r, v.id)).length;
     if (!codeReciteRevealed) {
@@ -4876,7 +4877,7 @@ function renderCodeReadSlice(body, slice) {
 
   // ---- Read mode: unchanged behaviour + scope-labelled rule number ----
   const title = v
-    ? `Tonight's read · ${escapeHtml(v.name)}`
+    ? `Tonight's read · ${escapeHtml(v.name)}, for tomorrow`
     : (slice.rule ? `Tonight's read · ${escapeHtml(codeScopeLabel(slice.rule.scope))} rule ${slice.ruleNumber}` : `Tonight's read`);
   let virtueBlock = '';
   if (v) {
