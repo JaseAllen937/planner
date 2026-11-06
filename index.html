@@ -893,7 +893,7 @@ const SCHEMA_VERSION = 17;
 // Human-facing build tag shown in Settings and stamped into every export legend.
 // BUMP THIS TOGETHER WITH sw.js VERSION on every deploy — a stale tag is how a
 // rolled-back build went unnoticed for two days.
-const APP_VERSION = 'v117';
+const APP_VERSION = 'v118';
 
 // v109 (Nov 2, "it looks like AI slop ... modern and readable"): one line-icon set
 // instead of emoji tiles. Fixed paths only; nothing stored is ever put in here.
@@ -980,6 +980,8 @@ const FOCUS_TYPE_SEEDS = [
   { id: 'work',    label: 'Work',    color: 'blue',   order: 0 },
   { id: 'reading', label: 'Reading', color: 'purple', order: 1 }
 ];
+// v118: calendar events can be checked off (Jase, Nov 6: "make every calander event a to-do so it can be marked").
+// They stay events: Mark done on their day or after, no Skip, never expected, missed or late.
 // v117: the wall stare (Jase, Nov 6: "add a focus session where it is just a 15 minute countdown and that is the wall
 // stare ... make it make a noise when complete"). A focus type with countdownMin counts down, chimes, and saves itself
 // at exactly that length. Seeded once with a stable id, unless he already has a type by that name.
@@ -1645,6 +1647,25 @@ function findMissed(refId, date) {
   return state.missed.find(m => m.ref_id === refId && m.date === date);
 }
 function isCompletedToday(refId) { return !!findCompletion(refId, todayDate()); }
+// v118 (Jase, Nov 6: make calendar events markable): an event can be checked off once its day has come. It is
+// still an event (trackCompletion stays false), so it never counts toward expected, missed, or late.
+function eventCheckable(it) { return !!it && !it.trackCompletion && !!it.date && it.date <= todayDate(); }
+function eventDone(id) { return state.completions.some(c => c.ref_type === 'item' && c.ref_id === id); }
+function undoEventDone(id) {
+  const mine = state.completions.filter(c => c.ref_type === 'item' && c.ref_id === id);
+  tombstoneAll('completions', mine);
+  state.completions = state.completions.filter(c => !(c.ref_type === 'item' && c.ref_id === id));
+}
+// One tap on a to-do or an event: mark it done, or take that back.
+function toggleItemDone(it) {
+  if (eventCheckable(it)) {
+    if (eventDone(it.id)) undoEventDone(it.id);
+    else writeCompletion(it.id, 'item', it.time || null);
+    return;
+  }
+  if (isCompletedToday(it.id)) undoCompletion(it.id);
+  else writeCompletion(it.id, 'item', it.time || null);
+}
 function isSkippedToday(refId)   { return !!findMissed(refId, todayDate()); }
 
 // v102: optional opts — opts.id replaces uuid(); opts.at (ISO) replaces "now"
@@ -3753,7 +3774,11 @@ function openActionSheet(kind, id) {
   const skipBtn = document.getElementById('action-skip');
   // habit is always trackable; item is trackable only when trackCompletion is true.
   const trackable = (kind === 'habit') || !!ref.trackCompletion;
-  if (!trackable) {
+  if (kind === 'item' && eventCheckable(ref)) {   // v118: an event gets Mark done, never Skip
+    doneBtn.hidden = false;
+    skipBtn.hidden = true;
+    doneBtn.textContent = eventDone(id) ? 'Mark not done' : 'Mark done';
+  } else if (!trackable) {
     doneBtn.hidden = true;
     skipBtn.hidden = true;
   } else {
@@ -3776,7 +3801,9 @@ function handleActionDone() {
   const ref = kind === 'habit' ? state.habits.find(h => h.id === id)
                                 : state.items.find(i => i.id === id);
   if (!ref) { closeActionSheet(); return; }
-  if (isCompletedToday(id)) {
+  if (kind === 'item' && eventCheckable(ref)) {
+    toggleItemDone(ref);
+  } else if (isCompletedToday(id)) {
     undoCompletion(id);
   } else {
     writeCompletion(id, kind, ref.time || null);
@@ -3789,6 +3816,7 @@ function handleActionDone() {
 function handleActionSkip() {
   if (!actionContext) return;
   const { kind, id } = actionContext;
+  if (kind === 'item' && !(state.items.find(i => i.id === id) || {}).trackCompletion) { closeActionSheet(); return; }
   if (isSkippedToday(id)) {
     undoMissed(id);
   } else {
@@ -3841,7 +3869,7 @@ function next3Rows(date, nowMin) {
   const rows = state.items
     .filter(it => it.date && it.date === date)   // excludes someday (date null)
     .map(it => {
-      const done = !!it.trackCompletion && state.completions.some(c => c.ref_id === it.id);
+      const done = it.trackCompletion ? state.completions.some(c => c.ref_id === it.id) : eventDone(it.id);   // v118
       let kind;
       if (it.trackCompletion) kind = it.priority === 'high' ? 'due' : 'todo';
       else kind = it.time ? 'timed' : 'allday';
@@ -3851,7 +3879,8 @@ function next3Rows(date, nowMin) {
       const block = kind === 'timed' && NEXT3_PLAN_BLOCK.test(it.notes || '');
       return { it, kind, done, past, block, start, end };
     });
-  const rank = r => r.done ? 5 : ({ due: 0, allday: 1, timed: 2, todo: 3 })[r.kind];
+  // A done to-do sinks to the bottom; a done event keeps its place in the day (v118).
+  const rank = r => r.done && r.it.trackCompletion ? 5 : ({ due: 0, allday: 1, timed: 2, todo: 3 })[r.kind];
   return rows.sort((a, b) => rank(a) - rank(b)
     || (a.it.time || '99:99').localeCompare(b.it.time || '99:99')
     || (a.it.title || '').localeCompare(b.it.title || ''));
@@ -8273,6 +8302,7 @@ function groupUpcoming() {
   for (const it of state.items) {
     // Drop any to-do that's been completed (one-shot, so any completion = done).
     if (it.trackCompletion && state.completions.some(c => c.ref_id === it.id)) continue;
+    if (!it.trackCompletion && eventDone(it.id)) continue;   // v118: a checked-off event is done too
 
     // Someday — undated items go straight to that bucket regardless of kind.
     if (!it.date) { groups.someday.push(it); continue; }
@@ -8335,7 +8365,7 @@ function _upcomingRowHtml(it) {
   const rel = relativeDateLabel(it.date);
   const timeStr = it.time ? fmt12(it.time) : '';
 
-  const checkHtml = trackable
+  const checkHtml = trackable || eventCheckable(it)   // v118: today's events get the circle too
     ? `<button type="button" class="upcoming-check" data-id="${it.id}" aria-label="Mark done"></button>`
     : `<div class="upcoming-check-spacer" aria-hidden="true"></div>`;
   const timeHtml = timeStr
@@ -8418,8 +8448,7 @@ function renderUpcoming() {
       const id = btn.dataset.id;
       const ref = state.items.find(i => i.id === id);
       if (!ref) return;
-      if (isCompletedToday(id)) undoCompletion(id);
-      else                      writeCompletion(id, 'item', ref.time || null);
+      toggleItemDone(ref);
       saveState();
       render();
     });
@@ -11292,7 +11321,11 @@ function applyInboxRow(row) {
 
   if (row.op === 'complete_item') {
     const it = state.items.find(x => x.id === p.item_id);
-    if (!it || !it.trackCompletion || isTombstoned(tomb, 'items', it)) return reject('item not found');
+    if (!it || isTombstoned(tomb, 'items', it)) return reject('item not found');
+    // v118: an event can be checked off on its day or after (the day the Hub sent it)
+    if (!it.trackCompletion && !(it.date && it.date <= ymd(createdAt))) {
+      return reject('event not yet');
+    }
     if (state.completions.some(c => (c.ref_type === 'item' && c.ref_id === it.id) || c.id === row.op_id)) {
       return done('already completed');
     }
@@ -11354,7 +11387,7 @@ function applyInboxRow(row) {
 
   if (row.op === 'uncomplete_item') {
     const it = state.items.find(x => x.id === p.item_id);
-    if (!it || !it.trackCompletion || isTombstoned(tomb, 'items', it)) return reject('item not found');
+    if (!it || isTombstoned(tomb, 'items', it)) return reject('item not found');   // v118: events too
     const mine = state.completions.filter(c => c.ref_type === 'item' && c.ref_id === it.id);
     if (!mine.length) return done('already not done');
     tombstoneAll('completions', mine);
