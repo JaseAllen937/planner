@@ -893,7 +893,7 @@ const SCHEMA_VERSION = 17;
 // Human-facing build tag shown in Settings and stamped into every export legend.
 // BUMP THIS TOGETHER WITH sw.js VERSION on every deploy — a stale tag is how a
 // rolled-back build went unnoticed for two days.
-const APP_VERSION = 'v118';
+const APP_VERSION = 'v119';
 
 // v109 (Nov 2, "it looks like AI slop ... modern and readable"): one line-icon set
 // instead of emoji tiles. Fixed paths only; nothing stored is ever put in here.
@@ -980,6 +980,7 @@ const FOCUS_TYPE_SEEDS = [
   { id: 'work',    label: 'Work',    color: 'blue',   order: 0 },
   { id: 'reading', label: 'Reading', color: 'purple', order: 1 }
 ];
+// v119: an event can be marked done early from its action sheet, and the Hub and focus checker can check one early.
 // v118: calendar events can be checked off (Jase, Nov 6: "make every calander event a to-do so it can be marked").
 // They stay events: Mark done on their day or after, no Skip, never expected, missed or late.
 // v117: the wall stare (Jase, Nov 6: "add a focus session where it is just a 15 minute countdown and that is the wall
@@ -1647,9 +1648,12 @@ function findMissed(refId, date) {
   return state.missed.find(m => m.ref_id === refId && m.date === date);
 }
 function isCompletedToday(refId) { return !!findCompletion(refId, todayDate()); }
-// v118 (Jase, Nov 6: make calendar events markable): an event can be checked off once its day has come. It is
-// still an event (trackCompletion stays false), so it never counts toward expected, missed, or late.
-function eventCheckable(it) { return !!it && !it.trackCompletion && !!it.date && it.date <= todayDate(); }
+// v118 (Jase, Nov 6: make calendar events markable): an event can be checked off. It is still an event
+// (trackCompletion stays false), so it never counts toward expected, missed, or late.
+// v119 (Nov 6: "if I complete something early"): any day, early included, from its action sheet. Only today's
+// and earlier events get the one-tap circle in Upcoming, so the list doesn't fill with circles.
+function eventCheckable(it) { return !!it && !it.trackCompletion && !!it.date; }
+function eventCircle(it) { return eventCheckable(it) && it.date <= todayDate(); }
 function eventDone(id) { return state.completions.some(c => c.ref_type === 'item' && c.ref_id === id); }
 function undoEventDone(id) {
   const mine = state.completions.filter(c => c.ref_type === 'item' && c.ref_id === id);
@@ -8365,7 +8369,7 @@ function _upcomingRowHtml(it) {
   const rel = relativeDateLabel(it.date);
   const timeStr = it.time ? fmt12(it.time) : '';
 
-  const checkHtml = trackable || eventCheckable(it)   // v118: today's events get the circle too
+  const checkHtml = trackable || eventCircle(it)   // v118: today's events get the circle too (v119: not future ones)
     ? `<button type="button" class="upcoming-check" data-id="${it.id}" aria-label="Mark done"></button>`
     : `<div class="upcoming-check-spacer" aria-hidden="true"></div>`;
   const timeHtml = timeStr
@@ -11322,10 +11326,7 @@ function applyInboxRow(row) {
   if (row.op === 'complete_item') {
     const it = state.items.find(x => x.id === p.item_id);
     if (!it || isTombstoned(tomb, 'items', it)) return reject('item not found');
-    // v118: an event can be checked off on its day or after (the day the Hub sent it)
-    if (!it.trackCompletion && !(it.date && it.date <= ymd(createdAt))) {
-      return reject('event not yet');
-    }
+    // v119: an event can be checked off any day, early included (v118 waited for its day)
     if (state.completions.some(c => (c.ref_type === 'item' && c.ref_id === it.id) || c.id === row.op_id)) {
       return done('already completed');
     }
